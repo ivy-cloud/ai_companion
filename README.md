@@ -46,7 +46,7 @@ npm install
 npm start
 ```
 
-Use Expo Go on a phone on the same Wi‑Fi as your computer. Ensure `API_URL` in `app/index.tsx` matches your computer's LAN IP (`192.168.0.178` by default).
+Use Expo Go on a phone on the same Wi‑Fi as your computer. Set `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` (see `ai-frontend/.env.example`) to your Mac’s LAN IP; default is `192.168.0.178`.
 
 ## API
 

@@ -9,7 +9,7 @@ Use this guide to start the app on your Mac and test it from an iPhone with **Ex
 | Project root | `/Users/ivyzan/ai-companion` |
 | Backend | FastAPI on port **8000** (`0.0.0.0` — reachable on LAN) |
 | Frontend | Expo SDK 54, **Expo Go** on iPhone |
-| Phone → backend URL | `http://192.168.0.178:8000/chat` (set in `ai-frontend/app/index.tsx`) |
+| Phone → backend URL | `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` (see `.env.example`; default `192.168.0.178`) |
 | Gemini key | Env var `GEMINI_API_KEY` (never commit `.env`) |
 | Models (backend) | `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-2.5-pro` |
 
@@ -19,21 +19,22 @@ You need **two terminals**: one for the backend, one for Expo.
 
 ## Before you start (one-time / occasional)
 
-### 1. Gemini API key
+### 1. Azure Speech (Neural TTS)
 
-Get a key from [Google AI Studio](https://aistudio.google.com/apikey).
+Create a **Speech** resource in [Azure Portal](https://portal.azure.com) (free tier: ~500k characters/month).
 
 ```bash
-# Optional: store in ai-backend/.env (gitignored)
 cd /Users/ivyzan/ai-companion/ai-backend
 cp .env.example .env
-# Edit .env and set GEMINI_API_KEY=...
+# Set AZURE_SPEECH_KEY, AZURE_SPEECH_REGION (e.g. eastus), optional AZURE_SPEECH_VOICE
+pip install -r requirements.txt
 ```
 
-Or export in the shell each session:
+`uvicorn` loads `.env` automatically. Check:
 
 ```bash
-export GEMINI_API_KEY="your_key_here"
+curl http://127.0.0.1:8000/health
+# "azure_tts": {"ready": true, "voice": "en-US-JennyNeural", ...}
 ```
 
 ### 2. Backend Python deps
@@ -60,15 +61,13 @@ The iPhone must reach your Mac on the **same Wi‑Fi**. Find your IP:
 ipconfig getifaddr en0
 ```
 
-If it is **not** `192.168.0.178`, update `API_URL` in:
+If it is **not** `192.168.0.178`, set `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` (copy from `.env.example`):
 
-`ai-frontend/app/index.tsx`
-
-```ts
-const API_URL = 'http://YOUR_MAC_IP:8000/chat';
+```env
+EXPO_PUBLIC_API_BASE=http://YOUR_MAC_IP:8000
 ```
 
-Reload the Expo app after changing this.
+Or change the fallback in `app/index.tsx`. Restart `expo start` after editing `.env`.
 
 ---
 
@@ -79,7 +78,6 @@ Reload the Expo app after changing this.
 ```bash
 cd /Users/ivyzan/ai-companion/ai-backend
 source .venv/bin/activate
-export GEMINI_API_KEY="your_key_here"   # skip if using .env + you load it manually
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 

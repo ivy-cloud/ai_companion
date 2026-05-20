@@ -1,30 +1,102 @@
 # AI Companion Backend
 
-FastAPI server that proxies chat messages to Google Gemini (`gemini-2.5-flash`).
+FastAPI server that streams chat through a **local [Ollama](https://ollama.com)** model (`llama3.2:3b` by default).
 
-## Setup
+## 1. Install Ollama
+
+Download and install from [https://ollama.com](https://ollama.com) (macOS, Linux, or Windows).
+
+On macOS you can also use Homebrew:
+
+```bash
+brew install ollama
+```
+
+## 2. Pull the model
+
+```bash
+ollama pull llama3.2:3b
+```
+
+## 3. Run Ollama
+
+Ollama usually runs in the background after install. If not:
+
+```bash
+ollama serve
+```
+
+Default API: `http://localhost:11434`
+
+Verify:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+Quick test:
+
+```bash
+ollama run llama3.2:3b
+```
+
+## 4. Python backend setup
 
 ```bash
 cd ai-backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export GEMINI_API_KEY=your_key_here
 ```
 
-## Run
+Optional `.env` (copy from `.env.example`):
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2:3b
+```
+
+## 5. Run the API
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-API: `POST http://localhost:8000/chat` with body `{ "message": "Hello" }`.
+Health check:
 
-## Quota / "exceeded your current quota"
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-Gemini limits apply to your **Google Cloud project**, not per model name. On the free tier, `gemini-2.5-flash` still has caps (e.g. requests per minute and per day). Hitting the limit returns HTTP 429 even though the model is "flash."
+Stream chat (NDJSON):
 
-- View limits: [AI Studio rate limits](https://aistudio.google.com/rate-limit)
-- Enable billing in AI Studio for higher tiers
-- Wait until the daily limit resets (midnight Pacific)
-- `gemini-2.5-pro` on free tier has **lower** limits than flash — the backend only tries it after flash/lite fail for non-quota reasons
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello"}'
+```
+
+## API
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /chat` | Stream reply (`application/x-ndjson`) |
+| `POST /chat/reset` | Clear in-memory conversation |
+| `GET /chat/history` | Debug: view stored turns |
+| `GET /health` | API + Ollama reachability |
+
+## Architecture
+
+- **Personality** — `personality.py` → Ollama `system` message
+- **Memory** — `memory.py` → last 10 exchanges as `user` / `assistant` messages
+- **Latest message** — appended as final `user` turn
+- **Streaming** — Ollama `/api/chat` with `stream: true` → forwarded to the Expo app unchanged
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `Cannot reach Ollama` | Run `ollama serve`; check `curl localhost:11434/api/tags` |
+| `model not found` | Run `ollama pull llama3.2:3b` |
+| Slow first reply | First run loads the model into RAM; later requests are faster |
+| iPhone can't reach API | Backend must bind `0.0.0.0`; phone uses Mac LAN IP in the app |
