@@ -1,0 +1,283 @@
+/**
+ * NDJSON chat stream from POST /chat — XHR on native (reliable progress), fetch on web.
+ */
+
+import { Platform } from 'react-native';
+import { createAbortError, isAbortError } from './abortError';
+
+export type StreamHandlers = {
+  onStart?: () => void;
+  onText: (chunk: string) => void;
+  onDone: (reply: string) => string;
+  onError: (message: string) => void;
+};
+
+type StreamEvent =
+  | { start: true }
+  | { text: string }
+  | { done: true; reply: string }
+  | { error: string };
+
+const STREAM_TIMEOUT_MS = 180_000;
+
+export type ChatRequestBody = {
+  message: string;
+  timezone?: string;
+};
+
+function buildChatRequestBody(message: string, timezone?: string): string {
+  const body: ChatRequestBody = { message };
+  if (timezone) body.timezone = timezone;
+  return JSON.stringify(body);
+}
+
+function parseNdjsonLines(buffer: string): { events: StreamEvent[]; rest: string } {
+  const lines = buffer.split('\n');
+  const rest = lines.pop() ?? '';
+  const events: StreamEvent[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      events.push(JSON.parse(trimmed) as StreamEvent);
+    } catch {
+      // partial line
+    }
+  }
+
+  return { events, rest };
+}
+
+/** Apply events; return final reply only when a `done` line arrives. */
+function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): string | null {
+  let full = '';
+
+  for (const event of events) {
+    if ('start' in event && event.start) {
+      handlers.onStart?.();
+    }
+    if ('text' in event && event.text) {
+      full += event.text;
+      handlers.onText(event.text);
+    }
+    if ('error' in event && event.error) {
+      handlers.onError(event.error);
+      throw new Error(event.error);
+    }
+    if ('done' in event && event.done) {
+      return handlers.onDone(event.reply || full);
+    }
+  }
+
+  return null;
+}
+
+export function streamChatWithXHR(
+  apiUrl: string,
+  message: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+  timezone?: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    let lastLength = 0;
+    let buffer = '';
+    let full = '';
+    let completed = false;
+    let lastProgressAt = Date.now();
+
+    const finish = (fn: () => void) => {
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timeoutId);
+      clearInterval(stallCheckId);
+      fn();
+    };
+
+    const onAbort = () => {
+      xhr.abort();
+      finish(() => reject(createAbortError()));
+    };
+
+    signal?.addEventListener('abort', onAbort);
+
+    const timeoutId = setTimeout(() => {
+      xhr.abort();
+      finish(() => reject(new Error('Request timed out — check backend and Ollama')));
+    }, STREAM_TIMEOUT_MS);
+
+    const stallCheckId = setInterval(() => {
+      if (completed) return;
+      if (Date.now() - lastProgressAt > 45_000) {
+        xhr.abort();
+        finish(() =>
+          reject(new Error('Stream stalled — try again or check Ollama is running')),
+        );
+      }
+    }, 5000);
+
+    const drainBuffer = (final = false) => {
+      if (final && buffer.trim()) {
+        buffer += '\n';
+      }
+      const { events, rest } = parseNdjsonLines(buffer);
+      buffer = rest;
+
+      for (const event of events) {
+        if ('start' in event && event.start) {
+          handlers.onStart?.();
+        }
+        if ('text' in event && event.text) {
+          full += event.text;
+          handlers.onText(event.text);
+        }
+        if ('error' in event && event.error) {
+          try {
+            handlers.onError(event.error);
+          } catch {
+            // Never let UI handlers break the transport promise.
+          }
+          finish(() => reject(new Error(event.error)));
+          return;
+        }
+        if ('done' in event && event.done) {
+          if (completed) return;
+          completed = true;
+          const reply = handlers.onDone(event.reply || full);
+          finish(() => resolve(reply));
+          return;
+        }
+      }
+    };
+
+    xhr.open('POST', apiUrl);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Accept', 'application/x-ndjson');
+    xhr.timeout = STREAM_TIMEOUT_MS;
+
+    xhr.onprogress = () => {
+      lastProgressAt = Date.now();
+      const chunk = xhr.responseText.slice(lastLength);
+      lastLength = xhr.responseText.length;
+      if (!chunk) return;
+      buffer += chunk;
+      drainBuffer();
+    };
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState !== XMLHttpRequest.DONE || completed) return;
+      lastProgressAt = Date.now();
+      const tail = xhr.responseText.slice(lastLength);
+      if (tail) {
+        lastLength = xhr.responseText.length;
+        buffer += tail;
+        drainBuffer(true);
+      }
+    };
+
+    xhr.onload = () => {
+      if (signal?.aborted) {
+        finish(() => reject(createAbortError()));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finish(() => reject(new Error(xhr.responseText || `Request failed (${xhr.status})`)));
+        return;
+      }
+      const tail = xhr.responseText.slice(lastLength);
+      if (tail) buffer += tail;
+      drainBuffer(true);
+      if (!completed) {
+        finish(() => reject(new Error('Stream ended without a complete reply')));
+      }
+    };
+
+    xhr.onerror = () => {
+      finish(() => reject(new Error('Network request failed — is the backend reachable?')));
+    };
+
+    xhr.ontimeout = () => {
+      finish(() => reject(new Error('Request timed out — check backend and Ollama')));
+    };
+
+    xhr.send(buildChatRequestBody(message, timezone));
+  });
+}
+
+export async function streamChatWithFetch(
+  apiUrl: string,
+  message: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+  timezone?: string,
+): Promise<string> {
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/x-ndjson',
+    },
+    body: buildChatRequestBody(message, timezone),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error((await response.text()) || `Request failed (${response.status})`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('ReadableStream not available');
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const { events, rest } = parseNdjsonLines(buffer);
+    buffer = rest;
+
+    const reply = processStreamEvents(events, handlers);
+    if (reply !== null) return reply;
+  }
+
+  if (buffer.trim()) {
+    const { events } = parseNdjsonLines(buffer + '\n');
+    const reply = processStreamEvents(events, handlers);
+    if (reply !== null) return reply;
+  }
+
+  throw new Error('Stream ended without a complete reply');
+}
+
+export async function streamChatMessage(
+  apiUrl: string,
+  message: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+  timezone?: string,
+): Promise<string> {
+  // React Native fetch often buffers the full body; XHR onprogress streams reliably.
+  if (Platform.OS !== 'web') {
+    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone);
+  }
+
+  try {
+    return await streamChatWithFetch(apiUrl, message, handlers, signal, timezone);
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
+    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone);
+  }
+}

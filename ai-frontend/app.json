@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "NSMicrophoneUsageDescription": "The app uses the microphone so you can talk to your AI companion.",
         "NSAppTransportSecurity": {
           "NSAllowsLocalNetworking": true
         }
@@ -26,6 +27,9 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "permissions": [
+        "RECORD_AUDIO"
+      ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "usesCleartextTraffic": true
@@ -34,7 +38,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice chat."
+        }
+      ],
+      "expo-localization"
     ]
   }
 }

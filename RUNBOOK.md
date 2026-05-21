@@ -9,7 +9,7 @@ Use this guide to start the app on your Mac and test it from an iPhone with **Ex
 | Project root | `/Users/ivyzan/ai-companion` |
 | Backend | FastAPI on port **8000** (`0.0.0.0` — reachable on LAN) |
 | Frontend | Expo SDK 54, **Expo Go** on iPhone |
-| Phone → backend URL | `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` (see `.env.example`; default `192.168.0.178`) |
+| Phone → backend URL | `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` — **auto-set** by `./start.sh` from `ipconfig getifaddr en0` |
 | Gemini key | Env var `GEMINI_API_KEY` (never commit `.env`) |
 | Models (backend) | `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-2.5-pro` |
 
@@ -19,7 +19,7 @@ You need **two terminals**: one for the backend, one for Expo.
 
 ## Before you start (one-time / occasional)
 
-### 1. Azure Speech (Neural TTS)
+### 1. Azure Speech (TTS + voice input STT)
 
 Create a **Speech** resource in [Azure Portal](https://portal.azure.com) (free tier: ~500k characters/month).
 
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 ```bash
 curl http://127.0.0.1:8000/health
-# "azure_tts": {"ready": true, "voice": "en-US-JennyNeural", ...}
+# "azure_tts": {"ready": true, ...}, "azure_stt": {"ready": true, ...}
 ```
 
 ### 2. Backend Python deps
@@ -53,21 +53,15 @@ cd /Users/ivyzan/ai-companion/ai-frontend
 npm install
 ```
 
-### 4. Mac LAN IP (when Wi‑Fi changes)
+### 4. Mac LAN IP (automatic)
 
-The iPhone must reach your Mac on the **same Wi‑Fi**. Find your IP:
-
-```bash
-ipconfig getifaddr en0
-```
-
-If it is **not** `192.168.0.178`, set `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` (copy from `.env.example`):
+`ai-backend/start.sh` runs `ipconfig getifaddr en0` (then `en1`) and writes `ai-frontend/.env`:
 
 ```env
-EXPO_PUBLIC_API_BASE=http://YOUR_MAC_IP:8000
+EXPO_PUBLIC_API_BASE=http://192.168.0.177:8000
 ```
 
-Or change the fallback in `app/index.tsx`. Restart `expo start` after editing `.env`.
+Restart Expo after the IP changes (`npx expo start --clear`).
 
 ---
 
@@ -77,9 +71,11 @@ Or change the fallback in `app/index.tsx`. Restart `expo start` after editing `.
 
 ```bash
 cd /Users/ivyzan/ai-companion/ai-backend
-source .venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+source .venv/bin/activate   # first time only
+./start.sh
 ```
+
+`start.sh` updates `ai-frontend/.env` with your current Wi‑Fi IP, then starts Uvicorn.
 
 Leave this running. You should see Uvicorn listening on `0.0.0.0:8000`.
 
@@ -108,6 +104,49 @@ Then on **iPhone**:
 2. Same Wi‑Fi as the Mac.
 3. Scan the QR code from the terminal (or Expo Dev Tools in the browser).
 4. Open the **AI Companion** project in Expo Go.
+
+---
+
+## Local API smoke test (Mac only, no phone)
+
+With `./start.sh` running in another terminal:
+
+```bash
+cd /Users/ivyzan/ai-companion/ai-backend
+source .venv/bin/activate
+./local_smoke_test.sh
+# optional: ./local_smoke_test.sh http://127.0.0.1:8000 America/New_York
+```
+
+This hits the same cases we use to verify behavior:
+
+| Test | What to expect |
+|------|----------------|
+| `What is 2+2?` | Direct answer, e.g. "2+2 is 4." — no hmm/oh filler |
+| `What time is it?` | Spoken-style time from **Right now** / phone timezone |
+| `Which year is it?` | Current year only — not time + random old year |
+| `Who is the president…` | Name from **live web lookup** (needs internet + Ollama) |
+| `Hey, how are you?` | Short casual reply |
+
+**Corresponding code (uncommitted local work):**
+
+| Area | Files |
+|------|--------|
+| System prompt (factual first) | `ai-backend/personality.py`, `identity.py`, `human_speech.py` |
+| Time / year / timezone | `ai-backend/context.py`, `ChatRequest.timezone` in `main.py` |
+| Web facts | `ai-backend/web_search.py`, `grounding.py` |
+| Voice PTT + state machine | `ai-frontend/app/index.tsx`, `lib/voiceFlow.ts`, `lib/voiceInput.ts` |
+| Phone timezone | `ai-frontend/lib/deviceTimezone.ts`, `lib/chatStream.ts` |
+| Text = speech when casual | `ai-frontend/lib/speechPlayback.ts` |
+| Auto LAN IP | `ai-backend/start.sh` → `ai-frontend/.env` |
+
+One-off curl (streaming reply):
+
+```bash
+curl -sN -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is 2+2?","timezone":"America/Los_Angeles"}'
+```
 
 ---
 

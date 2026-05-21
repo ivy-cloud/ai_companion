@@ -34,21 +34,12 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE,
 )
 
-# Standalone numbers (not part of identifiers like v2 or 1st) → clearer speech.
-_ISOLATED_NUMBER = re.compile(r"(?<![A-Za-z0-9])(\d+(?:\.\d+)?)(?![A-Za-z0-9])")
+from spoken_text import normalize_for_speech
 
 
-def _ssml_escape_with_number_say_as(text: str) -> str:
-    """Escape text for SSML; wrap isolated digit runs in <say-as interpret-as=\"cardinal\">."""
-    parts: list[str] = []
-    pos = 0
-    for m in _ISOLATED_NUMBER.finditer(text):
-        parts.append(html.escape(text[pos : m.start()], quote=False))
-        num = m.group(1)
-        parts.append(f'<say-as interpret-as="cardinal">{num}</say-as>')
-        pos = m.end()
-    parts.append(html.escape(text[pos:], quote=False))
-    return "".join(parts)
+def _ssml_escape_text(text: str) -> str:
+    """Plain escaped text — numbers are already words; avoids spelled fragments."""
+    return html.escape(text, quote=False)
 
 
 def _speech_key_raw() -> str:
@@ -222,23 +213,43 @@ def tts_status() -> dict:
 def _clean_for_speech(text: str) -> str:
     cleaned = unicodedata.normalize("NFKC", text)
     cleaned = _EMOJI_RE.sub("", cleaned)
-    cleaned = re.sub(r"[@#$%^&*+=|\\<>~`[\]{}©®™°§¶•·/]", "", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
+    return normalize_for_speech(cleaned)
+
+
+def _normalize_prosody_rate(raw: str, default: str) -> str:
+    """
+    Azure SSML prosody rate: multiplier (1.0 = default) or relative % (+10%).
+    Natural voice: ~0.95–1.02 (use AZURE_SPEECH_RATE_MAIN=0.98 or 1.02 in .env).
+    """
+    value = (raw or default).strip()
+    if re.match(r"^[+-]?\d+(\.\d+)?%$", value):
+        return value
+    if re.match(r"^\d+(\.\d+)?$", value):
+        try:
+            mult = float(value)
+            if 0.5 <= mult <= 2.0:
+                return value
+        except ValueError:
+            pass
+    return default
 
 
 def _prosody_for_style(style: str) -> tuple[str, str]:
     """SSML prosody rate + pitch; optional env overrides (see .env.example)."""
     if style == "filler":
-        rate = os.environ.get("AZURE_SPEECH_RATE_FILLER", "+10%").strip() or "+10%"
+        rate = _normalize_prosody_rate(
+            os.environ.get("AZURE_SPEECH_RATE_FILLER", ""),
+            "1.0",
+        )
         pitch = os.environ.get("AZURE_SPEECH_PITCH_FILLER", "+0.1st").strip() or "+0.1st"
     else:
-        rate = os.environ.get("AZURE_SPEECH_RATE_MAIN", "+6%").strip() or "+6%"
-        pitch = os.environ.get("AZURE_SPEECH_PITCH_MAIN", "+0.45st").strip() or "+0.45st"
-    if not re.match(r"^[+-]?\d+(\.\d+)?%$", rate):
-        rate = "+10%" if style == "filler" else "+6%"
+        rate = _normalize_prosody_rate(
+            os.environ.get("AZURE_SPEECH_RATE_MAIN", ""),
+            "1.0",
+        )
+        pitch = os.environ.get("AZURE_SPEECH_PITCH_MAIN", "+0.15st").strip() or "+0.15st"
     if not re.match(r"^[+-]?\d+(\.\d+)?st$", pitch):
-        pitch = "+0.1st" if style == "filler" else "+0.45st"
+        pitch = "+0.1st" if style == "filler" else "+0.15st"
     return rate, pitch
 
 
@@ -258,12 +269,11 @@ def synthesize_speech(text: str, style: str = "default") -> bytes:
     if len(cleaned) > MAX_TTS_CHARS:
         cleaned = cleaned[:MAX_TTS_CHARS]
 
-    # Positive % = faster than default neural (see _prosody_for_style / .env.example).
     rate, pitch = _prosody_for_style(style)
 
     use_express = _use_speaking_style()
     express_style = _speaking_style_name()
-    escaped = _ssml_escape_with_number_say_as(cleaned)
+    escaped = _ssml_escape_text(cleaned)
     voice = _speech_voice()
     ssml = _build_ssml(voice, rate, pitch, escaped, use_express=use_express, express_style=express_style)
 

@@ -1,19 +1,23 @@
 """
-In-memory conversation memory (RAM only, lives for the server process).
+Simple conversation memory — last N exchanges on disk.
 
-Stores the latest 10 exchanges as alternating user / assistant messages.
+Chat history is for tone/continuity only. User facts live in profile.py.
+Never learned from assistant messages. No vectors, embeddings, or summarization.
 """
 
+import json
 from collections import deque
+from pathlib import Path
 from typing import Deque, List, Literal, TypedDict
 
 Role = Literal["user", "assistant"]
 
-# One exchange = user message + assistant reply.
-MAX_EXCHANGES = 10
-MAX_MESSAGE_CHARS = 1500
-# Drop oldest turns first if history exceeds this (avoids token explosion).
-MAX_TOTAL_HISTORY_CHARS = 6000
+# Keep recent 5–10 exchanges (8 ≈ middle of range)
+MAX_EXCHANGES = 8
+MAX_MESSAGE_CHARS = 1200
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+_HISTORY_PATH = _BACKEND_DIR / "data" / "history.json"
 
 
 class MemoryMessage(TypedDict):
@@ -31,50 +35,67 @@ def _trim(text: str) -> str:
     return text[:MAX_MESSAGE_CHARS] + "…"
 
 
+def _persist() -> None:
+    _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"messages": get_history()}
+    _HISTORY_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _load_persisted() -> None:
+    if not _HISTORY_PATH.is_file():
+        return
+    try:
+        data = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
+        messages = data.get("messages", [])
+        if not isinstance(messages, list):
+            return
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            text = item.get("text")
+            if role in ("user", "assistant") and isinstance(text, str) and text.strip():
+                _history.append({"role": role, "text": _trim(text)})
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+_load_persisted()
+
+
 def get_history() -> List[MemoryMessage]:
-    """All stored turns, oldest first (at most MAX_EXCHANGES exchanges)."""
     return list(_history)
 
 
 def exchange_count() -> int:
-    """Number of complete user+assistant exchanges in memory."""
     return len(_history) // 2
 
 
 def append_exchange(user_message: str, assistant_message: str) -> None:
-    """Save one exchange after a successful model reply."""
+    """Store dialogue only — assistant text is never used for long-term facts."""
     _history.append({"role": "user", "text": _trim(user_message)})
     _history.append({"role": "assistant", "text": _trim(assistant_message)})
+    _persist()
 
 
 def clear() -> None:
     _history.clear()
+    if _HISTORY_PATH.is_file():
+        _HISTORY_PATH.unlink()
 
 
-def to_ollama_messages() -> List[dict]:
-    """
-    Convert RAM history to Ollama chat messages (user / assistant roles).
-    Keeps the most recent turns that fit within MAX_TOTAL_HISTORY_CHARS.
-    """
+def to_ollama_messages(_current_user_message: str = "") -> List[dict]:
+    """Last MAX_EXCHANGES only — no retrieval, embeddings, or summarization."""
     if not _history:
         return []
-
-    selected: List[MemoryMessage] = []
-    total_chars = 0
-
-    for entry in reversed(_history):
-        length = len(entry["text"])
-        if selected and total_chars + length > MAX_TOTAL_HISTORY_CHARS:
-            break
-        selected.append(entry)
-        total_chars += length
-
-    selected.reverse()
 
     return [
         {
             "role": "user" if entry["role"] == "user" else "assistant",
             "content": entry["text"],
         }
-        for entry in selected
+        for entry in _history
     ]
