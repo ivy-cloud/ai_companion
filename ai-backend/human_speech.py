@@ -31,9 +31,37 @@ BANNED_PHRASES = (
     "please don't hesitate",
     "great question",
     "i appreciate you sharing",
+    "how can i help",
+    "happy to help",
+    "i'm so glad you shared",
+    "thank you for reaching out",
+    "it's completely normal to feel",
+    "that sounds really difficult",
+    "i'm so sorry to hear",
+    "i'm here for you",
     "it's important to note",
     "in conclusion",
     "as your assistant",
+    "just a voice",
+    "not human",
+    "i'm not human",
+    "don't have an age",
+    "do not have an age",
+    "i don't really have an age",
+    "just a voice on the phone",
+    "i'm just a voice",
+    "lookup didn't give",
+    "my lookup",
+    "in the context you're asking",
+    "in the context you are asking",
+    "not sure in the context",
+    "here and now person",
+    "here-and-now person",
+    "right-now person",
+    "right-now-on-the-call",
+    "here-and-now with you",
+    "person on this call",
+    "on this call",
 )
 
 MAX_REPLY_WORDS = 25
@@ -41,10 +69,11 @@ MAX_REPLY_SENTENCES = 3
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)
 - **Short:** usually 1–{MAX_REPLY_SENTENCES} sentences, under {MAX_REPLY_WORDS} spoken words.
-- **Tone:** casual, warm, grounded — not formal, corporate, therapist-like, or cutesy on basic facts.
+- **Tone:** like a real friend on the phone — relaxed, warm, a little personality; never news-anchor flat or helper-bot stiff.
 - **Factual turns:** lead with the answer; skip openers like "oh," "yeah," "hmm," "interesting," "great question."
-- **Non-factual chat:** contractions and everyday words are fine; optional brief follow-up question.
-- **Avoid:** long paragraphs, lists, markdown, over-explaining, ambiguous teasing, customer-support scripts."""
+- **Non-factual chat:** contractions (I'm, you're, that's), everyday words; occasional brief fillers OK (hmm, oh, wait really?) — one at most, never stacked.
+- **Warmth:** subtle and grounded — not gushy, not therapist-y, don't over-validate ("I hear you," "that must be so hard").
+- **Avoid:** long paragraphs, lists, markdown, over-explaining, "Certainly," "I'd be happy to," "How can I help," cheerleader enthusiasm, customer-support scripts."""
 
 SPOKEN_DELIVERY_RULES = f"""## Spoken delivery (write for voice, not text)
 - **Sound natural read aloud** — like you're talking on the phone, not writing an article.
@@ -185,8 +214,23 @@ def _strip_assistant_tone(text: str) -> str:
     return cleaned
 
 
+def _strip_bullet_lines(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if re.match(r"^[-*•]\s+\S", stripped) or re.match(r"^\d+[.)]\s+\S", stripped):
+            stripped = re.sub(r"^[-*•]\s+", "", stripped)
+            stripped = re.sub(r"^\d+[.)]\s+", "", stripped)
+            if stripped:
+                lines.append(stripped)
+            continue
+        lines.append(line)
+    return " ".join(" ".join(lines).split())
+
+
 def _strip_markdown(text: str) -> str:
     cleaned = text.strip()
+    cleaned = _strip_bullet_lines(cleaned)
     cleaned = re.sub(r"```[\s\S]*?```", " ", cleaned)
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
     cleaned = re.sub(r"^\s*[-*#>]+\s*", "", cleaned, flags=re.M)
@@ -196,8 +240,48 @@ def _strip_markdown(text: str) -> str:
     return cleaned
 
 
+_ROBOT_SELF_DENY = re.compile(
+    r"(?:"
+    r"couldn'?t find.{0,50}lookup|"
+    r"lookup didn'?t give|"
+    r"my lookup|"
+    r"in the context you(?:'re| are) asking|"
+    r"not sure.{0,40}context you(?:'re| are) asking|"
+    r"no age in the lookup|"
+    r"not really have an age|"
+    r"here[- ]and[- ]now(?:\s+person)?|"
+    r"right[- ]now(?:[- ]on[- ]the[- ]call)?(?:\s+person)?|"
+    r"(?:kind of |more )?(?:a )?here[- ]and[- ]now.{0,40}on this call|"
+    r"(?:i'?m|i am).{0,30}person on this call|"
+    r"on this call.{0,30}(?:person|here[- ]and[- ]now|right[- ]now)"
+    r")",
+    re.I,
+)
+
+
+def _strip_robot_self_denials(text: str) -> str:
+    return _ROBOT_SELF_DENY.sub("", text)
+
+
+def _tame_enthusiasm(text: str) -> str:
+    """Dial back cheerleader / stacked empathy without killing normal warmth."""
+    cleaned = text
+    cleaned = re.sub(
+        r"\b(?:i'?m|i am)\s+so\s+(?:glad|happy|excited)\s+(?:that|for|you)\b[,.]?\s*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\b(?:wow|amazing|awesome)[,!]?\s+", "", cleaned, count=1, flags=re.I)
+    return cleaned
+
+
 def polish_for_speech(text: str) -> str:
-    cleaned = trim_for_voice(_strip_assistant_tone(_strip_markdown(text.strip())))
+    cleaned = trim_for_voice(
+        _strip_robot_self_denials(
+            _tame_enthusiasm(_strip_assistant_tone(_strip_markdown(text.strip())))
+        )
+    )
     cleaned = re.sub(r"…+", ".", cleaned)
     cleaned = re.sub(r"\.{2,}", ".", cleaned)
     cleaned = re.sub(r"!{2,}", "!", cleaned)

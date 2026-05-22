@@ -172,7 +172,8 @@ def needs_friend_notes_context(message: str) -> bool:
     return bool(
         re.search(
             r"\b(?:"
-            r"my name|my birthday|where am i from|where do i live|"
+            r"my name|my birthday|my age|how old am i|what(?:'s| is) my age|"
+            r"where am i from|where do i live|"
             r"what do you remember|about me|what do you know about me"
             r")\b",
             lower,
@@ -317,7 +318,7 @@ def build_context_appendix(
         parts.append(format_clock_context_for_model(clock))
     parts.extend(
         [
-            "## Your name\n" f"{companion.format_name_for_prompt()}",
+            "## You (companion persona)\n" f"{companion.format_companion_persona_for_prompt()}",
             HUMAN_SPEECH_RULES,
         ]
     )

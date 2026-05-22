@@ -10,6 +10,26 @@ from context import (
     needs_friend_notes_context,
 )
 from personality import build_turn_hints
+from companion import (
+    companion_birth_reply_text,
+    companion_dad_reply_text,
+    companion_family_reply_text,
+    companion_mom_reply_text,
+    companion_parents_reply_text,
+    companion_siblings_reply_text,
+    companion_voice_reply_text,
+    finalize_birth_reply,
+    finalize_family_reply,
+    finalize_voice_reply,
+    get_companion_birth_year,
+    is_companion_identity_turn,
+    try_companion_age_reply,
+    try_companion_birth_reply,
+    try_companion_family_reply,
+    try_companion_voice_reply,
+)
+from human_speech import polish_for_speech
+from spoken_text import spoken_year
 
 
 class DirectReplyTests(unittest.TestCase):
@@ -36,6 +56,110 @@ class DirectReplyTests(unittest.TestCase):
         hints = build_turn_hints("What is 2+2?", math_turn=True)
         self.assertIn("Do not mention", hints)
         self.assertNotIn("Right now", hints)
+
+    def test_birth_year_from_age_28_in_2026(self):
+        """28 in calendar year 2026 → born 1998, spoken as nineteen ninety-eight."""
+        from unittest.mock import patch
+
+        with patch("companion.get_companion_age", return_value=28), patch(
+            "context.format_local_now_parts",
+            return_value={"year": "2026"},
+        ):
+            self.assertEqual(get_companion_birth_year(), 1998)
+            self.assertEqual(spoken_year(1998), "nineteen ninety eight")
+            self.assertEqual(
+                try_companion_birth_reply("When were you born?"),
+                "I was born in nineteen ninety eight.",
+            )
+            self.assertEqual(
+                finalize_birth_reply("when were you born", "96"),
+                companion_birth_reply_text(),
+            )
+            self.assertNotIn("ninety six", companion_birth_reply_text())
+
+    def test_companion_voice_not_user_voice(self):
+        self.assertIsNotNone(try_companion_voice_reply("Can you change your voice?"))
+        self.assertIn("female", companion_voice_reply_text().lower())
+        self.assertIn("male", companion_voice_reply_text().lower())
+        self.assertEqual(
+            finalize_voice_reply(
+                "can you change your voice",
+                "You can change your voice in settings.",
+            ),
+            companion_voice_reply_text(),
+        )
+        self.assertIsNone(try_companion_voice_reply("How do I change my voice?"))
+
+    def test_companion_family_blocks_web_and_robot_talk(self):
+        mom_q = "who is your mom?"
+        dad_q = "who is your dad?"
+        self.assertTrue(is_companion_identity_turn(mom_q))
+        self.assertTrue(is_companion_identity_turn(dad_q))
+        # is_companion_identity_turn is what web_search.should_search checks first.
+        self.assertFalse(is_companion_identity_turn("tell me about my mom"))
+
+        mom_reply = try_companion_family_reply(mom_q)
+        dad_reply = try_companion_family_reply(dad_q)
+        self.assertIsNotNone(mom_reply)
+        self.assertIsNotNone(dad_reply)
+        self.assertEqual(mom_reply, companion_mom_reply_text())
+        self.assertEqual(dad_reply, companion_dad_reply_text())
+        robotic_phrases = (
+            "lookup",
+            "context you're asking",
+            "not sure who my mom",
+            "assistant",
+            "AI",
+            "here and now",
+            "here-and-now",
+            "right-now",
+            "on this call",
+            "right now person",
+        )
+        all_family_replies = (
+            mom_reply,
+            dad_reply,
+            companion_parents_reply_text(),
+            companion_siblings_reply_text(),
+            companion_family_reply_text(),
+        )
+        for reply in all_family_replies:
+            lower = reply.lower()
+            for phrase in robotic_phrases:
+                self.assertNotIn(phrase.lower(), lower, msg=f"{phrase!r} in {reply!r}")
+
+        self.assertNotEqual(companion_mom_reply_text(), companion_dad_reply_text())
+
+        robotic = (
+            "I am not sure who my mom is in the context you're asking. "
+            "My lookup didn't give me a specific name related to me."
+        )
+        fixed = finalize_family_reply(mom_q, robotic)
+        self.assertEqual(fixed, companion_mom_reply_text())
+        self.assertNotIn("lookup", fixed.lower())
+
+    def test_polish_strips_robotic_family_self_talk(self):
+        raw = (
+            "I'm kind of a here-and-now person on this call. "
+            "My lookup didn't give me a name for my mom."
+        )
+        polished = polish_for_speech(raw).lower()
+        for phrase in (
+            "here and now",
+            "here-and-now",
+            "on this call",
+            "lookup didn't",
+            "my lookup",
+        ):
+            self.assertNotIn(phrase, polished, msg=polish_for_speech(raw))
+
+    def test_user_family_not_companion_family(self):
+        self.assertIsNone(try_companion_family_reply("tell me about my mom"))
+        self.assertFalse(is_companion_identity_turn("do you remember my dad?"))
+
+    def test_user_age_not_companion_age_question(self):
+        self.assertFalse(is_companion_identity_turn("How old am I?"))
+        self.assertIsNone(try_companion_age_reply("How old am I?"))
 
 
 if __name__ == "__main__":

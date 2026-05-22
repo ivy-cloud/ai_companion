@@ -34,6 +34,23 @@ _CURRENT_POTUS_ALT = re.compile(
     re.I,
 )
 
+_INCUMBENT_POTUS = re.compile(
+    r"incumbent\s+president\s+is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z\.]+){0,3})",
+    re.I,
+)
+
+_NTH_POTUS_BIO = re.compile(
+    r"([A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+\.?|[A-Z]\.?)){1,3}).{0,120}?"
+    r"the\s+\d+(?:st|nd|rd|th)?\s+president\s+of\s+the\s+United\s+States",
+    re.I | re.S,
+)
+
+_POTUS_SOURCE_TITLES = (
+    "List of presidents of the United States",
+    "Donald Trump",
+    _POTUS_PAGE,
+)
+
 _STALE_PRESIDENT = re.compile(
     r"\b(?:joe\s+biden|biden)\b.*\b(?:46th|2021\s+to\s+2025|was\s+the)\b",
     re.I,
@@ -71,25 +88,46 @@ def _wikipedia_extract(title: str, *, sentences: int = 12) -> Optional[str]:
 
 
 def fetch_potus_wikipedia_hit() -> Optional[SearchHit]:
-    extract = _wikipedia_extract(_POTUS_PAGE, sentences=14)
-    if not extract:
+    """Prefer List of presidents (has 'incumbent president is …')."""
+    for title in _POTUS_SOURCE_TITLES:
+        sentences = 10 if "List of" in title else 8
+        extract = _wikipedia_extract(title, sentences=sentences)
+        if not extract:
+            continue
+        hit: SearchHit = {
+            "title": title,
+            "snippet": extract[:1200],
+            "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+        }
+        if extract_current_us_president_name([hit]):
+            return hit
+    return None
+
+
+def _name_from_match(match: re.Match[str]) -> Optional[str]:
+    name = match.group(1).strip().rstrip(".")
+    if not name or name.lower() in ("the", "united", "states"):
         return None
-    return {
-        "title": _POTUS_PAGE,
-        "snippet": extract[:1200],
-        "url": "https://en.wikipedia.org/wiki/President_of_the_United_States",
-    }
+    # Prefer "Donald Trump" over "Donald John Trump" for speech.
+    if name.lower().startswith("donald john trump"):
+        return "Donald Trump"
+    return name
 
 
 def extract_current_us_president_name(hits: List[SearchHit]) -> Optional[str]:
     blob = " ".join(f"{h['title']} {h['snippet']}" for h in hits)
-    match = _CURRENT_POTUS.search(blob) or _CURRENT_POTUS_ALT.search(blob)
-    if not match:
-        return None
-    name = match.group(1).strip().rstrip(".")
-    if not name or name.lower() in ("the", "united", "states"):
-        return None
-    return name
+    for pattern in (
+        _INCUMBENT_POTUS,
+        _CURRENT_POTUS,
+        _CURRENT_POTUS_ALT,
+        _NTH_POTUS_BIO,
+    ):
+        match = pattern.search(blob)
+        if match:
+            name = _name_from_match(match)
+            if name:
+                return name
+    return None
 
 
 def prioritize_potus_hits(message: str, hits: List[SearchHit]) -> List[SearchHit]:

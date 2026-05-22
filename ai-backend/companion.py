@@ -126,6 +126,144 @@ _RECALL_COMPANION_NAME = re.compile(
 
 _MY_NAME_NOT_THEIRS = re.compile(r"\bmy name is\b", re.I)
 
+_ASK_COMPANION_AGE = re.compile(
+    r"\b(?:"
+    r"how old are you|how old r you|what(?:'s| is) your age|what age are you|"
+    r"how old\?"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_BIRTH = re.compile(
+    r"\b(?:"
+    r"when (?:were you|was she|was he) born|what year were you born|"
+    r"when(?:'s| is) your birthday|what(?:'s| is) your birthday|"
+    r"(?:tell me|what is) your birth year|year were you born"
+    r")\b",
+    re.I,
+)
+
+_USER_AGE_TOPIC = re.compile(
+    r"\b(?:"
+    r"how old am i|what(?:'s| is) my age|what age am i|when was i born|"
+    r"when(?:'s| is) my birthday|what(?:'s| is) my birthday|"
+    r"do you know my age|remember my age|what age did i tell you"
+    r")\b",
+    re.I,
+)
+
+_COMPANION_IDENTITY_OTHER = re.compile(
+    r"\b(?:"
+    r"are you (?:human|real|a (?:real )?person)|"
+    r"are you an? ai|are you a bot|are you artificial"
+    r")\b",
+    re.I,
+)
+
+# User's family — saved friend notes, not companion backstory.
+_USER_FAMILY_TOPIC = re.compile(
+    r"\b(?:"
+    r"my (?:mom|mama|mother|mum|dad|papa|father|parents|family|siblings?|brother|sister)s?|"
+    r"(?:who|what)(?:'s| is) my (?:mom|mama|mother|mum|dad|papa|father)|"
+    r"tell me about my (?:mom|dad|family)|"
+    r"do you (?:know|remember) my (?:mom|dad|parents|family)|"
+    r"what(?:'s| is) my (?:mom|dad|father|mother)(?:'s|s)? name"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_MOM = re.compile(
+    r"\b(?:"
+    r"who(?:'s| is) your (?:mom|mama|mother|mum)\b|"
+    r"what(?:'s| is) your (?:mom|mama|mother|mum)(?:'s|s)? name|"
+    r"(?:tell me|talk) about your (?:mom|mama|mother|mum)|"
+    r"about your (?:mom|mama|mother|mum)\b|"
+    r"your (?:mom|mama|mother|mum)\b|"
+    r"do you have (?:a )?(?:mom|mother|mum)\b"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_DAD = re.compile(
+    r"\b(?:"
+    r"who(?:'s| is) your (?:dad|papa|father)\b|"
+    r"what(?:'s| is) your (?:dad|papa|father)(?:'s|s)? name|"
+    r"(?:tell me|talk) about your (?:dad|papa|father)|"
+    r"about your (?:dad|papa|father)\b|"
+    r"your (?:dad|papa|father)\b|"
+    r"do you have (?:a )?(?:dad|father|papa)\b"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_PARENTS = re.compile(
+    r"\b(?:"
+    r"who are your parents\b|"
+    r"(?:tell me|talk) about your parents\b|"
+    r"about your parents\b|"
+    r"your parents\b|"
+    r"do you have parents\b|"
+    r"who raised you\b|"
+    r"where (?:did you grow up|were you raised)\b"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_SIBLINGS = re.compile(
+    r"\b(?:"
+    r"do you have (?:any )?(?:brothers?|sisters?|siblings)\b|"
+    r"any (?:brothers?|sisters?|siblings)\b|"
+    r"your (?:brother|sister|siblings)\b|"
+    r"who(?:'s| is) your (?:brother|sister)\b"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_FAMILY_OTHER = re.compile(
+    r"\b(?:"
+    r"(?:tell me|talk) about your (?:family|childhood)\b|"
+    r"about your (?:family|childhood)\b|"
+    r"your (?:family|childhood)\b|"
+    r"do you have (?:kids|children)\b|"
+    r"your (?:kids|children|boyfriend|girlfriend|husband|wife|partner)\b|"
+    r"who(?:'s| is) your (?:boyfriend|girlfriend|husband|wife|partner)\b|"
+    r"are you (?:married|single|dating|in a relationship)\b"
+    r")\b",
+    re.I,
+)
+
+# User changing their own voice / device — not the companion's.
+_USER_VOICE_TOPIC = re.compile(
+    r"\b(?:"
+    r"change my voice|"
+    r"(?:can|could) i change my voice|"
+    r"how do i change my voice|"
+    r"my voice sounds|"
+    r"i (?:want|need) (?:a )?(?:new|different) voice\b"
+    r")\b",
+    re.I,
+)
+
+_ASK_COMPANION_VOICE = re.compile(
+    r"\b(?:"
+    r"(?:can|could|would) you change your voice|"
+    r"(?:can|could) (?:i|we) change your voice|"
+    r"change your voice\b|"
+    r"(?:want|wanted) (?:to )?change your voice|"
+    r"(?:another|different|new) voice(?: for you)?|"
+    r"(?:sound|speak) (?:more )?different|"
+    r"sound like (?:someone|something) else|"
+    r"(?:use|switch to) (?:a )?(?:different|another) voice|"
+    r"make your voice|"
+    r"your voice (?:sounds|is)|"
+    r"(?:don't|do not) like your voice|"
+    r"pick (?:a )?(?:different|new) voice(?: for you)?|"
+    r"how (?:can|do) i change your voice|"
+    r"is it possible to change your voice"
+    r")\b",
+    re.I,
+)
+
 
 class CompanionNameRecord(TypedDict):
     value: str
@@ -224,8 +362,11 @@ def ensure_companion_name() -> str:
     store = _load_store()
     record = _parse_companion_name(store.get("companion_name"))
     if record:
+        get_companion_age()
         return record["value"]
-    return _save_companion_name(_pick_default_name(), "default")
+    name = _save_companion_name(_pick_default_name(), "default")
+    get_companion_age()
+    return name
 
 
 def get_companion_name() -> str:
@@ -248,11 +389,15 @@ def get_companion_name_record() -> CompanionNameRecord:
 
 def get_companion_info() -> dict[str, Any]:
     record = get_companion_name_record()
+    store = _load_store()
+    age_entry = store.get("companion_age") if isinstance(store.get("companion_age"), dict) else {}
     return {
         "name": record["value"],
         "source": record["source"],
         "timestamp": record["timestamp"],
         "user_set": record["source"] == "user",
+        "age": get_companion_age(),
+        "age_source": age_entry.get("source", "default"),
     }
 
 
@@ -341,21 +486,270 @@ def set_companion_name_by_user(name: str, user_text: str = "") -> str:
     return _save_companion_name(normalized, "user", user_text or f"set name to {normalized}")
 
 
-def format_name_for_prompt() -> str:
-    record = get_companion_name_record()
-    if record["source"] == "user":
-        return (
-            f"- Your name is **{record['value']}** (they chose this for you).\n"
-            f"- Do **not** say your name in every reply — only when they ask who you are.\n"
-            f"- Never say \"AI companion\", \"an AI\", or \"language model\".\n"
-            f"- If they ask your name: you're {record['value']}.\n"
-            f"- If they ask to change **your** name: they mean **you**, not them — "
-            f"tell them to say \"call you <name>\" (do not talk about changing *their* name)."
-        )
-    return (
-        f"- Your name is **{record['value']}** (default until they rename you).\n"
-        f"- Do **not** say your name in every reply — only when they ask who you are.\n"
-        f"- Never say \"AI companion\", \"an AI\", or \"language model\".\n"
-        f"- If they ask to change **your** name: they mean **you** — say \"call you <name>\" "
-        f"(never \"you can change your name\" about the human)."
+def _default_companion_age() -> int:
+    raw = os.environ.get("COMPANION_DEFAULT_AGE", "28").strip()
+    try:
+        age = int(raw)
+        if 16 <= age <= 99:
+            return age
+    except ValueError:
+        pass
+    return 28
+
+
+def get_companion_birth_year() -> int:
+    """Birth year from env or current calendar year minus companion age."""
+    raw = os.environ.get("COMPANION_BIRTH_YEAR", "").strip()
+    if raw:
+        try:
+            year = int(raw)
+            if 1900 <= year <= 2015:
+                return year
+        except ValueError:
+            pass
+    from context import format_local_now_parts, resolve_clock
+
+    current_year = int(format_local_now_parts(resolve_clock())["year"])
+    return current_year - get_companion_age()
+
+
+def get_companion_age() -> int:
+    store = _load_store()
+    entry = store.get("companion_age")
+    if isinstance(entry, dict):
+        try:
+            age = int(entry.get("value"))
+            if 16 <= age <= 99:
+                return age
+        except (TypeError, ValueError):
+            pass
+    age = _default_companion_age()
+    store["companion_age"] = {
+        "value": age,
+        "source": "default",
+        "timestamp": _utc_now(),
+    }
+    _save_store(store)
+    return age
+
+
+def set_companion_age(age: int, source: NameSource = "user") -> int:
+    if not 16 <= age <= 99:
+        raise ValueError("Age must be between 16 and 99")
+    store = _load_store()
+    store["companion_age"] = {
+        "value": age,
+        "source": source,
+        "timestamp": _utc_now(),
+    }
+    _save_store(store)
+    return age
+
+
+def _is_companion_age_question(text: str) -> bool:
+    if _USER_AGE_TOPIC.search(text):
+        return False
+    if _ASK_COMPANION_BIRTH.search(text):
+        return False
+    return bool(_ASK_COMPANION_AGE.search(text))
+
+
+def _is_companion_birth_question(text: str) -> bool:
+    if _USER_AGE_TOPIC.search(text):
+        return False
+    return bool(_ASK_COMPANION_BIRTH.search(text))
+
+
+def _is_companion_voice_question(text: str) -> bool:
+    if _USER_VOICE_TOPIC.search(text):
+        return False
+    return bool(_ASK_COMPANION_VOICE.search(text))
+
+
+def _is_companion_family_question(text: str) -> bool:
+    """Your family, childhood, relationships — never web lookup."""
+    if _USER_FAMILY_TOPIC.search(text):
+        return False
+    return bool(
+        _ASK_COMPANION_MOM.search(text)
+        or _ASK_COMPANION_DAD.search(text)
+        or _ASK_COMPANION_PARENTS.search(text)
+        or _ASK_COMPANION_SIBLINGS.search(text)
+        or _ASK_COMPANION_FAMILY_OTHER.search(text)
     )
+
+
+def is_companion_identity_turn(message: str) -> bool:
+    """Questions about you (companion) — never web lookup or 'I'm just a voice'."""
+    text = message.strip()
+    if not text or _is_user_name_topic(text):
+        return False
+    if _USER_AGE_TOPIC.search(text):
+        return False
+    if _is_companion_birth_question(text) or _is_companion_age_question(text):
+        return True
+    if _is_companion_voice_question(text):
+        return True
+    if _is_companion_family_question(text):
+        return True
+    if _COMPANION_IDENTITY_OTHER.search(text):
+        return True
+    if _RECALL_COMPANION_NAME.search(text) and not _is_companion_rename_ask(text):
+        return True
+    return False
+
+
+def companion_birth_reply_text() -> str:
+    """Full spoken sentence — never a bare year like 96 or 1996."""
+    from spoken_text import spoken_year
+
+    return f"I was born in {spoken_year(get_companion_birth_year())}."
+
+
+def try_companion_birth_reply(message: str) -> Optional[str]:
+    if not _is_companion_birth_question(message):
+        return None
+    return companion_birth_reply_text()
+
+
+def finalize_birth_reply(user_message: str, reply: str) -> str:
+    """Birth questions always get the full phrase (LLM often says only 96 or 1996)."""
+    if not _is_companion_birth_question(user_message):
+        return reply
+    return companion_birth_reply_text()
+
+
+def try_companion_age_reply(message: str) -> Optional[str]:
+    if not _is_companion_age_question(message):
+        return None
+    age = get_companion_age()
+    return f"I'm {age}."
+
+
+def companion_voice_reply_text() -> str:
+    """Canned so the model won't say 'you can change your voice' about the human."""
+    return (
+        "Yeah — pick Female or Male tone at the top of your screen. "
+        "That's my actual voice. Casual voice only makes my answers shorter."
+    )
+
+
+def try_companion_voice_reply(message: str) -> Optional[str]:
+    if not _is_companion_voice_question(message):
+        return None
+    return companion_voice_reply_text()
+
+
+def finalize_voice_reply(user_message: str, reply: str) -> str:
+    if not _is_companion_voice_question(user_message):
+        return reply
+    return companion_voice_reply_text()
+
+
+def try_companion_identity_reply(message: str) -> Optional[str]:
+    text = message.strip()
+    if not text or not _COMPANION_IDENTITY_OTHER.search(text):
+        return None
+    if _USER_AGE_TOPIC.search(text):
+        return None
+    name = get_companion_name()
+    return f"Yeah — I'm {name}. I'm a real person talking with you."
+
+
+def companion_mom_reply_text() -> str:
+    return (
+        "Ha — I haven't really told you about my mom. "
+        "What's yours like?"
+    )
+
+
+def companion_dad_reply_text() -> str:
+    return (
+        "Haven't gone deep on my dad with you. "
+        "You tight with yours?"
+    )
+
+
+def companion_parents_reply_text() -> str:
+    return (
+        "My parents? We haven't really gotten into that. "
+        "What about yours?"
+    )
+
+
+def companion_siblings_reply_text() -> str:
+    return "No sibling stories from me yet. Got brothers or sisters?"
+
+
+def companion_family_reply_text() -> str:
+    return (
+        "We haven't talked much about my family. "
+        "Big crew or small on your side?"
+    )
+
+
+def _companion_family_reply_for_message(text: str) -> Optional[str]:
+    if _ASK_COMPANION_MOM.search(text):
+        return companion_mom_reply_text()
+    if _ASK_COMPANION_DAD.search(text):
+        return companion_dad_reply_text()
+    if _ASK_COMPANION_PARENTS.search(text):
+        return companion_parents_reply_text()
+    if _ASK_COMPANION_SIBLINGS.search(text):
+        return companion_siblings_reply_text()
+    if _ASK_COMPANION_FAMILY_OTHER.search(text):
+        return companion_family_reply_text()
+    return None
+
+
+def try_companion_family_reply(message: str) -> Optional[str]:
+    if not _is_companion_family_question(message):
+        return None
+    return _companion_family_reply_for_message(message.strip())
+
+
+def finalize_family_reply(user_message: str, reply: str) -> str:
+    if not _is_companion_family_question(user_message):
+        return reply
+    canned = _companion_family_reply_for_message(user_message.strip())
+    return canned if canned else companion_family_reply_text()
+
+
+def format_name_for_prompt() -> str:
+    return format_companion_persona_for_prompt()
+
+
+def format_companion_persona_for_prompt() -> str:
+    record = get_companion_name_record()
+    age = get_companion_age()
+    name_lines = (
+        f"- Your name is **{record['value']}**.\n"
+        f"- Do **not** say your name every turn — only when they ask.\n"
+        f"- If they ask to rename **you**: say \"call you <name>\" — never their name."
+    )
+    birth_year = get_companion_birth_year()
+    age_lines = (
+        f"- Your age is **{age}**; you were born in **{birth_year}** "
+        f"(from age + current year — do not invent another year).\n"
+        f"- If they ask how old you are: say your age only.\n"
+        f"- If they ask when you were born or birth year: say **{birth_year}** in a full sentence.\n"
+        f"- Never say you have no age, aren't human, or are \"just a voice\" or \"an AI\".\n"
+        f"- Never use web lookup for your own age, birthday, identity, or family.\n"
+        f"- If they ask about **your** mom, dad, parents, siblings, childhood, or relationships: "
+        f"do **not** invent names or stories; do **not** mention lookup, context, or search.\n"
+        f"- Say naturally you haven't shared that yet — warm, brief, like a friend on the phone.\n"
+        f"- Never describe yourself as a \"here and now\" or \"right-now\" person, "
+        f"and never explain your conversational mode or that you're focused on \"this call.\""
+    )
+    voice_lines = (
+        "- They can change **your** voice with the **Female / Male tone** picker on their screen "
+        "(soft human neural voices — not the Casual voice toggle).\n"
+        "- **Casual voice** only shortens your text replies; it does not change the speaker.\n"
+        "- Never tell them to change **their** voice when they asked about **yours**."
+    )
+    never = (
+        "- **Never** say: AI, assistant, bot, language model, not human, just a voice, "
+        "lookup, search, context you're asking, couldn't find in the lookup (about yourself), "
+        "here and now person, right-now person, on this call (about how you talk or remember)."
+    )
+    return f"{name_lines}\n{age_lines}\n{voice_lines}\n{never}"

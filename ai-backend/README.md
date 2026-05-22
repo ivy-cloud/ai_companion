@@ -1,6 +1,6 @@
 # AI Companion Backend
 
-FastAPI server that streams chat through a **local [Ollama](https://ollama.com)** model (`qwen2.5:3b` by default).
+FastAPI server for the voice companion. Chat brain is **Ollama (local)** or **Groq (cloud)** — set `LLM_PROVIDER` in `.env`.
 
 ## 1. Install Ollama
 
@@ -52,10 +52,42 @@ pip install -r requirements.txt
 Optional `.env` (copy from `.env.example`):
 
 ```bash
+LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:3b
 # Alternatives: qwen2.5:7b (smarter, slower), llama3.1:8b, llama3.2:3b
 ```
+
+## Groq setup (fast cloud LLM — good for voice)
+
+1. **Sign up:** https://console.groq.com  
+2. **Create API key:** left menu → **API Keys** → **Create API Key** → copy `gsk_…`  
+3. **Add to** `ai-backend/.env`:
+
+```bash
+LLM_PROVIDER=groq
+GROQ_API_KEY=gsk_your_key_here
+GROQ_MODEL=llama-3.1-8b-instant
+```
+
+4. Restart `./start.sh` and check health:
+
+```bash
+curl -sS http://127.0.0.1:8000/health | python3 -m json.tool
+# expect "llm_provider": "groq", "model_ready": true
+```
+
+### Which Groq model for this voice app?
+
+| Model | Best for |
+|--------|----------|
+| **`llama-3.1-8b-instant`** (default) | **Push-to-talk voice** — very fast, short obedient replies |
+| **`llama-3.3-70b-versatile`** | Richer answers when you want quality over minimum latency |
+| `llama3-70b-8192` | Older; use 3.3 70B instead if you need a large model |
+
+Azure STT/TTS is unchanged — Groq only replaces the text brain (Ollama).
+
+**President / facts:** US president is answered from **live Wikipedia** (canned), not model memory — works the same with Groq or Ollama.
 
 ## 5. Run the API
 

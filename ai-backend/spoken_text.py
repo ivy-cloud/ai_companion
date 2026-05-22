@@ -14,7 +14,7 @@ _LETTER_FRAGMENT = re.compile(
     re.I,
 )
 _TIME_24H = re.compile(r"\b(\d{1,2}):(\d{2})\b")
-_YEAR = re.compile(r"\b(19|20)\d{2}\b")
+_YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 _DIGIT_TO_WORD = re.compile(r"\b(\d{1,2})(?!'s\b)")
 # e.g. 2+2, 2 + 2 = 4 — must run before symbol strip (which removes + and =).
 _MATH_EXPR = re.compile(
@@ -101,6 +101,9 @@ _CARDINAL_WORDS: dict[int, str] = {
     40: "forty",
     50: "fifty",
     60: "sixty",
+    70: "seventy",
+    80: "eighty",
+    90: "ninety",
 }
 
 # Casual reactions / shorts — say as words, not spelled letters.
@@ -138,6 +141,25 @@ def _ordinal_to_word(day: int) -> str:
     return f"{day}{suffix}"
 
 
+def spoken_year(year: int) -> str:
+    """Calendar year for TTS (e.g. 1998 → nineteen ninety-eight)."""
+    if 2000 <= year <= 2099:
+        last_two = year % 100
+        if last_two == 0:
+            return "two thousand"
+        if last_two < 10:
+            return f"twenty oh-{_cardinal_word(last_two)}"
+        return f"twenty {_cardinal_word(last_two)}"
+    if 1900 <= year <= 1999:
+        last_two = year % 100
+        if last_two == 0:
+            return "nineteen hundred"
+        if last_two < 10:
+            return f"nineteen oh-{_cardinal_word(last_two)}"
+        return f"nineteen {_cardinal_word(last_two)}"
+    return str(year)
+
+
 def _cardinal_word(n: int) -> str:
     if n in _CARDINAL_WORDS:
         return _CARDINAL_WORDS[n]
@@ -145,9 +167,20 @@ def _cardinal_word(n: int) -> str:
         tens, ones = divmod(n, 10)
         if tens == 0:
             return _cardinal_word(ones)
+        tens_words = {
+            2: "twenty",
+            3: "thirty",
+            4: "forty",
+            5: "fifty",
+            6: "sixty",
+            7: "seventy",
+            8: "eighty",
+            9: "ninety",
+        }
+        tens_word = tens_words.get(tens, str(tens * 10))
         if ones == 0:
-            return _CARDINAL_WORDS.get(tens * 10, str(n))
-        return f"{_CARDINAL_WORDS.get(tens * 10, str(tens * 10))} {_CARDINAL_WORDS.get(ones, str(ones))}"
+            return tens_word
+        return f"{tens_word} {_cardinal_word(ones)}"
     return str(n)
 
 
@@ -204,7 +237,7 @@ def _normalize_fragments(text: str) -> str:
 
 def _normalize_numbers(text: str) -> str:
     cleaned = _TIME_24H.sub(_time_to_words, text)
-    cleaned = _YEAR.sub(lambda m: m.group(0), cleaned)
+    cleaned = _YEAR.sub(lambda m: spoken_year(int(m.group(1))), cleaned)
     cleaned = _DIGIT_TO_WORD.sub(lambda m: _cardinal_word(int(m.group(1))), cleaned)
     return cleaned
 

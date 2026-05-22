@@ -5,6 +5,7 @@ import os
 import re
 import unicodedata
 from pathlib import Path
+from typing import Optional
 
 import httpx
 from fastapi import HTTPException
@@ -34,7 +35,9 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE,
 )
 
+from emotion import normalize_express_style, resolve_express_style, voice_supports_express
 from spoken_text import normalize_for_speech
+from voice_config import VoiceDelivery, resolve_voice_delivery, voice_options_for_client
 
 
 def _ssml_escape_text(text: str) -> str:
@@ -66,18 +69,20 @@ def _speech_region() -> str:
     return r if r else "eastus"
 
 
-def _speech_voice() -> str:
-    return os.environ.get("AZURE_SPEECH_VOICE", "en-US-JennyNeural").strip()
+def _speech_voice(gender_override: Optional[str] = None) -> str:
+    return resolve_voice_delivery(gender_override).voice
 
 
-def _use_speaking_style() -> bool:
-    v = os.environ.get("AZURE_USE_SPEAKING_STYLE", "true").strip().lower()
-    return v in ("1", "true", "yes")
+def _delivery(gender_override: Optional[str] = None) -> VoiceDelivery:
+    return resolve_voice_delivery(gender_override)
 
 
-def _speaking_style_name() -> str:
-    """Neural voice style (e.g. friendly, chat). See Azure 'voice styles' docs."""
-    raw = os.environ.get("AZURE_SPEAKING_STYLE", "friendly").strip().lower() or "friendly"
+def _use_speaking_style(delivery: VoiceDelivery) -> bool:
+    return delivery.use_speaking_style
+
+
+def _speaking_style_name(delivery: VoiceDelivery) -> str:
+    raw = delivery.speaking_style.strip().lower() or "friendly"
     if not re.match(r"^[a-z][a-z0-9-]{0,31}$", raw):
         return "friendly"
     return raw
@@ -112,6 +117,29 @@ def _tts_url() -> str:
     return f"{custom}/cognitiveservices/v1"
 
 
+def _escape_and_break_sentences(cleaned: str) -> str:
+    """Natural pauses between sentences inside one TTS request."""
+    parts = re.split(r"(?<=[.!?])\s+", cleaned.strip())
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) <= 1:
+        return _ssml_escape_text(cleaned)
+    inner = '<break time="240ms"/>'.join(_ssml_escape_text(p) for p in parts)
+    return inner
+
+
+_NEUTRAL_PITCH = frozenset(
+    {"", "0st", "+0st", "medium", "default", "neutral", "x-medium"},
+)
+
+
+def _wrap_prosody(rate: str, pitch: str, escaped_text: str) -> str:
+    """Azure rejects pitch='0st' (FailedPrecondition) — omit pitch when neutral."""
+    p = pitch.strip().lower()
+    if p in _NEUTRAL_PITCH:
+        return f'<prosody rate="{rate}">{escaped_text}</prosody>'
+    return f'<prosody rate="{rate}" pitch="{pitch}">{escaped_text}</prosody>'
+
+
 def _build_ssml(
     voice: str,
     rate: str,
@@ -125,7 +153,7 @@ def _build_ssml(
     v_attr = html.escape(voice, quote=True)
     loc_attr = html.escape(locale, quote=True)
     style_attr = html.escape(express_style, quote=True)
-    prosody = f'<prosody rate="{rate}" pitch="{pitch}">{escaped_text}</prosody>'
+    prosody = _wrap_prosody(rate, pitch, escaped_text)
 
     if use_express:
         inner = f'<mstts:express-as style="{style_attr}">{prosody}</mstts:express-as>'
@@ -163,6 +191,11 @@ def _raise_for_azure_error(response: httpx.Response) -> None:
     if code == 403:
         raise HTTPException(status_code=403, detail=detail)
     if code == 400:
+        if "FailedPrecondition" in body or "precondition" in body.lower():
+            detail += (
+                " — Often invalid SSML (e.g. pitch 0st) or voice not in your region. "
+                "Try COMPANION_VOICE_USE_PRESET=true or en-US-JennyNeural / SaraNeural."
+            )
         raise HTTPException(status_code=400, detail=detail)
     if code == 415:
         raise HTTPException(status_code=415, detail=detail)
@@ -177,21 +210,37 @@ def tts_configured() -> bool:
     return bool(_speech_key() and _speech_region())
 
 
-def tts_status() -> dict:
+def tts_status(gender_override: Optional[str] = None) -> dict:
     key_ok = bool(_speech_key())
     region = _speech_region()
     ready = key_ok and bool(region)
+    delivery = _delivery(gender_override)
 
     status: dict = {
         "ready": ready,
-        "voice": _speech_voice(),
+        "voice": delivery.voice,
+        "voice_label": delivery.label,
+        "voice_gender": delivery.gender,
         "region": region,
         "env_file": str(_ENV_FILE),
         "env_file_exists": _ENV_FILE.is_file(),
         "subscription_key_set": key_ok,
         "custom_tts_endpoint": bool(os.environ.get("AZURE_SPEECH_ENDPOINT", "").strip()),
-        "speaking_style": _speaking_style_name() if ready and _use_speaking_style() else None,
-        "speaking_style_enabled": _use_speaking_style() if ready else None,
+        "speaking_style": _speaking_style_name(delivery) if ready and _use_speaking_style(delivery) else None,
+        "speaking_style_enabled": _use_speaking_style(delivery) if ready else None,
+        "express_tts_supported": voice_supports_express(delivery.voice) if ready else None,
+        "express_styles": sorted(
+            {
+                "cheerful",
+                "excited",
+                "friendly",
+                "hopeful",
+                "sad",
+            }
+        )
+        if ready and voice_supports_express(delivery.voice)
+        else None,
+        "voice_options": voice_options_for_client() if ready else [],
     }
 
     if not ready:
@@ -234,8 +283,8 @@ def _normalize_prosody_rate(raw: str, default: str) -> str:
     return default
 
 
-def _prosody_for_style(style: str) -> tuple[str, str]:
-    """SSML prosody rate + pitch; optional env overrides (see .env.example)."""
+def _prosody_for_style(style: str, delivery: VoiceDelivery) -> tuple[str, str]:
+    """SSML prosody rate + pitch from preset or env."""
     if style == "filler":
         rate = _normalize_prosody_rate(
             os.environ.get("AZURE_SPEECH_RATE_FILLER", ""),
@@ -245,15 +294,22 @@ def _prosody_for_style(style: str) -> tuple[str, str]:
     else:
         rate = _normalize_prosody_rate(
             os.environ.get("AZURE_SPEECH_RATE_MAIN", ""),
-            "1.0",
+            delivery.rate_main,
         )
-        pitch = os.environ.get("AZURE_SPEECH_PITCH_MAIN", "+0.15st").strip() or "+0.15st"
+        pitch = delivery.pitch_main.strip() or "-0.5st"
     if not re.match(r"^[+-]?\d+(\.\d+)?st$", pitch):
-        pitch = "+0.1st" if style == "filler" else "+0.15st"
+        pitch = "+0.1st" if style == "filler" else "-0.5st"
     return rate, pitch
 
 
-def synthesize_speech(text: str, style: str = "default") -> bytes:
+def synthesize_speech(
+    text: str,
+    style: str = "default",
+    *,
+    voice_gender: Optional[str] = None,
+    express_style: Optional[str] = None,
+    emotion_hint: Optional[str] = None,
+) -> bytes:
     if not tts_configured():
         raise HTTPException(
             status_code=503,
@@ -269,13 +325,26 @@ def synthesize_speech(text: str, style: str = "default") -> bytes:
     if len(cleaned) > MAX_TTS_CHARS:
         cleaned = cleaned[:MAX_TTS_CHARS]
 
-    rate, pitch = _prosody_for_style(style)
+    delivery = _delivery(voice_gender)
+    rate, pitch = _prosody_for_style(style, delivery)
 
-    use_express = _use_speaking_style()
-    express_style = _speaking_style_name()
-    escaped = _ssml_escape_text(cleaned)
-    voice = _speech_voice()
-    ssml = _build_ssml(voice, rate, pitch, escaped, use_express=use_express, express_style=express_style)
+    voice = delivery.voice
+    hint_norm = (emotion_hint or "").strip().lower() or None
+    if hint_norm == "neutral":
+        hint_norm = None
+    use_express, express_name = resolve_express_style(
+        voice=voice,
+        express_override=express_style,
+        emotion_hint=hint_norm,  # type: ignore[arg-type]
+        delivery_use_preset_style=_use_speaking_style(delivery),
+        delivery_style=_speaking_style_name(delivery),
+    )
+    if express_style and not normalize_express_style(express_style):
+        use_express = False
+    escaped = _escape_and_break_sentences(cleaned)
+    ssml = _build_ssml(
+        voice, rate, pitch, escaped, use_express=use_express, express_style=express_name
+    )
 
     key = _speech_key()
     url = _tts_url()

@@ -79,10 +79,16 @@ def is_simple_math_question(message: str) -> bool:
 
 def is_factual_question(message: str) -> bool:
     """Generic: user wants a verifiable fact, not casual chat."""
+    import profile
+    from companion import is_companion_identity_turn
     from context import is_time_question
 
     text = message.strip()
     lower = text.lower().rstrip("?").strip()
+    if profile.is_memory_recall_question(text):
+        return False
+    if is_companion_identity_turn(text):
+        return False
     if is_simple_math_question(text):
         return False
     if is_time_question(text):
@@ -112,10 +118,16 @@ def should_search(message: str) -> bool:
     if not is_enabled():
         return False
 
+    from companion import is_companion_identity_turn
     from context import is_time_question
 
     text = message.strip()
-    if len(text) < 4 or is_time_question(text) or is_simple_math_question(text):
+    if (
+        len(text) < 4
+        or is_time_question(text)
+        or is_simple_math_question(text)
+        or is_companion_identity_turn(text)
+    ):
         return False
 
     lower = text.lower().rstrip("?").strip()

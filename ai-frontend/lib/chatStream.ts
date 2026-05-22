@@ -12,11 +12,20 @@ export type StreamHandlers = {
   onError: (message: string) => void;
 };
 
+export type ChatStreamDoneMeta = {
+  emotion_hint?: string;
+  express_style?: string;
+};
+
 type StreamEvent =
   | { start: true }
   | { text: string }
-  | { done: true; reply: string }
+  | ({ done: true; reply: string } & ChatStreamDoneMeta)
   | { error: string };
+
+export type ChatStreamHandlers = StreamHandlers & {
+  onDoneMeta?: (meta: ChatStreamDoneMeta) => void;
+};
 
 const STREAM_TIMEOUT_MS = 180_000;
 
@@ -66,6 +75,12 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
       throw new Error(event.error);
     }
     if ('done' in event && event.done) {
+      const meta: ChatStreamDoneMeta = {};
+      if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
+      if (event.express_style) meta.express_style = event.express_style;
+      if (meta.emotion_hint || meta.express_style) {
+        (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
+      }
       return handlers.onDone(event.reply || full);
     }
   }
@@ -134,8 +149,10 @@ export function streamChatWithXHR(
           handlers.onStart?.();
         }
         if ('text' in event && event.text) {
-          full += event.text;
-          handlers.onText(event.text);
+          if (!completed) {
+            full += event.text;
+            handlers.onText(event.text);
+          }
         }
         if ('error' in event && event.error) {
           try {
@@ -149,6 +166,12 @@ export function streamChatWithXHR(
         if ('done' in event && event.done) {
           if (completed) return;
           completed = true;
+          const meta: ChatStreamDoneMeta = {};
+          if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
+          if (event.express_style) meta.express_style = event.express_style;
+          if (meta.emotion_hint || meta.express_style) {
+            (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
+          }
           const reply = handlers.onDone(event.reply || full);
           finish(() => resolve(reply));
           return;

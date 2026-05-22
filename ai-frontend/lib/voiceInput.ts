@@ -53,6 +53,21 @@ export async function configureRecordingAudioMode() {
   });
 }
 
+/**
+ * Play TTS while keeping the mic open for conversation barge-in.
+ * iOS: requires allowsRecordingIOS; speaker bleed may still trip metering on some devices.
+ */
+export async function configureConversationBargeInAudioMode() {
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    playsInSilentModeIOS: true,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    staysActiveInBackground: false,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  });
+}
+
 export async function ensureMicrophonePermission(): Promise<boolean> {
   const current = await Audio.getPermissionsAsync();
   if (current.granted) return true;
@@ -90,6 +105,21 @@ export async function discardPrewarm(): Promise<void> {
 }
 
 /** Start recording using prewarmed instance when available. */
+const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
+  ...RECORDING_OPTIONS,
+  isMeteringEnabled: true,
+};
+
+/** Conversation mode: metering enabled for silence / speech detection. */
+export async function startConversationRecording(): Promise<Audio.Recording> {
+  await configureRecordingAudioMode();
+  await discardPrewarm();
+  const recording = new Audio.Recording();
+  await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
+  await recording.startAsync();
+  return recording;
+}
+
 export async function startPushToTalkRecording(): Promise<Audio.Recording> {
   await configureRecordingAudioMode();
 
@@ -127,21 +157,48 @@ const PHANTOM_TRANSCRIPTS = new Set([
   'uh',
   'um',
   'hmm',
-  'okay',
-  'ok',
-  'yeah',
-  'yes',
-  'no',
   'thank you',
   'thanks',
-  'thank you.',
-  'thanks.',
+]);
+
+/** Short follow-ups are valid voice input (STT often returns one word). */
+const SHORT_VALID_UTTERANCES = new Set([
+  'why',
+  'how',
+  'who',
+  'what',
+  'when',
+  'where',
+  'which',
+  'really',
+  'huh',
+  'wow',
+  'hey',
+  'hi',
+  'hello',
+  'yes',
+  'no',
+  'yeah',
+  'yep',
+  'nope',
+  'ok',
+  'okay',
+  'sure',
+  'right',
+  'true',
+  'false',
+  'more',
+  'again',
+  'wait',
+  'stop',
 ]);
 
 export function isSubstantiveTranscript(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, '');
-  if (normalized.length < 4) return false;
+  if (!normalized) return false;
+  if (SHORT_VALID_UTTERANCES.has(normalized)) return true;
   if (PHANTOM_TRANSCRIPTS.has(normalized)) return false;
+  if (normalized.length < 4) return false;
   const words = normalized.split(/\s+/).filter(Boolean);
   if (words.length === 1 && words[0].length < 4) return false;
   return true;

@@ -50,7 +50,7 @@ export function polishSpokenText(text: string): string {
   const base = stripEmojisAndSymbols(text)
     .replace(/\s*;\s*/g, '. ')
     .replace(/\s*:\s*/g, ' ')
-    .replace(/,/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -195,9 +195,9 @@ export function buildSpeechUtterances(
   return utterances.length > 0 ? utterances : [cleaned];
 }
 
-/** No artificial pause between TTS clips — Azure handles sentence prosody. */
-export function pauseBetweenUtterances(_hasMore: boolean): number {
-  return 0;
+/** Brief pause between sentence clips so multi-sentence replies breathe like a person. */
+export function pauseBetweenUtterances(hasMore: boolean): number {
+  return hasMore ? 220 : 0;
 }
 
 /** Join queued stream chunks into one continuous speak line. */

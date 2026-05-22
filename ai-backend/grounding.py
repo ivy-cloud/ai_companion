@@ -5,17 +5,11 @@ Uses a strict, low-temperature Ollama pass on sources only — separate from the
 companion personality pass so training data and chat history do not override the web.
 """
 
-import json
-import os
 from typing import List, Optional
 
-import httpx
+import llm_provider
 
 from web_search import SearchHit
-
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
-OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 
 _GROUNDING_SYSTEM = """Answer using ONLY the numbered sources below.
 
@@ -54,29 +48,20 @@ def answer_from_sources(question: str, hits: List[SearchHit]) -> Optional[str]:
     if not sources:
         return None
 
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [
+    text = llm_provider.complete_chat(
+        [
             {"role": "system", "content": _GROUNDING_SYSTEM},
             {
                 "role": "user",
                 "content": f"Question: {question.strip()}\n\nSources:\n{sources}",
             },
         ],
-        "stream": False,
-        "options": {"temperature": 0.1, "top_p": 0.85},
-    }
-
-    try:
-        with httpx.Client(timeout=httpx.Timeout(90.0, connect=10.0)) as client:
-            response = client.post(OLLAMA_CHAT_URL, json=payload)
-            if response.status_code >= 400:
-                return None
-            data = response.json()
-    except Exception:
+        temperature=0.1,
+        max_tokens=80,
+    )
+    if not text:
         return None
-
-    text = str(data.get("message", {}).get("content", "")).strip()
+    text = text.strip()
     if not text or "INSUFFICIENT" in text.upper():
         return None
     return text

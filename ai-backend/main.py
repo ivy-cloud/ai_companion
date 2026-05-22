@@ -15,7 +15,9 @@ load_dotenv(_BACKEND_DIR / ".env", override=True)
 
 import companion
 import current_facts
+import emotion
 import grounding
+import llm_provider
 import memory
 import profile
 import stt
@@ -38,11 +40,6 @@ from personality import (
     build_personality_system_prompt,
     build_turn_hints,
 )
-
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
-OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
-
 
 def _bootstrap_profile_from_saved_chat() -> None:
     """Re-index user lines only — assistant messages are never fact sources."""
@@ -71,6 +68,9 @@ class ChatRequest(BaseModel):
 class TtsRequest(BaseModel):
     text: str
     style: str = "default"
+    voice_gender: Optional[str] = None  # female | male — app voice-tone picker
+    express_style: Optional[str] = None  # Azure mstts:express-as (cheerful, friendly, …)
+    emotion_hint: Optional[str] = None  # warm | sympathetic | excited | gentle | neutral
 
 
 class ChatContext(NamedTuple):
@@ -100,6 +100,19 @@ def build_system_prompt(
     )
 
 
+def _turn_emotion(
+    trimmed: str,
+    *,
+    factual: bool = False,
+    memory_recall: bool = False,
+) -> tuple[str, Optional[str]]:
+    """LLM mood hint + Azure express style for this turn (None = no express-as)."""
+    if factual or memory_recall:
+        return "neutral", None
+    hint = emotion.detect_emotion_hint(trimmed, memory.get_history())
+    return hint, emotion.express_style_for_hint(hint)
+
+
 def build_chat_context(
     latest_user_message: str,
     web_block: Optional[str] = None,
@@ -118,6 +131,9 @@ def build_chat_context(
         web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
     )
     memory_recall = profile.is_memory_recall_question(trimmed)
+    emotion_hint, _express = _turn_emotion(
+        trimmed, factual=factual, memory_recall=memory_recall
+    )
 
     # Factual / memory-recall turns: no chat history (avoids wrong or invented context).
     if factual or memory_recall:
@@ -146,7 +162,7 @@ def build_chat_context(
 
     user_content = (
         f"{user_content}\n\n"
-        f"({build_turn_hints(trimmed, math_turn=math_turn, memory_recall=memory_recall, factual=factual)})"
+        f"({build_turn_hints(trimmed, math_turn=math_turn, memory_recall=memory_recall, factual=factual, emotion_hint=emotion_hint)})"
     )
 
     return ChatContext(
@@ -186,97 +202,6 @@ def _ndjson_line(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
-def _list_ollama_models() -> List[str]:
-    try:
-        response = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5.0)
-        response.raise_for_status()
-        data = response.json()
-        return [item.get("name", "") for item in data.get("models", []) if item.get("name")]
-    except Exception:
-        return []
-
-
-def _model_is_available(model_name: str, installed: List[str]) -> bool:
-    if not installed:
-        return False
-    if model_name in installed:
-        return True
-    return any(
-        name == model_name or name.startswith(f"{model_name}:") or name.split(":")[0] == model_name
-        for name in installed
-    )
-
-
-def _model_missing_message(installed: List[str]) -> str:
-    installed_text = ", ".join(installed) if installed else "(none — run ollama pull)"
-    return (
-        f"Ollama model '{OLLAMA_MODEL}' is not installed. "
-        f"Run: ollama pull {OLLAMA_MODEL}\n"
-        f"Installed models: {installed_text}"
-    )
-
-
-def _stream_ollama_text(messages: List[dict], *, factual: bool = False) -> Iterator[str]:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": True,
-        "options": {
-            "temperature": 0.7 if factual else 0.84,
-            "top_p": 0.9,
-            "repeat_penalty": 1.08,
-            "num_predict": 64 if factual else 120,
-        },
-    }
-
-    try:
-        with httpx.Client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
-            with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
-                if response.status_code >= 400:
-                    body = response.read().decode("utf-8", errors="replace")
-                    if response.status_code == 404:
-                        installed = _list_ollama_models()
-                        raise HTTPException(
-                            status_code=503,
-                            detail=_model_missing_message(installed),
-                        )
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Ollama error ({response.status_code}): {body}",
-                    )
-
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if data.get("error"):
-                        raise HTTPException(status_code=502, detail=data["error"])
-
-                    piece = data.get("message", {}).get("content", "")
-                    if piece:
-                        yield piece
-
-                    if data.get("done"):
-                        return
-    except httpx.ConnectError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Cannot reach Ollama at {OLLAMA_BASE_URL}. "
-                f"Install Ollama, run `ollama pull {OLLAMA_MODEL}`, and ensure `ollama serve` is running."
-            ),
-        ) from exc
-    except httpx.TimeoutException as exc:
-        raise HTTPException(
-            status_code=504,
-            detail="Ollama request timed out. Try a shorter message or check model load.",
-        ) from exc
-
-
 def _stream_text_chunks(text: str, chunk_size: int = 14) -> Iterator[str]:
     """Yield canned replies in small chunks so the client can render/speak progressively."""
     if not text:
@@ -290,9 +215,13 @@ def _stream_canned_reply(trimmed: str, reply: str) -> Generator[str, None, None]
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
     memory.append_exchange(trimmed, reply)
+    emotion_hint, express_style = _turn_emotion(trimmed)
     for piece in _stream_text_chunks(reply):
         yield _ndjson_line({"text": piece})
-    yield _ndjson_line({"done": True, "reply": reply})
+    done_payload: dict = {"done": True, "reply": reply, "emotion_hint": emotion_hint}
+    if express_style:
+        done_payload["express_style"] = express_style
+    yield _ndjson_line(done_payload)
 
 
 def stream_chat_events(
@@ -320,6 +249,31 @@ def stream_chat_events(
             yield from _stream_canned_reply(trimmed, polish_for_speech(math_reply))
             return
 
+        birth_reply = companion.try_companion_birth_reply(trimmed)
+        if birth_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(birth_reply))
+            return
+
+        age_reply = companion.try_companion_age_reply(trimmed)
+        if age_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(age_reply))
+            return
+
+        voice_reply = companion.try_companion_voice_reply(trimmed)
+        if voice_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(voice_reply))
+            return
+
+        identity_reply = companion.try_companion_identity_reply(trimmed)
+        if identity_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(identity_reply))
+            return
+
+        family_reply = companion.try_companion_family_reply(trimmed)
+        if family_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(family_reply))
+            return
+
         name_reply = companion.try_name_recall_reply(trimmed)
         if name_reply:
             yield from _stream_canned_reply(trimmed, polish_for_speech(name_reply))
@@ -328,6 +282,16 @@ def stream_chat_events(
         rename_reply = companion.try_name_change_reply(trimmed)
         if rename_reply:
             yield from _stream_canned_reply(trimmed, polish_for_speech(rename_reply))
+            return
+
+        conflict_reply = profile.try_memory_conflict_reply(trimmed)
+        if conflict_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(conflict_reply))
+            return
+
+        age_learn_reply = profile.try_user_age_learn_reply(trimmed)
+        if age_learn_reply:
+            yield from _stream_canned_reply(trimmed, polish_for_speech(age_learn_reply))
             return
 
         recall_reply = profile.try_memory_recall_reply(trimmed)
@@ -355,14 +319,18 @@ def stream_chat_events(
             context = build_chat_context(trimmed, web_block, hits, clock=clock)
 
         collected: List[str] = []
-        for piece in _stream_ollama_text(
+        for piece in llm_provider.stream_chat_text(
             context.to_ollama_messages(),
             factual=context.factual_reply,
         ):
             collected.append(piece)
             yield _ndjson_line({"text": piece})
 
-        reply = polish_for_speech("".join(collected).strip())
+        raw_reply = "".join(collected).strip()
+        raw_reply = companion.finalize_birth_reply(trimmed, raw_reply)
+        raw_reply = companion.finalize_voice_reply(trimmed, raw_reply)
+        raw_reply = companion.finalize_family_reply(trimmed, raw_reply)
+        reply = polish_for_speech(raw_reply)
         if not reply:
             reply = "I don't have a reply right now. Please try again."
 
@@ -370,7 +338,15 @@ def stream_chat_events(
         companion.try_learn_name_from_user(context.trimmed_latest)
         profile.learn_from_user_message(context.trimmed_latest)
         memory.append_exchange(context.trimmed_latest, reply)
-        yield _ndjson_line({"done": True, "reply": reply})
+        emotion_hint, express_style = _turn_emotion(
+            context.trimmed_latest,
+            factual=context.factual_reply,
+            memory_recall=profile.is_memory_recall_question(context.trimmed_latest),
+        )
+        done_payload: dict = {"done": True, "reply": reply, "emotion_hint": emotion_hint}
+        if express_style:
+            done_payload["express_style"] = express_style
+        yield _ndjson_line(done_payload)
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         yield _ndjson_line({"error": detail})
@@ -379,44 +355,39 @@ def stream_chat_events(
 
 
 @app.get("/health")
-def health():
-    try:
-        installed = _list_ollama_models()
-        model_ready = _model_is_available(OLLAMA_MODEL, installed)
-        return {
-            "status": "ok" if model_ready else "degraded",
-            "ollama": "reachable",
-            "base_url": OLLAMA_BASE_URL,
-            "model": OLLAMA_MODEL,
-            "model_ready": model_ready,
-            "installed_models": installed,
-            "memory_exchanges": memory.exchange_count(),
-            "profile_facts": profile.get_facts(),
-            "companion": companion.get_companion_info(),
-            "local_time": format_local_now(),
-            "streaming": "ndjson",
-            "hint": None if model_ready else f"Run: ollama pull {OLLAMA_MODEL}",
-            "azure_tts": tts.tts_status(),
-            "azure_stt": stt.stt_status(),
-            "web_search": web_search.status(),
-        }
-    except Exception as exc:
-        return {
-            "status": "degraded",
-            "ollama": "unreachable",
-            "base_url": OLLAMA_BASE_URL,
-            "model": OLLAMA_MODEL,
-            "model_ready": False,
-            "memory_exchanges": memory.exchange_count(),
-            "profile_facts": profile.get_facts(),
-            "companion": companion.get_companion_info(),
-            "local_time": format_local_now(),
-            "detail": str(exc),
-            "hint": "Start Ollama: ollama serve",
-            "azure_tts": tts.tts_status(),
-            "azure_stt": stt.stt_status(),
-            "web_search": web_search.status(),
-        }
+def health(voice_gender: Optional[str] = None):
+    provider = llm_provider.llm_provider()
+    model_ready, hint, installed = llm_provider.check_model_ready()
+    ollama_status = "skipped"
+    base_url = None
+    if provider == "ollama":
+        try:
+            httpx.get(f"{llm_provider.OLLAMA_BASE_URL}/api/tags", timeout=5.0).raise_for_status()
+            ollama_status = "reachable"
+            base_url = llm_provider.OLLAMA_BASE_URL
+        except Exception as exc:
+            ollama_status = "unreachable"
+            model_ready = False
+            hint = hint or f"Start Ollama: ollama serve ({exc})"
+    return {
+        "status": "ok" if model_ready else "degraded",
+        "llm_provider": provider,
+        "model": llm_provider.active_model(),
+        "model_ready": model_ready,
+        "ollama": ollama_status,
+        "base_url": base_url,
+        "groq_configured": llm_provider.groq_configured() if provider == "groq" else None,
+        "installed_models": installed if provider == "ollama" else [],
+        "memory_exchanges": memory.exchange_count(),
+        "profile_facts": profile.get_facts(),
+        "companion": companion.get_companion_info(),
+        "local_time": format_local_now(),
+        "streaming": "ndjson",
+        "hint": hint,
+        "azure_tts": tts.tts_status(voice_gender),
+        "azure_stt": stt.stt_status(),
+        "web_search": web_search.status(),
+    }
 
 
 @app.post("/chat")
@@ -439,7 +410,13 @@ def chat(body: ChatRequest):
 @app.post("/tts")
 def synthesize(body: TtsRequest):
     style = body.style if body.style in ("default", "filler") else "default"
-    audio = tts.synthesize_speech(body.text, style)
+    audio = tts.synthesize_speech(
+        body.text,
+        style,
+        voice_gender=body.voice_gender,
+        express_style=body.express_style,
+        emotion_hint=body.emotion_hint,
+    )
     return Response(content=audio, media_type="audio/mpeg")
 
 
@@ -467,6 +444,7 @@ def get_friend_profile():
         "companion": companion.get_companion_info(),
         "facts": profile.get_facts(),
         "fact_entries": profile.get_fact_entries(),
+        "memory_items": profile.get_memory_items(),
         "notes": profile.format_notes_for_prompt(),
     }
 
