@@ -120,6 +120,54 @@ class ProfileMemoryTests(unittest.TestCase):
         self.assertTrue(profile.is_memory_recall_question("How old am I?"))
         self.assertTrue(profile.is_user_age_recall_question("What's my age?"))
 
+    def test_recall_do_you_remember_my_age(self) -> None:
+        profile.learn_from_user_message("I'm 48.")
+        reply = profile.try_memory_recall_reply("Do you remember my age?")
+        self.assertIn("48", reply or "")
+
+    def test_age_conflict_47_then_48(self) -> None:
+        profile.learn_from_user_message("I'm 47.")
+        result = profile.learn_from_user_message("I'm 48.")
+        self.assertTrue(result.conflicts)
+        self.assertEqual(profile.get_facts()["age"], "47")
+        reply = profile.try_memory_conflict_reply("I'm 48.")
+        self.assertIsNotNone(reply)
+        self.assertIn("47", reply or "")
+        self.assertIn("48", reply or "")
+        recall = profile.try_memory_recall_reply("How old am I?")
+        self.assertIn("47", recall or "")
+
+    def test_birth_year_from_stored_age(self) -> None:
+        profile.learn_from_user_message("I'm 48.")
+        reply = profile.try_user_birth_year_recall_reply(
+            "What year was I born?", calendar_year=2026
+        )
+        self.assertIn("seventy eight", (reply or "").lower())
+        self.assertIn("48", reply or "")
+
+    def test_remember_birth_year_topic(self) -> None:
+        profile.learn_from_user_message("My age is 48.")
+        reply = profile.try_memory_recall_reply(
+            "Wait, do you remember which year I was born?",
+            calendar_year=2026,
+        )
+        self.assertIn("seventy eight", (reply or "").lower())
+
+    def test_short_calculate_birth_year(self) -> None:
+        profile.learn_from_user_message("I'm 48.")
+        reply = profile.try_user_birth_year_recall_reply(
+            "Can you just, uh. Calculate that.", calendar_year=2026
+        )
+        self.assertIn("seventy eight", (reply or "").lower())
+
+    def test_user_profile_turn(self) -> None:
+        self.assertTrue(profile.is_user_profile_turn("How old am I?"))
+        self.assertTrue(profile.is_user_profile_turn("What year was I born?"))
+        profile.learn_from_user_message("I'm 48.")
+        self.assertTrue(
+            profile.is_user_profile_turn("Can you just, uh. Calculate that.")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

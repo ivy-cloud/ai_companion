@@ -85,7 +85,7 @@ def is_factual_question(message: str) -> bool:
 
     text = message.strip()
     lower = text.lower().rstrip("?").strip()
-    if profile.is_memory_recall_question(text):
+    if profile.is_user_profile_turn(text):
         return False
     if is_companion_identity_turn(text):
         return False

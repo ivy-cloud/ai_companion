@@ -1,7 +1,9 @@
 """Unit tests for direct-answer routing (math, context slimming)."""
 
 import unittest
+from unittest.mock import patch
 
+import profile
 from context import (
     build_context_appendix,
     companion_math_reply,
@@ -160,6 +162,33 @@ class DirectReplyTests(unittest.TestCase):
     def test_user_age_not_companion_age_question(self):
         self.assertFalse(is_companion_identity_turn("How old am I?"))
         self.assertIsNone(try_companion_age_reply("How old am I?"))
+
+    def test_web_search_skips_user_age(self):
+        import web_search
+
+        self.assertFalse(web_search.is_factual_question("How old am I?"))
+        self.assertFalse(web_search.should_search("What's my age?"))
+        self.assertFalse(web_search.is_factual_question("What year was I born?"))
+
+    def test_profile_turn_omits_chat_history(self):
+        from main import build_chat_context
+        import memory
+
+        memory.append_exchange("I'm 47.", "You're forty seven.")
+        memory.append_exchange("How old am I?", "You're forty seven.")
+        with patch.object(profile, "get_facts", return_value={"age": "48"}):
+            ctx = build_chat_context("How old am I?", web_block=None, hits=[])
+        self.assertEqual(ctx.history, [])
+        self.assertTrue(needs_friend_notes_context("How old am I?"))
+
+    def test_polish_strips_lookup_age_talk(self):
+        raw = (
+            "I can't find your age or birth year in the lookup results. "
+            "They don't have that information."
+        )
+        polished = polish_for_speech(raw).lower()
+        self.assertNotIn("lookup", polished)
+        self.assertNotIn("can't find your age", polished)
 
 
 if __name__ == "__main__":

@@ -18,10 +18,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  configureConversationBargeInAudioMode,
   configurePlaybackAudioMode,
   discardPrewarm,
   ensureMicrophonePermission,
+  prepareForTtsPlayback,
   prewarmRecordingPipeline,
   isSubstantiveTranscript,
   MIN_RECORDING_MS,
@@ -868,14 +868,11 @@ export default function ChatScreen() {
 
   const primeIosSpeaker = async () => {
     if (Platform.OS !== 'ios') return;
-    if (conversationBargeRecordingRef.current) {
-      await configureConversationBargeInAudioMode();
-    } else {
-      await configurePlaybackAudioMode();
-    }
+    await prepareForTtsPlayback();
     const sound = primeSoundRef.current;
     if (!sound) return;
     try {
+      await sound.setVolumeAsync(1.0);
       await sound.setPositionAsync(0);
       await sound.playAsync();
     } catch {
@@ -982,12 +979,30 @@ export default function ChatScreen() {
     return path;
   };
 
+  const shouldResumeConversationBargeIn = () =>
+    conversationSessionRef.current &&
+    voiceInputModeRef.current === 'conversation' &&
+    voiceEnabledRef.current &&
+    voicePhaseRef.current === 'speaking';
+
   const playTtsClip = async (path: string, generation: number): Promise<void> => {
     let sound: Audio.Sound | null = null;
+    const resumeBargeIn = shouldResumeConversationBargeIn();
+    if (conversationBargeRecordingRef.current) {
+      stopConversationBargeIn();
+    }
     try {
+      await prepareForTtsPlayback();
+
       const created = await Audio.Sound.createAsync(
         { uri: path },
-        { shouldPlay: false, volume: 1.0, isMuted: false },
+        {
+          shouldPlay: false,
+          volume: 1.0,
+          isMuted: false,
+          rate: 1.0,
+          shouldCorrectPitch: true,
+        },
       );
       sound = created.sound;
 
@@ -997,6 +1012,7 @@ export default function ChatScreen() {
       }
 
       activeSoundRef.current = sound;
+      await sound.setVolumeAsync(1.0);
 
       let settled = false;
       await new Promise<void>((resolve, reject) => {
@@ -1053,6 +1069,13 @@ export default function ChatScreen() {
         }
         if (activeSoundRef.current === sound) activeSoundRef.current = null;
       }
+      if (
+        resumeBargeIn &&
+        generation === speakGenerationRef.current &&
+        shouldResumeConversationBargeIn()
+      ) {
+        void startConversationBargeIn({ forTts: true });
+      }
     }
   };
 
@@ -1063,7 +1086,7 @@ export default function ChatScreen() {
     speakInFlightRef.current = true;
 
     try {
-      void primeIosSpeaker();
+      await primeIosSpeaker();
 
       let nextPathPromise: Promise<string | null> | null = prepareTtsClip(
         parts[0].text,
@@ -1135,15 +1158,7 @@ export default function ChatScreen() {
     setVoicePhaseTransition('speaking');
     const generation = speakGenerationRef.current;
 
-    if (
-      conversationSessionRef.current &&
-      voiceInputModeRef.current === 'conversation'
-    ) {
-      await startConversationBargeIn({ forTts: true });
-      await configureConversationBargeInAudioMode();
-    } else {
-      void configurePlaybackAudioMode();
-    }
+    await prepareForTtsPlayback();
     const ok = await speakParts(parts);
 
     if (generation === speakGenerationRef.current) {
@@ -1173,7 +1188,7 @@ export default function ChatScreen() {
     setVoicePhaseTransition('speaking');
     const generation = speakGenerationRef.current;
     await stopPlayback();
-    await configurePlaybackAudioMode();
+    await prepareForTtsPlayback();
     const ok = await speakParts(parts);
     if (generation === speakGenerationRef.current) {
       if (ok) {

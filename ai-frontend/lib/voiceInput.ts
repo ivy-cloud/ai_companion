@@ -1,4 +1,15 @@
-import { Audio, InterruptionModeIOS } from 'expo-av';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+
+/** Loud TTS: Playback category on iOS (speaker), not PlayAndRecord/earpiece. */
+const PLAYBACK_AUDIO_MODE = {
+  allowsRecordingIOS: false,
+  playsInSilentModeIOS: true,
+  interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+  staysActiveInBackground: false,
+  interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+  shouldDuckAndroid: false,
+  playThroughEarpieceAndroid: false,
+} as const;
 
 /** 16 kHz mono WAV — works well with Azure Speech REST. */
 export const RECORDING_OPTIONS: Audio.RecordingOptions = {
@@ -32,14 +43,16 @@ let prewarmRecording: Audio.Recording | null = null;
 let prewarmPromise: Promise<void> | null = null;
 
 export async function configurePlaybackAudioMode() {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
-    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
-  });
+  await Audio.setAudioModeAsync(PLAYBACK_AUDIO_MODE);
+}
+
+/**
+ * Release mic/recorder session and switch to speaker-oriented playback before TTS.
+ * Prewarm and PlayAndRecord (barge-in) otherwise route iOS audio to the earpiece.
+ */
+export async function prepareForTtsPlayback(): Promise<void> {
+  await discardPrewarm();
+  await configurePlaybackAudioMode();
 }
 
 export async function configureRecordingAudioMode() {
@@ -48,24 +61,19 @@ export async function configureRecordingAudioMode() {
     playsInSilentModeIOS: true,
     interruptionModeIOS: InterruptionModeIOS.DoNotMix,
     staysActiveInBackground: false,
-    shouldDuckAndroid: true,
+    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+    shouldDuckAndroid: false,
     playThroughEarpieceAndroid: false,
   });
 }
 
 /**
- * Play TTS while keeping the mic open for conversation barge-in.
- * iOS: requires allowsRecordingIOS; speaker bleed may still trip metering on some devices.
+ * Mic open for conversation barge-in (PlayAndRecord on iOS).
+ * Do not use while TTS is playing — call prepareForTtsPlayback() during playback
+ * or iOS routes audio to the quiet earpiece receiver.
  */
 export async function configureConversationBargeInAudioMode() {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
-  });
+  await configureRecordingAudioMode();
 }
 
 export async function ensureMicrophonePermission(): Promise<boolean> {

@@ -52,6 +52,11 @@ BANNED_PHRASES = (
     "i'm just a voice",
     "lookup didn't give",
     "my lookup",
+    "lookup results",
+    "in the lookup",
+    "can't find your age",
+    "cannot find your age",
+    "couldn't find your age",
     "in the context you're asking",
     "in the context you are asking",
     "not sure in the context",
@@ -248,6 +253,9 @@ _ROBOT_SELF_DENY = re.compile(
     r"in the context you(?:'re| are) asking|"
     r"not sure.{0,40}context you(?:'re| are) asking|"
     r"no age in the lookup|"
+    r"can'?t find your age|"
+    r"couldn'?t find.{0,40}(?:age|birth)|"
+    r"lookup results|"
     r"not really have an age|"
     r"here[- ]and[- ]now(?:\s+person)?|"
     r"right[- ]now(?:[- ]on[- ]the[- ]call)?(?:\s+person)?|"

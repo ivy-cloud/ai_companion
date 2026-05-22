@@ -166,13 +166,30 @@ _RECALL_BY_KEY: dict[FactType, re.Pattern[str]] = {
     "age": re.compile(
         r"\b(?:"
         r"how old am i|what(?:'s| is) my age|what age am i|"
-        r"do you know my age|remember my age|what age did i tell you"
+        r"do you know my age|do you remember my age|remember my age|"
+        r"what age did i tell you"
         r")\b",
         re.I,
     ),
 }
 
 _USER_AGE_RECALL = _RECALL_BY_KEY["age"]
+
+_USER_BIRTH_YEAR_RECALL = re.compile(
+    r"\b(?:"
+    r"what year was i born|when was i born|"
+    r"what(?:'s| is) my birth year|(?:which|what) year (?:was )?i (?:was )?born|"
+    r"year (?:was )?i (?:was )?born|year i was born|born in what year|"
+    r"get my age.{0,40}year i was born"
+    r")\b",
+    re.I,
+)
+
+_SHORT_BIRTH_CALC = re.compile(
+    r"^\s*(?:can you |could you |please )?(?:just[,.]?\s*)?(?:uh[,.]?\s*)?"
+    r"(?:calculate|compute|figure (?:it )?out)(?:\s+(?:that|it))?\s*\.?\s*$",
+    re.I,
+)
 
 _RECALL_PREFERENCE = re.compile(
     r"\b(?:"
@@ -336,6 +353,25 @@ def _extract_age_from_text(text: str) -> Optional[str]:
 def is_user_age_recall_question(message: str) -> bool:
     text = message.strip()
     return bool(text and _USER_AGE_RECALL.search(text))
+
+
+def is_user_birth_year_question(message: str) -> bool:
+    text = message.strip()
+    return bool(text and _USER_BIRTH_YEAR_RECALL.search(text))
+
+
+def is_user_profile_turn(message: str) -> bool:
+    """User facts / age / birth year — never web lookup; avoid chat-history guesses."""
+    text = message.strip()
+    if not text:
+        return False
+    if is_memory_recall_question(text):
+        return True
+    if is_user_birth_year_question(text):
+        return True
+    if _SHORT_BIRTH_CALC.search(text) and get_facts().get("age"):
+        return True
+    return False
 
 
 def _is_valid_fact_value(value: str, *, fact_type: Optional[FactType] = None) -> bool:
@@ -769,6 +805,8 @@ def is_memory_recall_question(message: str) -> bool:
         return False
     if is_user_age_recall_question(text):
         return True
+    if is_user_birth_year_question(text):
+        return True
     if _RECALL_GENERAL.search(text):
         return True
     if _RECALL_PREFERENCE.search(text):
@@ -776,6 +814,58 @@ def is_memory_recall_question(message: str) -> bool:
     if _REMEMBER_TOPIC.search(text):
         return True
     return any(pattern.search(text) for pattern in _RECALL_BY_KEY.values())
+
+
+def _calendar_year_for_reply(calendar_year: Optional[int] = None) -> int:
+    if calendar_year is not None:
+        return calendar_year
+    from context import format_local_now_parts
+
+    return int(format_local_now_parts()["year"])
+
+
+def _birth_year_reply_from_stored_age(
+    seed: str,
+    *,
+    calendar_year: Optional[int] = None,
+) -> Optional[str]:
+    """Derive birth year only from saved user age — never from chat history."""
+    age_str = get_facts().get("age")
+    if not age_str:
+        return None
+    year = _calendar_year_for_reply(calendar_year)
+    birth_year = year - int(age_str)
+    from spoken_text import spoken_year
+
+    spoken_by = spoken_year(birth_year)
+    return f"Right — you're {age_str}, so you were born in {spoken_by}."
+
+
+def try_user_birth_year_recall_reply(
+    message: str,
+    *,
+    calendar_year: Optional[int] = None,
+) -> Optional[str]:
+    """Birth year / short 'calculate that' — profile age only, no web or history."""
+    text = message.strip()
+    if not text:
+        return None
+
+    wants_birth = bool(_USER_BIRTH_YEAR_RECALL.search(text))
+    wants_calc = bool(_SHORT_BIRTH_CALC.search(text))
+    if not wants_birth and not wants_calc:
+        return None
+
+    birthday = get_facts().get("birthday")
+    if wants_birth and birthday:
+        return f"Right — your birthday's {birthday}."
+
+    reply = _birth_year_reply_from_stored_age(text, calendar_year=calendar_year)
+    if reply:
+        return reply
+    if wants_calc or wants_birth:
+        return _unknown_reply(text)
+    return None
 
 
 def _unknown_reply(seed: str, *, soft: bool = False) -> str:
@@ -838,11 +928,19 @@ def _find_memory_match(message: str, items: list[MemoryItem]) -> Optional[Memory
     return None
 
 
-def try_memory_recall_reply(message: str) -> Optional[str]:
+def try_memory_recall_reply(
+    message: str,
+    *,
+    calendar_year: Optional[int] = None,
+) -> Optional[str]:
     """Answer only from stored user facts — never guess."""
     text = message.strip()
     if not text:
         return None
+
+    birth_reply = try_user_birth_year_recall_reply(text, calendar_year=calendar_year)
+    if birth_reply:
+        return birth_reply
 
     facts = get_facts()
     items = get_memory_items()
@@ -871,6 +969,12 @@ def try_memory_recall_reply(message: str) -> Optional[str]:
                 return _unknown_reply(text, soft=True)
             line = _casual_fact_line(fact_type, facts[fact_type])
             return f"Yeah — {line}."
+        if fact_type == "birthday" or re.search(r"\bborn\b", topic_match.group(1), re.I):
+            by_reply = _birth_year_reply_from_stored_age(
+                text, calendar_year=calendar_year
+            )
+            if by_reply:
+                return by_reply
         matched = _find_memory_match(text, items)
         if matched:
             if not _confidence_allows_assertion(matched["confidence"]):

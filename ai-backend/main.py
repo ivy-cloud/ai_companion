@@ -130,13 +130,14 @@ def build_chat_context(
     factual = math_turn or (
         web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
     )
-    memory_recall = profile.is_memory_recall_question(trimmed)
+    profile_turn = profile.is_user_profile_turn(trimmed)
+    memory_recall = profile_turn
     emotion_hint, _express = _turn_emotion(
         trimmed, factual=factual, memory_recall=memory_recall
     )
 
-    # Factual / memory-recall turns: no chat history (avoids wrong or invented context).
-    if factual or memory_recall:
+    # Factual / profile turns: no chat history (avoids wrong or invented context).
+    if factual or profile_turn:
         history = []
     else:
         history = memory.to_ollama_messages(trimmed)
@@ -294,7 +295,10 @@ def stream_chat_events(
             yield from _stream_canned_reply(trimmed, polish_for_speech(age_learn_reply))
             return
 
-        recall_reply = profile.try_memory_recall_reply(trimmed)
+        calendar_year = int(format_local_now_parts(clock)["year"])
+        recall_reply = profile.try_memory_recall_reply(
+            trimmed, calendar_year=calendar_year
+        )
         if recall_reply:
             yield from _stream_canned_reply(trimmed, polish_for_speech(recall_reply))
             return
@@ -341,7 +345,7 @@ def stream_chat_events(
         emotion_hint, express_style = _turn_emotion(
             context.trimmed_latest,
             factual=context.factual_reply,
-            memory_recall=profile.is_memory_recall_question(context.trimmed_latest),
+            memory_recall=profile.is_user_profile_turn(context.trimmed_latest),
         )
         done_payload: dict = {"done": True, "reply": reply, "emotion_hint": emotion_hint}
         if express_style:

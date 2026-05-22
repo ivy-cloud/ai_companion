@@ -166,13 +166,14 @@ def needs_clock_context(message: str) -> bool:
 def needs_friend_notes_context(message: str) -> bool:
     import profile
 
-    if profile.is_memory_recall_question(message):
+    if profile.is_user_profile_turn(message):
         return True
     lower = message.lower()
     return bool(
         re.search(
             r"\b(?:"
             r"my name|my birthday|my age|how old am i|what(?:'s| is) my age|"
+            r"when was i born|what year was i born|birth year|year i was born|"
             r"where am i from|where do i live|"
             r"what do you remember|about me|what do you know about me"
             r")\b",
