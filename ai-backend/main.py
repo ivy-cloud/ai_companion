@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from typing import Generator, Iterator, List, NamedTuple, Optional
 
@@ -14,12 +15,15 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(_BACKEND_DIR / ".env", override=True)
 
 import companion
+import conversation_rhythm
+import dev_mode
 import current_facts
 import emotion
 import grounding
 import llm_provider
 import memory
 import profile
+import session_log
 import stt
 import tts
 import web_search
@@ -28,6 +32,7 @@ from context import (
     companion_math_reply,
     companion_time_reply,
     format_local_now,
+    format_local_now_parts,
     is_simple_math_question,
     needs_clock_context,
     needs_friend_notes_context,
@@ -73,6 +78,12 @@ class TtsRequest(BaseModel):
     emotion_hint: Optional[str] = None  # warm | sympathetic | excited | gentle | neutral
 
 
+class VoiceLogRequest(BaseModel):
+    event: str
+    detail: Optional[dict] = None
+    platform: Optional[str] = None
+
+
 class ChatContext(NamedTuple):
     system: dict
     history: List[dict]
@@ -91,7 +102,7 @@ def build_system_prompt(
     clock=None,
 ) -> str:
     if web_block is None:
-        web_block = web_search.lookup_for_message(user_message)
+        web_block = web_search.lookup_for_message(user_message, clock=clock)
     name = companion.get_companion_name()
     msg = user_message.strip()
     return (
@@ -125,7 +136,7 @@ def build_chat_context(
         trimmed = trimmed[: memory.MAX_MESSAGE_CHARS] + "…"
 
     if web_block is None or hits is None:
-        web_block, hits = web_search.lookup_with_hits(trimmed)
+        web_block, hits = web_search.lookup_with_hits(trimmed, clock=clock)
     math_turn = is_simple_math_question(trimmed)
     factual = math_turn or (
         web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
@@ -212,14 +223,47 @@ def _stream_text_chunks(text: str, chunk_size: int = 14) -> Iterator[str]:
         yield text[i : i + step]
 
 
-def _stream_canned_reply(trimmed: str, reply: str) -> Generator[str, None, None]:
+def _turn_log_fields(
+    started_at: float,
+    clock,
+    learn_result: profile.LearnResult,
+) -> dict:
+    return {
+        "duration_ms": int((time.monotonic() - started_at) * 1000),
+        "timezone_iana": clock.iana,
+        "learn_updated": list(learn_result.updated),
+        "learn_conflicts": len(learn_result.conflicts),
+        "profile_facts": profile.get_facts(),
+    }
+
+
+def _stream_canned_reply(
+    trimmed: str,
+    reply: str,
+    *,
+    route: str,
+    started_at: float,
+    clock,
+    learn_at_start: profile.LearnResult,
+) -> Generator[str, None, None]:
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
     memory.append_exchange(trimmed, reply)
+    session_log.log_turn(
+        trimmed,
+        reply,
+        route=route,
+        **_turn_log_fields(started_at, clock, learn_at_start),
+    )
     emotion_hint, express_style = _turn_emotion(trimmed)
     for piece in _stream_text_chunks(reply):
         yield _ndjson_line({"text": piece})
-    done_payload: dict = {"done": True, "reply": reply, "emotion_hint": emotion_hint}
+    done_payload: dict = {
+        "done": True,
+        "reply": reply,
+        "emotion_hint": emotion_hint,
+        "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+    }
     if express_style:
         done_payload["express_style"] = express_style
     yield _ndjson_line(done_payload)
@@ -231,68 +275,92 @@ def stream_chat_events(
 ) -> Generator[str, None, None]:
     trimmed = user_message.strip()
     clock = resolve_clock(client_timezone)
+    math_turn = is_simple_math_question(trimmed)
+    memory_recall = profile.is_user_profile_turn(trimmed)
+    factual_guess = math_turn or memory_recall or web_search.is_factual_question(trimmed)
+    rhythm = conversation_rhythm.rhythm_stream_meta(
+        trimmed,
+        factual=factual_guess,
+        math_turn=math_turn,
+        memory_recall=memory_recall,
+    )
     yield _ndjson_line(
         {
             "start": True,
             "timezone": clock.iana,
             "timezone_from_device": clock.from_device,
+            "rhythm": rhythm,
         }
     )
+
+    started_at = time.monotonic()
+    learn_at_start = profile.learn_from_user_message(trimmed)
+    companion.try_learn_name_from_user(trimmed)
+
+    def _canned(raw_reply: str, route: str) -> Generator[str, None, None]:
+        return _stream_canned_reply(
+            trimmed,
+            polish_for_speech(raw_reply),
+            route=route,
+            started_at=started_at,
+            clock=clock,
+            learn_at_start=learn_at_start,
+        )
 
     try:
         time_reply = companion_time_reply(trimmed, clock)
         if time_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(time_reply))
+            yield from _canned(time_reply, "canned:time")
             return
 
         math_reply = companion_math_reply(trimmed)
         if math_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(math_reply))
+            yield from _canned(math_reply, "canned:math")
             return
 
         birth_reply = companion.try_companion_birth_reply(trimmed)
         if birth_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(birth_reply))
+            yield from _canned(birth_reply, "canned:companion_birthday")
             return
 
         age_reply = companion.try_companion_age_reply(trimmed)
         if age_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(age_reply))
+            yield from _canned(age_reply, "canned:companion_age")
             return
 
         voice_reply = companion.try_companion_voice_reply(trimmed)
         if voice_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(voice_reply))
+            yield from _canned(voice_reply, "canned:companion_voice")
             return
 
         identity_reply = companion.try_companion_identity_reply(trimmed)
         if identity_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(identity_reply))
+            yield from _canned(identity_reply, "canned:companion_identity")
             return
 
         family_reply = companion.try_companion_family_reply(trimmed)
         if family_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(family_reply))
+            yield from _canned(family_reply, "canned:companion_family")
             return
 
         name_reply = companion.try_name_recall_reply(trimmed)
         if name_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(name_reply))
+            yield from _canned(name_reply, "canned:companion_name_recall")
             return
 
         rename_reply = companion.try_name_change_reply(trimmed)
         if rename_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(rename_reply))
-            return
-
-        conflict_reply = profile.try_memory_conflict_reply(trimmed)
-        if conflict_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(conflict_reply))
+            yield from _canned(rename_reply, "canned:companion_rename")
             return
 
         age_learn_reply = profile.try_user_age_learn_reply(trimmed)
         if age_learn_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(age_learn_reply))
+            yield from _canned(age_learn_reply, "canned:user_age_learn")
+            return
+
+        conflict_reply = profile.try_memory_conflict_reply(trimmed)
+        if conflict_reply:
+            yield from _canned(conflict_reply, "canned:memory_conflict")
             return
 
         calendar_year = int(format_local_now_parts(clock)["year"])
@@ -300,16 +368,17 @@ def stream_chat_events(
             trimmed, calendar_year=calendar_year
         )
         if recall_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(recall_reply))
+            yield from _canned(recall_reply, "canned:memory_recall")
             return
 
         president_reply = current_facts.try_us_president_reply(trimmed)
         if president_reply:
-            yield from _stream_canned_reply(trimmed, polish_for_speech(president_reply))
+            yield from _canned(president_reply, "canned:president")
             return
 
-        web_block, hits = web_search.lookup_with_hits(trimmed)
+        web_block, hits = web_search.lookup_with_hits(trimmed, clock=clock)
         use_grounding = web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
+        grounded: Optional[str] = None
 
         if use_grounding:
             grounded = grounding.answer_from_sources(trimmed, hits)
@@ -347,14 +416,41 @@ def stream_chat_events(
             factual=context.factual_reply,
             memory_recall=profile.is_user_profile_turn(context.trimmed_latest),
         )
-        done_payload: dict = {"done": True, "reply": reply, "emotion_hint": emotion_hint}
+        done_payload: dict = {
+            "done": True,
+            "reply": reply,
+            "emotion_hint": emotion_hint,
+            "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+        }
         if express_style:
             done_payload["express_style"] = express_style
+        llm_route = "llm:grounded" if grounded else "llm"
+        session_log.log_turn(
+            context.trimmed_latest,
+            reply,
+            route=llm_route,
+            **_turn_log_fields(started_at, clock, learn_at_start),
+            extra={"web_hits": len(hits) if hits else 0},
+        )
         yield _ndjson_line(done_payload)
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        session_log.log_turn(
+            trimmed,
+            "",
+            route="error:http",
+            error=detail,
+            **_turn_log_fields(started_at, clock, learn_at_start),
+        )
         yield _ndjson_line({"error": detail})
     except Exception as exc:
+        session_log.log_turn(
+            trimmed,
+            "",
+            route="error:exception",
+            error=str(exc),
+            **_turn_log_fields(started_at, clock, learn_at_start),
+        )
         yield _ndjson_line({"error": str(exc)})
 
 
@@ -391,6 +487,8 @@ def health(voice_gender: Optional[str] = None):
         "azure_tts": tts.tts_status(voice_gender),
         "azure_stt": stt.stt_status(),
         "web_search": web_search.status(),
+        "dev_mode": dev_mode.mock_status(),
+        "session_log": session_log.status(),
     }
 
 
@@ -421,19 +519,30 @@ def synthesize(body: TtsRequest):
         express_style=body.express_style,
         emotion_hint=body.emotion_hint,
     )
-    return Response(content=audio, media_type="audio/mpeg")
+    media_type = "audio/wav" if dev_mode.mock_tts_enabled() else "audio/mpeg"
+    return Response(content=audio, media_type=media_type)
 
 
 @app.post("/stt")
 async def transcribe(file: UploadFile = File(...)):
     """Speech-to-text via Azure (upload recording from the app)."""
     audio_bytes = await file.read()
-    text = stt.transcribe_audio(
-        audio_bytes,
-        filename=file.filename or "recording.wav",
-        content_type=file.content_type,
-    )
-    return {"text": text}
+    filename = file.filename or "recording.wav"
+    try:
+        text = stt.transcribe_audio(
+            audio_bytes,
+            filename=filename,
+            content_type=file.content_type,
+        )
+        session_log.log_stt(text, filename=filename)
+        return {"text": text}
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        session_log.log_stt("", filename=filename, error=detail)
+        raise
+    except Exception as exc:
+        session_log.log_stt("", filename=filename, error=str(exc))
+        raise
 
 
 @app.post("/chat/reset")
@@ -474,3 +583,40 @@ def get_conversation_history():
         "messages": memory.get_history(),
         "profile_facts": profile.get_facts(),
     }
+
+
+@app.get("/debug/session-log")
+def get_session_log(limit: int = 50, format: str = "json", type: Optional[str] = None):
+    """Recent phone test turns — JSON list or plain text for debugging."""
+    limit = max(1, min(limit, 200))
+    entry_type = type.strip() if type else None
+    entries = session_log.read_entries(limit, entry_type=entry_type or None)
+    if format.lower() in ("text", "txt", "plain"):
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(
+            session_log.format_entries_text(entries),
+            media_type="text/plain; charset=utf-8",
+        )
+    return {
+        "status": session_log.status(),
+        "count": len(entries),
+        "entries": entries,
+    }
+
+
+@app.post("/debug/session-log/clear")
+def clear_session_log():
+    session_log.clear()
+    return {"status": "ok", "session_log": session_log.status()}
+
+
+@app.post("/debug/voice-log")
+def post_voice_log(body: VoiceLogRequest):
+    """Append voice/TTS debug lines from Expo (readable via session-log)."""
+    session_log.log_voice(
+        body.event,
+        detail=body.detail,
+        platform=body.platform,
+    )
+    return {"status": "ok"}

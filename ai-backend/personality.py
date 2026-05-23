@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from conversation_rhythm import backchannel_turn_hint
 from emotion import EmotionHint, conversation_tone_llm_hint, emotion_turn_hint_for_llm
 from human_speech import (
     CONVERSATIONAL_STYLE_RULES,
@@ -42,7 +43,7 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 - **Length:** 1–{MAX_REPLY_SENTENCES} short sentences, under {MAX_REPLY_WORDS} spoken words — then stop.
 - **Factual questions:** answer first, correct, minimal words — no "hmm," "oh," "interesting," or banter before the fact.
 - **Casual chat:** sound human — contractions (I'm, you're, don't), everyday words, a little personality; never stiff or scripted.
-- **Rhythm:** short reactions; occasional one-word filler OK on casual turns (hmm, oh, wait really?) — never on facts, never stacked.
+- **Rhythm:** phone-call pacing — short turns; rare backchannels on casual chat only (hmm, yeah, oh wow) — never on facts, never stacked, never cheerleader.
 - **Warmth:** warm and subtle — not overly affectionate, not a therapist, don't over-validate or repeat the same empathy line.
 - **Short follow-ups** ("why", "really", "how so"): use the last exchange — answer in context, one relaxed sentence.
 - **Name:** don't repeat your name every turn — they already know who you are.
@@ -84,7 +85,7 @@ DIRECT_FACTUAL_HINT = (
 
 CASUAL_VOICE_HINT = (
     "Warm, relaxed phone voice — contractions, plain words, not stiff or corporate. "
-    "Short reactions; not over-polished. Not a lecture; one breath per sentence."
+    "One breath per sentence; not a lecture; subtle emotion only — never customer support."
 )
 
 _SHORT_FOLLOW_UPS = frozenset(
@@ -136,11 +137,15 @@ def build_turn_hints(
     if is_time_question(trimmed):
         return f"{REPLY_LENGTH_HINT} Time/date from Right now only — answer directly."
     if factual:
-        return f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT}"
+        return (
+            f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT} "
+            f"{backchannel_turn_hint(trimmed, casual=False)}"
+        )
+    rhythm = backchannel_turn_hint(trimmed, casual=True)
     short = trimmed.strip().lower().rstrip("?!.")
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood} {rhythm}"

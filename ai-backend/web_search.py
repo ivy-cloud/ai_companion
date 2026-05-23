@@ -21,6 +21,45 @@ _FILLER_PREFIX = re.compile(
     re.I,
 )
 
+# Expand what's / how's so "what's the weather" counts as a factual question.
+_CONTRACTION_START = re.compile(
+    r"^(what|who|where|when|how)'s\b",
+    re.I,
+)
+
+_WH_START = re.compile(
+    r"^(?:who|what|when|where|which|why)\b",
+    re.I,
+)
+
+_HOW_FACTUAL = re.compile(
+    r"^how (?:many|much|old|long|far|tall|big|often|is|are|will|was|were)\b",
+    re.I,
+)
+
+# Topics that should always trigger a live web search when mentioned.
+_WORLD_FACT = re.compile(
+    r"\b(?:weather|forecast|temperature|rain|snow|humidity|wind chill|"
+    r"headline|headlines|stock price|stock market|score|game score|"
+    r"election|population|ceo|president|prime minister)\b",
+    re.I,
+)
+
+_WEATHER = re.compile(r"\b(?:weather|forecast|temperature|rain|snow|humidity)\b", re.I)
+
+# Feedback about the companion / app — not world facts; skip slow web lookup.
+_COMPANION_OR_APP = re.compile(
+    r"\b(?:"
+    r"something(?:'s| is) wrong|why (?:do )?you|you(?:'re| are) (?:stuck|wrong|broken)|"
+    r"stuck (?:on|in|at|with)|stutter(?:ing)?|glitch(?:y|es)?|"
+    r"(?:voice|audio) (?:is )?(?:low|quiet|bad)|too quiet|"
+    r"don't recall|can't remember|won't remember|forget(?:ting)?|"
+    r"pause(?:s|d)? between|gap between|suck(?:s|ing)? (?:in|on|at)|"
+    r"bug(?:gy)?|broken|not working|doesn't work"
+    r")\b",
+    re.I,
+)
+
 
 class SearchHit(TypedDict):
     title: str
@@ -77,6 +116,16 @@ def is_simple_math_question(message: str) -> bool:
     return _is_simple_math(message)
 
 
+def _normalize_question_stem(message: str) -> str:
+    """Lowercase stem with common contractions expanded for classification."""
+    lower = message.strip().lower().rstrip("?").strip()
+    return _CONTRACTION_START.sub(r"\1 is", lower)
+
+
+def is_weather_question(message: str) -> bool:
+    return bool(_WEATHER.search(message))
+
+
 def is_factual_question(message: str) -> bool:
     """Generic: user wants a verifiable fact, not casual chat."""
     import profile
@@ -84,7 +133,7 @@ def is_factual_question(message: str) -> bool:
     from context import is_time_question
 
     text = message.strip()
-    lower = text.lower().rstrip("?").strip()
+    lower = _normalize_question_stem(text)
     if profile.is_user_profile_turn(text):
         return False
     if is_companion_identity_turn(text):
@@ -93,16 +142,16 @@ def is_factual_question(message: str) -> bool:
         return False
     if is_time_question(text):
         return False
+    if _COMPANION_OR_APP.search(lower):
+        return False
     if re.match(
         r"^how (?:are you|you doing|is it going|have you been|was your|did your)\b",
         lower,
     ):
         return False
-    if lower.startswith(
-        ("who ", "what ", "when ", "where ", "which ", "why ")
-    ) or re.match(r"^how (?:many|much|old|long|far|tall|big|often)\b", lower):
+    if _WORLD_FACT.search(lower):
         return True
-    if "?" in text and not lower.startswith(("how ", "why not ")):
+    if _WH_START.match(lower) or _HOW_FACTUAL.match(lower):
         return True
     return False
 
@@ -110,7 +159,11 @@ def is_factual_question(message: str) -> bool:
 def asks_about_current(message: str) -> bool:
     lower = message.lower()
     return bool(
-        re.search(r"\b(current|today|now|right now|latest|this year|at the moment)\b", lower)
+        re.search(
+            r"\b(?:current|today|tonight|tomorrow|now|right now|latest|"
+            r"this year|this morning|this afternoon|this evening|at the moment)\b",
+            lower,
+        )
     )
 
 
@@ -154,12 +207,38 @@ def rewrite_for_search(message: str) -> str:
     return text or message.strip()
 
 
-def build_search_queries(user_message: str) -> List[str]:
+def _location_hint_from_context(clock=None) -> str:
+    """Saved city/region, else a coarse place name from the device timezone."""
+    import profile
+
+    loc = profile.get_facts().get("location", "").strip()
+    if loc:
+        return loc
+    if clock is not None and getattr(clock, "iana", ""):
+        iana = str(clock.iana).strip()
+        if "/" in iana:
+            return iana.split("/")[-1].replace("_", " ")
+    return ""
+
+
+def build_search_queries(
+    user_message: str,
+    *,
+    location_hint: str = "",
+) -> List[str]:
     """Build live search queries (keywords only — never stored answers)."""
     original = user_message.strip()
     core = rewrite_for_search(original)
     year = _current_year()
     queries = [core, original]
+    place = location_hint.strip()
+
+    if is_weather_question(original):
+        if place:
+            queries.insert(0, f"weather forecast tonight {place}")
+            queries.insert(1, f"{core} {place}")
+        else:
+            queries.insert(0, f"{core} weather forecast")
 
     if re.search(
         r"\b(?:president|ceo|prime minister|governor)\b.*\b(?:united states|u\.?s\.?|america)\b",
@@ -402,7 +481,7 @@ def _rank_hits(query: str, hits: List[SearchHit]) -> List[SearchHit]:
     return sorted(hits, key=lambda h: _score_hit(query, h), reverse=True)
 
 
-def search_web(user_message: str) -> List[SearchHit]:
+def search_web(user_message: str, *, location_hint: str = "") -> List[SearchHit]:
     limit = max_results()
     providers: List[Callable[[str, int], List[SearchHit]]] = [
         _search_tavily,
@@ -411,7 +490,7 @@ def search_web(user_message: str) -> List[SearchHit]:
     ]
 
     combined: List[SearchHit] = []
-    queries = build_search_queries(user_message)
+    queries = build_search_queries(user_message, location_hint=location_hint)
 
     for query in queries:
         for provider in providers:
@@ -437,10 +516,18 @@ def search_web(user_message: str) -> List[SearchHit]:
 
 def format_for_prompt(hits: List[SearchHit], query: str) -> str:
     if not hits:
+        extra = ""
+        if is_weather_question(query):
+            extra = (
+                " For weather, say you couldn't get a forecast online right now — "
+                "suggest they name their city if they haven't, or check a weather app. "
+            )
         return (
-            "## Live web lookup (just now — no results)\n"
+            "## Live web search (just now — no usable results)\n"
             f"Question: {query}\n"
-            "Say you couldn't find anything reliable right now. Do not guess."
+            f"{extra}"
+            "Answer in one or two short spoken sentences. Do not guess facts. "
+            "Never say lookup, search results, or context."
         )
 
     lines = [
@@ -454,17 +541,23 @@ def format_for_prompt(hits: List[SearchHit], query: str) -> str:
     return "\n".join(lines)
 
 
-def lookup_for_message(user_message: str) -> Optional[str]:
+def lookup_for_message(user_message: str, *, clock=None) -> Optional[str]:
     if not should_search(user_message):
         return None
-    hits = search_web(user_message.strip())
+    hint = _location_hint_from_context(clock)
+    hits = search_web(user_message.strip(), location_hint=hint)
     return format_for_prompt(hits, user_message.strip())
 
 
-def lookup_with_hits(user_message: str) -> tuple[Optional[str], List[SearchHit]]:
+def lookup_with_hits(
+    user_message: str,
+    *,
+    clock=None,
+) -> tuple[Optional[str], List[SearchHit]]:
     if not should_search(user_message):
         return None, []
-    hits = search_web(user_message.strip())
+    hint = _location_hint_from_context(clock)
+    hits = search_web(user_message.strip(), location_hint=hint)
     return format_for_prompt(hits, user_message.strip()), hits
 
 

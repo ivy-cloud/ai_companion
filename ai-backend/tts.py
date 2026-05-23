@@ -211,6 +211,10 @@ def tts_configured() -> bool:
 
 
 def tts_status(gender_override: Optional[str] = None) -> dict:
+    import dev_mode
+
+    if dev_mode.mock_tts_enabled():
+        return dev_mode.mock_tts_health()
     key_ok = bool(_speech_key())
     region = _speech_region()
     ready = key_ok and bool(region)
@@ -310,6 +314,10 @@ def synthesize_speech(
     express_style: Optional[str] = None,
     emotion_hint: Optional[str] = None,
 ) -> bytes:
+    import dev_mode
+
+    if dev_mode.mock_tts_enabled():
+        return dev_mode.mock_tts_audio()
     if not tts_configured():
         raise HTTPException(
             status_code=503,

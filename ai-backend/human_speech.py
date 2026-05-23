@@ -69,14 +69,14 @@ BANNED_PHRASES = (
     "on this call",
 )
 
-MAX_REPLY_WORDS = 25
-MAX_REPLY_SENTENCES = 3
+MAX_REPLY_WORDS = 20
+MAX_REPLY_SENTENCES = 2
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)
 - **Short:** usually 1–{MAX_REPLY_SENTENCES} sentences, under {MAX_REPLY_WORDS} spoken words.
 - **Tone:** like a real friend on the phone — relaxed, warm, a little personality; never news-anchor flat or helper-bot stiff.
 - **Factual turns:** lead with the answer; skip openers like "oh," "yeah," "hmm," "interesting," "great question."
-- **Non-factual chat:** contractions (I'm, you're, that's), everyday words; occasional brief fillers OK (hmm, oh, wait really?) — one at most, never stacked.
+- **Non-factual chat:** contractions (I'm, you're, that's), everyday words; occasional brief backchannels OK (hmm, yeah, oh wow, wait really?) — one at most, never stacked, never performative.
 - **Warmth:** subtle and grounded — not gushy, not therapist-y, don't over-validate ("I hear you," "that must be so hard").
 - **Avoid:** long paragraphs, lists, markdown, over-explaining, "Certainly," "I'd be happy to," "How can I help," cheerleader enthusiasm, customer-support scripts."""
 
@@ -256,6 +256,8 @@ _ROBOT_SELF_DENY = re.compile(
     r"can'?t find your age|"
     r"couldn'?t find.{0,40}(?:age|birth)|"
     r"lookup results|"
+    r"(?:isn'?t|is not) available in (?:this |the )?lookup|"
+    r"forecast for tonight.{0,40}lookup|"
     r"not really have an age|"
     r"here[- ]and[- ]now(?:\s+person)?|"
     r"right[- ]now(?:[- ]on[- ]the[- ]call)?(?:\s+person)?|"

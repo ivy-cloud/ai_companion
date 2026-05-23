@@ -1,12 +1,13 @@
 /**
  * Decide what to speak while the LLM is still streaming tokens.
- * Only full sentences (. ! ?) — no tiny word fragments (smoother cadence).
+ * Balance: fast first audio vs avoiding tiny word fragments mid-sentence.
  */
 
 import { prepareTextForSpeech, remainderAfterSpoken } from './speechPlayback';
 
-/** First spoken chunk: enough words to start early without tiny fragments */
-export const MIN_WORDS_EARLY_START = 6;
+/** First streaming clip: allow a natural clause break before a full stop. */
+export const FIRST_CHUNK_MIN_WORDS = 4;
+export const FIRST_CHUNK_MIN_CHARS = 16;
 
 /**
  * Next chunk to send to TTS (not yet spoken).
@@ -24,6 +25,8 @@ export function nextSpeakableChunk(
   const tail = spoken && full.startsWith(spoken) ? full.slice(spoken.length).trim() : full;
   if (!tail) return null;
 
+  const isFirst = !spoken;
+
   const sentenceMatch = tail.match(/^(.+?[.!?])(?:\s+|$)/);
   if (sentenceMatch) {
     const sentence = sentenceMatch[1].trim();
@@ -31,12 +34,22 @@ export function nextSpeakableChunk(
     if (words.length >= 2) {
       return sentence;
     }
+    if (words.length >= 1 && /[.!?]$/.test(sentence)) {
+      return sentence;
+    }
   }
 
-  if (!spoken) {
-    const words = tail.split(/\s+/).filter(Boolean);
-    if (words.length >= MIN_WORDS_EARLY_START) {
-      return words.slice(0, MIN_WORDS_EARLY_START).join(' ');
+  if (!flush && isFirst) {
+    const clauseMatch = tail.match(/^(.+?[,;:])\s+/);
+    if (clauseMatch) {
+      const clause = clauseMatch[1].trim();
+      const words = clause.split(/\s+/).filter(Boolean);
+      if (
+        clause.length >= FIRST_CHUNK_MIN_CHARS &&
+        words.length >= FIRST_CHUNK_MIN_WORDS
+      ) {
+        return clause;
+      }
     }
   }
 

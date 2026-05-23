@@ -32,6 +32,10 @@ def stt_configured() -> bool:
 
 
 def stt_status() -> dict:
+    import dev_mode
+
+    if dev_mode.mock_stt_enabled():
+        return dev_mode.mock_stt_health()
     ready = stt_configured()
     return {
         "ready": ready,
@@ -63,6 +67,10 @@ def transcribe_audio(
     filename: str = "recording.wav",
     content_type: Optional[str] = None,
 ) -> str:
+    import dev_mode
+
+    if dev_mode.mock_stt_enabled():
+        return dev_mode.mock_stt_transcript()
     if not stt_configured():
         raise HTTPException(
             status_code=503,

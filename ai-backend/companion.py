@@ -138,7 +138,8 @@ _ASK_COMPANION_BIRTH = re.compile(
     r"\b(?:"
     r"when (?:were you|was she|was he) born|what year were you born|"
     r"when(?:'s| is) your birthday|what(?:'s| is) your birthday|"
-    r"(?:tell me|what is) your birth year|year were you born"
+    r"(?:tell me|what is) your birth year|year were you born|"
+    r"your birthday|remember your birthday|do you remember your birthday"
     r")\b",
     re.I,
 )
@@ -555,9 +556,25 @@ def _is_companion_age_question(text: str) -> bool:
 
 
 def _is_companion_birth_question(text: str) -> bool:
+    if re.search(r"\bmy birthday\b", text, re.I):
+        return False
     if _USER_AGE_TOPIC.search(text):
         return False
     return bool(_ASK_COMPANION_BIRTH.search(text))
+
+
+def is_companion_directed_message(message: str) -> bool:
+    """Questions about the companion (your X) — never user profile recall."""
+    text = message.strip()
+    if not text:
+        return False
+    if is_companion_identity_turn(text):
+        return True
+    if _is_companion_birth_question(text):
+        return True
+    if re.search(r"\bremember your\b", text, re.I):
+        return True
+    return False
 
 
 def _is_companion_voice_question(text: str) -> bool:

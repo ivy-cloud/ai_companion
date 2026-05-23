@@ -140,7 +140,7 @@ def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
             "No lecture, no therapist voice, no stacked validation."
         )
     if hint == "excited":
-        return "Upbeat but grounded — pleased, not cheerleader loud; still brief."
+        return "A little pleased — not cheerleader loud, not performative; still brief."
     if hint == "gentle":
         return "Calm, unhurried tone — soft and steady, not sleepy or clinical."
     if hint == "warm":

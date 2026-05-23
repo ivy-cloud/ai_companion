@@ -19,7 +19,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   configurePlaybackAudioMode,
+  configureRecordingAudioMode,
   discardPrewarm,
+  safeUnloadRecording,
+  setRecordingPrewarmBlocked,
+  withRecordingMutex,
   ensureMicrophonePermission,
   prepareForTtsPlayback,
   prewarmRecordingPipeline,
@@ -33,7 +37,9 @@ import {
 import {
   BARGE_IN_COOLDOWN_MS,
   BARGE_IN_GRACE_MS,
+  BARGE_IN_MIN_SPEECH_MS,
   BARGE_IN_TTS_GRACE_MS,
+  POST_TTS_LISTEN_COOLDOWN_MS,
   createBargeInMeterState,
   createConversationMeterState,
   METERING_INTERVAL_MS,
@@ -43,21 +49,28 @@ import {
   type ConversationMeterState,
 } from '../lib/conversationMode';
 import {
-  buildSpeechUtterances,
   formatReplyForUi,
-  pauseBetweenUtterances,
+  lastSentenceOf,
+  prepareTextForSpeech,
   MAX_SPOKEN_CHARS,
   MAX_SPOKEN_CHARS_CASUAL,
   MAX_SPOKEN_SENTENCES,
   MAX_SPOKEN_SENTENCES_CASUAL,
+  MAX_UTTERANCE_CHARS,
   replyTrimOptions,
   trimReplyForDisplay,
   type SpeechTrimOptions,
 } from '../lib/speechPlayback';
 import { isAbortError } from '../lib/abortError';
+import {
+  buildConversationalSpeakParts,
+  fastAckAlreadyInReply,
+  shouldStreamTtsWhileOpen,
+  utterancePauseMs,
+  type RhythmMeta,
+} from '../lib/conversationOrchestration';
 import { streamChatMessage, type ChatStreamDoneMeta } from '../lib/chatStream';
 import {
-  buildFinalTtsUtterances,
   createIncrementalTtsState,
   pullSpeakableChunks,
   resetIncrementalTtsState,
@@ -68,19 +81,44 @@ import {
   refreshDeviceTimezoneCache,
 } from '../lib/deviceTimezone';
 import {
-  canEnterPhase,
-  voicePhaseHint,
-  voicePhaseLabel,
+  createVoiceTurnTiming,
+  logVoiceTurnSummary,
+  markVoiceTiming,
+  markVoiceChunkPlay,
+  type VoiceTurnTiming,
+} from '../lib/voiceLatency';
+import {
+  ASSISTANT_STUCK_MS,
+  INTERRUPTING_STUCK_MS,
+  blocksRecordingPrewarm,
+  isAssistantActivePhase,
+  logVoiceState,
+  transitionVoicePhase,
   type VoicePhase,
-} from '../lib/voiceFlow';
+} from '../lib/conversationState';
+import {
+  bumpSpeakGeneration,
+  bumpStreamHandlers,
+  bumpTurn,
+  createVoiceSession,
+  isActiveSpeak,
+  isActiveStreamHandler,
+  isActiveStreamTtsDrain,
+  isActiveTurn,
+  mergeAbortSignals,
+} from '../lib/voiceSession';
+import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
+import {
+  setVoiceLogContext,
+  voiceLog,
+  voiceLogSnapshot,
+} from '../lib/voiceTurnLog';
 
 /** LAN URL of the FastAPI backend (same Wi‑Fi as the phone). Override in `.env`: EXPO_PUBLIC_API_BASE */
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'http://192.168.0.178:8000';
 const API_URL = `${API_BASE}/chat`;
 const TTS_URL = `${API_BASE}/tts`;
 
-/** Mid-stream TTS can stack failures (e.g. Azure 400) and lock the UI in Speaking. */
-const STREAM_TTS_WHILE_OPEN = false;
 const TTS_FETCH_TIMEOUT_MS = 30_000;
 
 const SILENT_SOUND = require('../assets/silent.wav');
@@ -197,6 +235,9 @@ export default function ChatScreen() {
   const conversationBargeStateRef = useRef<BargeInMeterState | null>(null);
   const conversationBargeGraceUntilRef = useRef(0);
   const conversationBargeCooldownUntilRef = useRef(0);
+  const conversationListenResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const recordingRef = useRef<Audio.Recording | null>(null);
   const recordingStartedAtRef = useRef(0);
   const micPressRef = useRef(false);
@@ -209,20 +250,32 @@ export default function ChatScreen() {
   const ttsEmotionHintRef = useRef<string | null>(null);
   const primeSoundRef = useRef<Audio.Sound | null>(null);
   const activeSoundRef = useRef<Audio.Sound | null>(null);
-  const speakGenerationRef = useRef(0);
+  const voiceSessionRef = useRef(createVoiceSession());
+  const phaseChangedAtRef = useRef(Date.now());
+  const ttsAbortRef = useRef<AbortController | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
   const streamVoiceBufferRef = useRef('');
   const speakInFlightRef = useRef(false);
   const chatInFlightRef = useRef(false);
-  const voiceTurnRef = useRef(0);
   const pendingStreamTextRef = useRef('');
   const streamUiFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamTtsStateRef = useRef<IncrementalTtsState>(createIncrementalTtsState());
   const streamTtsQueueRef = useRef<string[]>([]);
   const streamTtsDrainingRef = useRef(false);
   const streamTtsDoneRef = useRef(false);
+  /** Normalized lines already queued for stream TTS this turn — prevents repeat loops. */
+  const streamTtsEnqueuedKeysRef = useRef<Set<string>>(new Set());
+  /** Raw streamed reply text for TTS chunking (UI buffer may be formatted differently). */
+  const streamTtsRawRef = useRef('');
+  /** Last assistant line for echo detection (mic picking up TTS). */
+  const lastAssistantTtsTextRef = useRef('');
+  const lastPlayedTtsKeyRef = useRef('');
+  const rhythmMetaRef = useRef<RhythmMeta | null>(null);
+  const serverSpeechChunksRef = useRef<string[] | null>(null);
+  const voiceTurnTimingRef = useRef<VoiceTurnTiming | null>(null);
+  const iosSpeakerPrimedGenerationRef = useRef(-1);
 
   useEffect(() => {
     voiceEnabledRef.current = voiceEnabled;
@@ -259,7 +312,7 @@ export default function ChatScreen() {
   }, [conversationSession]);
 
   useEffect(() => {
-    if (voiceEnabled) prewarmRecordingPipeline();
+    if (voiceEnabled) prewarmVoiceMicIfIdle();
   }, [voiceEnabled]);
 
   useEffect(() => {
@@ -326,14 +379,91 @@ export default function ChatScreen() {
     });
   };
 
-  const setVoicePhaseTransition = (next: VoicePhase) => {
-    const prev = voicePhaseRef.current;
-    if (!canEnterPhase(prev, next)) {
-      return false;
+  const isActiveVoiceTurn = (turn: number) => isActiveTurn(voiceSessionRef.current, turn);
+
+  const isActiveSpeakGeneration = (generation: number) =>
+    isActiveSpeak(voiceSessionRef.current, generation);
+
+  const abortTtsFetches = (reason: string) => {
+    if (ttsAbortRef.current) {
+      logVoiceState('tts_abort', { reason });
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
     }
-    voicePhaseRef.current = next;
-    setVoicePhase(next);
-    return true;
+  };
+
+  const ensureTtsAbortSignal = (): AbortSignal => {
+    if (!ttsAbortRef.current || ttsAbortRef.current.signal.aborted) {
+      ttsAbortRef.current = new AbortController();
+    }
+    return ttsAbortRef.current.signal;
+  };
+
+  const prewarmVoiceMicIfIdle = () => {
+    if (
+      conversationSessionRef.current &&
+      voiceInputModeRef.current === 'conversation'
+    ) {
+      return;
+    }
+    if (
+      voicePhaseRef.current === 'speaking' ||
+      isAssistantActivePhase(voicePhaseRef.current) ||
+      voicePhaseRef.current === 'listening'
+    ) {
+      return;
+    }
+    prewarmRecordingPipeline();
+  };
+
+  /** Free Expo's single prepared Recording slot (prewarm + conversation + barge-in). */
+  const releaseAllActiveRecorders = async (keep?: Audio.Recording | null) => {
+    await discardPrewarm();
+    stopConversationMetering();
+    conversationBargeGenRef.current += 1;
+    if (conversationBargeMeterRef.current) {
+      clearInterval(conversationBargeMeterRef.current);
+      conversationBargeMeterRef.current = null;
+    }
+    conversationBargeStateRef.current = null;
+    conversationBargeGraceUntilRef.current = 0;
+    const barge = conversationBargeRecordingRef.current;
+    conversationBargeRecordingRef.current = null;
+    const main = recordingRef.current;
+    recordingRef.current = null;
+    recordingStartedAtRef.current = 0;
+    await Promise.all([
+      safeUnloadRecording(barge !== keep ? barge : null),
+      safeUnloadRecording(main !== keep ? main : null),
+    ]);
+  };
+
+  const syncRecordingPrewarmBlock = (phase: VoicePhase) => {
+    setRecordingPrewarmBlocked(blocksRecordingPrewarm(phase));
+  };
+
+  const setVoicePhaseTransition = (
+    next: VoicePhase,
+    options?: { force?: boolean; reason?: string },
+  ) => {
+    const ok = transitionVoicePhase(
+      {
+        get: () => voicePhaseRef.current,
+        set: (phase) => {
+          voicePhaseRef.current = phase;
+          setVoicePhase(phase);
+          syncRecordingPrewarmBlock(phase);
+        },
+        phaseSince: () => Date.now() - phaseChangedAtRef.current,
+      },
+      next,
+      options,
+    );
+    if (ok && voicePhaseRef.current === next) {
+      phaseChangedAtRef.current = Date.now();
+      logVoiceSnapshot(`after_phase_${next}`);
+    }
+    return ok;
   };
 
   const stopConversationMetering = () => {
@@ -344,7 +474,8 @@ export default function ChatScreen() {
     conversationMeterStateRef.current = null;
   };
 
-  const stopConversationBargeIn = () => {
+  /** Stop barge-in metering and return the live recorder (caller may hand off to listen). */
+  const detachConversationBargeRecording = (): Audio.Recording | null => {
     conversationBargeGenRef.current += 1;
     if (conversationBargeMeterRef.current) {
       clearInterval(conversationBargeMeterRef.current);
@@ -354,7 +485,12 @@ export default function ChatScreen() {
     conversationBargeGraceUntilRef.current = 0;
     const rec = conversationBargeRecordingRef.current;
     conversationBargeRecordingRef.current = null;
-    if (rec) void rec.stopAndUnloadAsync().catch(() => {});
+    return rec;
+  };
+
+  const stopConversationBargeIn = () => {
+    const rec = detachConversationBargeRecording();
+    if (rec) void safeUnloadRecording(rec);
   };
 
   const refreshConversationBargeInGrace = (forTts = false) => {
@@ -364,6 +500,7 @@ export default function ChatScreen() {
   };
 
   const startConversationBargeIn = async (options?: { forTts?: boolean }) => {
+    return withRecordingMutex(async () => {
     if (
       !conversationSessionRef.current ||
       voiceInputModeRef.current !== 'conversation' ||
@@ -389,6 +526,7 @@ export default function ChatScreen() {
     }
 
     try {
+      await releaseAllActiveRecorders();
       const recording = await startConversationRecording();
       if (bargeGen !== conversationBargeGenRef.current) {
         await recording.stopAndUnloadAsync();
@@ -431,8 +569,16 @@ export default function ChatScreen() {
 
           if (tick.triggered) {
             conversationBargeCooldownUntilRef.current = Date.now() + BARGE_IN_COOLDOWN_MS;
-            stopConversationBargeIn();
-            interruptConversationAssistant();
+            const speechStartedAt =
+              tick.state.speechStartedAt ??
+              conversationBargeStateRef.current?.speechStartedAt ??
+              now;
+            const bargeRec = detachConversationBargeRecording();
+            if (bargeRec) {
+              void resumeConversationListenAfterBargeIn(bargeRec, speechStartedAt);
+            } else {
+              interruptConversationAssistant({ resumeListening: true });
+            }
           }
         })();
       }, METERING_INTERVAL_MS);
@@ -441,9 +587,11 @@ export default function ChatScreen() {
         stopConversationBargeIn();
       }
     }
+    });
   };
 
   const endConversationSession = () => {
+    clearConversationListenResumeTimer();
     conversationListenGenRef.current += 1;
     conversationSessionRef.current = false;
     setConversationSession(false);
@@ -452,11 +600,120 @@ export default function ChatScreen() {
     const rec = recordingRef.current;
     recordingRef.current = null;
     recordingStartedAtRef.current = 0;
-    if (rec) void rec.stopAndUnloadAsync().catch(() => {});
+    if (rec) void safeUnloadRecording(rec);
     if (voicePhaseRef.current === 'listening') {
       setVoicePhaseTransition('idle');
-      if (voiceEnabledRef.current) prewarmRecordingPipeline();
+      if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
     }
+  };
+
+  const beginConversationListenMeter = (listenGen: number) => {
+    stopConversationMetering();
+    conversationMeterRef.current = setInterval(() => {
+      void (async () => {
+        if (listenGen !== conversationListenGenRef.current) return;
+        const recording = recordingRef.current;
+        if (!recording || voicePhaseRef.current !== 'listening') return;
+        if (
+          streamTtsDrainingRef.current ||
+          streamTtsQueueRef.current.length > 0 ||
+          activeSoundRef.current ||
+          speakInFlightRef.current
+        ) {
+          return;
+        }
+
+        let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+        try {
+          status = await recording.getStatusAsync();
+        } catch {
+          return;
+        }
+        if (!status.isRecording) return;
+
+        const now = Date.now();
+        const prev = conversationMeterStateRef.current ?? createConversationMeterState(now);
+        const tick = tickConversationMeter(prev, status.metering, now);
+        conversationMeterStateRef.current = tick.state;
+
+        if (tick.inactive) {
+          endConversationSession();
+          setVoiceInputError('Conversation ended — no speech heard.');
+          prewarmVoiceMicIfIdle();
+          return;
+        }
+
+        if (tick.endSilence) {
+          stopConversationMetering();
+          const active = recordingRef.current;
+          recordingRef.current = null;
+          if (!active) return;
+          void finalizeConversationListenChunk(active, listenGen);
+        }
+      })();
+    }, METERING_INTERVAL_MS);
+  };
+
+  /** Keep barge-in audio, stop TTS, and finish the user's interrupt utterance. */
+  const resumeConversationListenAfterBargeIn = async (
+    recording: Audio.Recording,
+    speechStartedAt: number,
+  ) => {
+    return withRecordingMutex(async () => {
+      if (
+        !conversationSessionRef.current ||
+        voiceInputModeRef.current !== 'conversation' ||
+        !voiceEnabledRef.current
+      ) {
+        await safeUnloadRecording(recording);
+        return;
+      }
+
+      interruptAssistant({
+        keepConversationSession: true,
+        resumeListening: false,
+      });
+
+      const listenGen = ++conversationListenGenRef.current;
+      stopConversationMetering();
+
+      try {
+        await configureRecordingAudioMode();
+      } catch {
+        await safeUnloadRecording(recording);
+        return;
+      }
+
+      if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
+        await safeUnloadRecording(recording);
+        return;
+      }
+
+      await releaseAllActiveRecorders(recording);
+
+      const now = Date.now();
+      recordingRef.current = recording;
+      recordingStartedAtRef.current = speechStartedAt;
+      conversationMeterStateRef.current = {
+        sawSpeech: true,
+        speechStartedAt,
+        silenceSince: null,
+        listenStartedAt: now,
+        lastSpeechAt: now,
+      };
+
+      setVoiceInputError(null);
+      voiceUtteranceRef.current += 1;
+
+      if (!setVoicePhaseTransition('listening')) {
+        recordingRef.current = null;
+        await safeUnloadRecording(recording);
+        ensureConversationListening();
+        return;
+      }
+
+      beginConversationListenMeter(listenGen);
+    });
   };
 
   const finalizeConversationListenChunk = async (
@@ -480,12 +737,13 @@ export default function ChatScreen() {
     }
 
     const utteranceId = ++voiceUtteranceRef.current;
-    if (!setVoicePhaseTransition('processing')) {
+    if (!setVoicePhaseTransition('thinking', { reason: 'stt_done' })) {
       try {
         await recording.stopAndUnloadAsync();
       } catch {
         // ignore
       }
+      ensureConversationListening();
       return;
     }
 
@@ -496,16 +754,23 @@ export default function ChatScreen() {
       const msg = err instanceof Error ? err.message : 'Recording failed';
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       if (conversationSessionRef.current) {
-        void startConversationListening();
+        ensureConversationListening();
       } else {
         setVoicePhaseTransition('idle');
-        prewarmRecordingPipeline();
+        prewarmVoiceMicIfIdle();
       }
     }
   };
 
-  /** Resume listen loop after a conversation voice turn (call after voiceSendLock is cleared). */
-  const resumeConversationListeningAfterTurn = () => {
+  const clearConversationListenResumeTimer = () => {
+    if (conversationListenResumeTimerRef.current) {
+      clearTimeout(conversationListenResumeTimerRef.current);
+      conversationListenResumeTimerRef.current = null;
+    }
+  };
+
+  /** Unstick conversation mode after a missed interrupt / stale STT / failed listen transition. */
+  const ensureConversationListening = () => {
     if (
       !conversationSessionRef.current ||
       voiceInputModeRef.current !== 'conversation' ||
@@ -513,120 +778,157 @@ export default function ChatScreen() {
     ) {
       return;
     }
-    if (chatInFlightRef.current || voiceSendLockRef.current) {
+    voiceSendLockRef.current = false;
+    chatInFlightRef.current = false;
+    speakInFlightRef.current = false;
+    ensureUiUnlocked();
+    if (voicePhaseRef.current === 'listening' && recordingRef.current) {
       return;
     }
-    const phase = voicePhaseRef.current;
+    logVoiceState('ensure_listen', { phase: voicePhaseRef.current });
+    void startConversationListening({ resumeAfterInterrupt: true });
+  };
+
+  /** Single debounced path back to Listening… after TTS / errors / interrupt. */
+  const scheduleConversationListen = (delayMs = POST_TTS_LISTEN_COOLDOWN_MS) => {
     if (
-      phase !== 'idle' &&
-      phase !== 'speaking' &&
-      phase !== 'processing'
+      !conversationSessionRef.current ||
+      voiceInputModeRef.current !== 'conversation' ||
+      !voiceEnabledRef.current
     ) {
       return;
     }
-    void startConversationListening({ resumeAfterInterrupt: true });
+    clearConversationListenResumeTimer();
+    conversationListenResumeTimerRef.current = setTimeout(() => {
+      conversationListenResumeTimerRef.current = null;
+      if (
+        chatInFlightRef.current ||
+        voiceSendLockRef.current ||
+        streamTtsDrainingRef.current ||
+        streamTtsQueueRef.current.length > 0 ||
+        activeSoundRef.current ||
+        speakInFlightRef.current
+      ) {
+        scheduleConversationListen(400);
+        return;
+      }
+      ensureConversationListening();
+    }, delayMs);
+  };
+
+  const resumeConversationListeningAfterTurn = () => {
+    voiceLog('schedule_listen', { delayMs: POST_TTS_LISTEN_COOLDOWN_MS });
+    logVoiceSnapshot('schedule_listen');
+    scheduleConversationListen();
   };
 
   const startConversationListening = async (options?: {
     /** After interrupt or failed transcript — allow processing → listening. */
     resumeAfterInterrupt?: boolean;
   }) => {
-    if (
-      !conversationSessionRef.current ||
-      voiceInputModeRef.current !== 'conversation' ||
-      !voiceEnabledRef.current
-    ) {
-      return;
-    }
-    const phase = voicePhaseRef.current;
-    if (options?.resumeAfterInterrupt) {
-      if (phase !== 'idle' && phase !== 'speaking' && phase !== 'processing') {
+    return withRecordingMutex(async () => {
+      if (
+        !conversationSessionRef.current ||
+        voiceInputModeRef.current !== 'conversation' ||
+        !voiceEnabledRef.current
+      ) {
         return;
       }
-    } else if (phase !== 'idle' && phase !== 'speaking') {
-      return;
-    }
-    if (chatInFlightRef.current || voiceSendLockRef.current) {
-      return;
-    }
+      if (voicePhaseRef.current === 'listening' && recordingRef.current) {
+        return;
+      }
+      const phase = voicePhaseRef.current;
+      if (options?.resumeAfterInterrupt) {
+        const okResume =
+          phase === 'idle' ||
+          phase === 'speaking' ||
+          phase === 'thinking' ||
+          phase === 'streaming' ||
+          phase === 'interrupting';
+        if (!okResume) return;
+      } else if (phase !== 'idle' && phase !== 'speaking') {
+        return;
+      }
+      if (
+        !options?.resumeAfterInterrupt &&
+        (chatInFlightRef.current || voiceSendLockRef.current)
+      ) {
+        return;
+      }
 
-    const listenGen = ++conversationListenGenRef.current;
-    stopConversationBargeIn();
-    stopConversationMetering();
+      const listenGen = ++conversationListenGenRef.current;
+      stopConversationBargeIn();
+      stopConversationMetering();
 
-    if (voicePhaseRef.current === 'speaking' && !options?.resumeAfterInterrupt) {
-      interruptAssistant({ keepConversationSession: true });
-    }
+      if (voicePhaseRef.current === 'speaking' && !options?.resumeAfterInterrupt) {
+        interruptAssistant({ keepConversationSession: true });
+      }
 
-    setVoiceInputError(null);
-    voiceUtteranceRef.current += 1;
+      setVoiceInputError(null);
+      voiceUtteranceRef.current += 1;
 
-    const permitted = await ensureMicrophonePermission();
-    if (!permitted) {
-      setVoiceInputError('Microphone access is required to talk.');
-      endConversationSession();
-      return;
-    }
+      const permitted = await ensureMicrophonePermission();
+      if (!permitted) {
+        setVoiceInputError('Microphone access is required to talk.');
+        endConversationSession();
+        return;
+      }
 
-    if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
-      return;
-    }
-
-    if (!setVoicePhaseTransition('listening')) {
-      return;
-    }
-
-    try {
-      const recording = await startConversationRecording();
       if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
-        await recording.stopAndUnloadAsync();
         return;
       }
 
-      recordingRef.current = recording;
-      recordingStartedAtRef.current = Date.now();
-      conversationMeterStateRef.current = createConversationMeterState();
+      if (!setVoicePhaseTransition('listening')) {
+        scheduleConversationListen(300);
+        return;
+      }
 
-      conversationMeterRef.current = setInterval(() => {
-        void (async () => {
-          if (listenGen !== conversationListenGenRef.current) return;
-          if (!recordingRef.current || voicePhaseRef.current !== 'listening') return;
+      try {
+        await releaseAllActiveRecorders();
+        const recording = await startConversationRecording();
+        if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
+          await safeUnloadRecording(recording);
+          return;
+        }
 
-          let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+        recordingRef.current = recording;
+        recordingStartedAtRef.current = Date.now();
+        conversationMeterStateRef.current = createConversationMeterState();
+        beginConversationListenMeter(listenGen);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : 'Could not start listening';
+        const onlyOne =
+          raw.includes('Only one Recording') || raw.includes('one Recording object');
+        if (onlyOne) {
           try {
-            status = await recording.getStatusAsync();
+            await releaseAllActiveRecorders();
+            const recording = await startConversationRecording();
+            if (
+              listenGen === conversationListenGenRef.current &&
+              conversationSessionRef.current
+            ) {
+              recordingRef.current = recording;
+              recordingStartedAtRef.current = Date.now();
+              conversationMeterStateRef.current = createConversationMeterState();
+              beginConversationListenMeter(listenGen);
+              return;
+            }
+            await safeUnloadRecording(recording);
           } catch {
-            return;
+            // fall through
           }
-          if (!status.isRecording) return;
-
-          const now = Date.now();
-          const prev = conversationMeterStateRef.current ?? createConversationMeterState(now);
-          const tick = tickConversationMeter(prev, status.metering, now);
-          conversationMeterStateRef.current = tick.state;
-
-          if (tick.inactive) {
-            endConversationSession();
-            setVoiceInputError('Conversation ended — no speech heard.');
-            prewarmRecordingPipeline();
-            return;
-          }
-
-          if (tick.endSilence) {
-            stopConversationMetering();
-            const active = recordingRef.current;
-            recordingRef.current = null;
-            if (!active) return;
-            void finalizeConversationListenChunk(active, listenGen);
-          }
-        })();
-      }, METERING_INTERVAL_MS);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Could not start listening';
-      setVoiceInputError(msg);
-      endConversationSession();
-      prewarmRecordingPipeline();
-    }
+        }
+        setVoiceInputError(
+          onlyOne
+            ? 'Mic busy — tap Listen on Mic to try again.'
+            : raw.length > 140
+              ? `${raw.slice(0, 137)}…`
+              : raw,
+        );
+        setVoicePhaseTransition('idle');
+        ensureConversationListening();
+      }
+    });
   };
 
   const startConversationSession = () => {
@@ -642,13 +944,29 @@ export default function ChatScreen() {
 
     conversationSessionRef.current = true;
     setConversationSession(true);
-    void startConversationListening();
+    clearConversationListenResumeTimer();
+    void startConversationListening({ resumeAfterInterrupt: true });
   };
 
-  const interruptConversationAssistant = () => {
+  const stopConversationListening = () => {
+    conversationListenGenRef.current += 1;
+    stopConversationBargeIn();
+    stopConversationMetering();
+    const rec = recordingRef.current;
+    recordingRef.current = null;
+    recordingStartedAtRef.current = 0;
+    if (rec) void safeUnloadRecording(rec);
+    if (voicePhaseRef.current === 'listening') {
+      voicePhaseRef.current = 'idle';
+      setVoicePhase('idle');
+      syncRecordingPrewarmBlock('idle');
+    }
+  };
+
+  const interruptConversationAssistant = (options?: { resumeListening?: boolean }) => {
     interruptAssistant({
       keepConversationSession: true,
-      resumeListening: true,
+      resumeListening: options?.resumeListening === true,
     });
   };
 
@@ -658,17 +976,24 @@ export default function ChatScreen() {
       return;
     }
 
-    if (voicePhaseRef.current === 'processing' || voicePhaseRef.current === 'speaking') {
-      interruptConversationAssistant();
+    if (isAssistantActivePhase(voicePhaseRef.current)) {
+      interruptConversationAssistant({ resumeListening: true });
       return;
     }
 
     if (conversationSessionRef.current) {
-      endConversationSession();
-      if (voicePhaseRef.current !== 'idle') {
-        interruptAssistant();
+      if (voicePhaseRef.current === 'listening') {
+        endConversationSession();
+        prewarmVoiceMicIfIdle();
+        return;
       }
-      prewarmRecordingPipeline();
+      if (voicePhaseRef.current === 'idle') {
+        ensureConversationListening();
+        return;
+      }
+      endConversationSession();
+      interruptAssistant();
+      prewarmVoiceMicIfIdle();
       return;
     }
 
@@ -724,7 +1049,100 @@ export default function ChatScreen() {
     streamTtsQueueRef.current = [];
     streamTtsDrainingRef.current = false;
     streamTtsDoneRef.current = false;
+    streamTtsEnqueuedKeysRef.current = new Set();
+    streamTtsRawRef.current = '';
+    lastPlayedTtsKeyRef.current = '';
     resetIncrementalTtsState(streamTtsStateRef.current);
+  };
+
+  const useConversationSingleClipTts = () =>
+    conversationSessionRef.current &&
+    voiceInputModeRef.current === 'conversation';
+
+  /** Short replies: one TTS clip at end — avoids last-sentence repeat loops. */
+  const useSingleClipStreamTts = (raw: string) =>
+    useConversationSingleClipTts() || prepareTextForSpeech(raw).length <= 480;
+
+  const cancelActiveStreamTtsDrain = () => {
+    voiceSessionRef.current.streamTtsDrainGen += 1;
+    streamTtsQueueRef.current = [];
+    streamTtsDrainingRef.current = false;
+  };
+
+  /** One Azure clip for the full reply — avoids last-sentence loop in conversation mode. */
+  const speakStreamReplyAsSingleClip = async (turn: number, generation: number) => {
+    const raw = streamTtsRawRef.current.trim();
+    const line = prepareTextForSpeech(raw);
+    if (!line) return;
+    await stopPlayback();
+    cancelActiveStreamTtsDrain();
+    streamTtsEnqueuedKeysRef.current = new Set();
+    lastPlayedTtsKeyRef.current = '';
+    resetIncrementalTtsState(streamTtsStateRef.current);
+    streamTtsStateRef.current.spokenPrefix = line;
+    lastAssistantTtsTextRef.current = raw;
+    logVoiceState('stream_tts_single_clip', {
+      chars: line.length,
+      preview: line.length > 56 ? `${line.slice(0, 53)}…` : line,
+    });
+    enqueueStreamTtsChunks([line], turn, generation);
+  };
+
+  const waitPlaybackFullyStopped = async () => {
+    let stable = 0;
+    for (let i = 0; i < 100; i += 1) {
+      if (
+        !activeSoundRef.current &&
+        !streamTtsDrainingRef.current &&
+        streamTtsQueueRef.current.length === 0 &&
+        !speakInFlightRef.current
+      ) {
+        stable += 1;
+        if (stable >= 6) return;
+      } else {
+        stable = 0;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+
+  const isLikelyAssistantEcho = (transcript: string): boolean => {
+    const heard = prepareTextForSpeech(transcript).toLowerCase();
+    const spoken = prepareTextForSpeech(lastAssistantTtsTextRef.current).toLowerCase();
+    if (!heard || heard.length < 6 || !spoken) return false;
+    if (spoken.includes(heard) || heard.includes(spoken)) return true;
+    const tail = lastSentenceOf(lastAssistantTtsTextRef.current);
+    if (tail) {
+      const tailNorm = prepareTextForSpeech(tail).toLowerCase();
+      if (tailNorm.includes(heard) || heard.includes(tailNorm)) return true;
+      const heardWords = heard.split(/\s+/).filter((w) => w.length > 2);
+      const tailWords = new Set(tailNorm.split(/\s+/).filter((w) => w.length > 2));
+      const overlap = heardWords.filter((w) => tailWords.has(w)).length;
+      if (heardWords.length >= 2 && overlap >= Math.min(3, heardWords.length)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const streamTtsChunkKey = (text: string) => prepareTextForSpeech(text.trim());
+
+  const logVoiceSnapshot = (label: string, extra?: Record<string, string | number | boolean>) => {
+    voiceLogSnapshot(label, {
+      phase: voicePhaseRef.current,
+      queue: streamTtsQueueRef.current.length,
+      draining: streamTtsDrainingRef.current,
+      streamDone: streamTtsDoneRef.current,
+      activeSound: Boolean(activeSoundRef.current),
+      speakInFlight: speakInFlightRef.current,
+      chatInFlight: chatInFlightRef.current,
+      enqueuedKeys: streamTtsEnqueuedKeysRef.current.size,
+      spokenLen: streamTtsStateRef.current.spokenPrefix.length,
+      rawLen: streamTtsRawRef.current.length,
+      convSession: conversationSessionRef.current,
+      convMode: voiceInputModeRef.current,
+      ...extra,
+    });
   };
 
   const ensureUiUnlocked = () => {
@@ -732,39 +1150,84 @@ export default function ChatScreen() {
     setIsStreaming(false);
   };
 
-  const releaseVoiceUi = () => {
+  const releaseVoiceUi = (reason = 'release') => {
     streamTtsQueueRef.current = [];
     streamTtsDrainingRef.current = false;
     streamTtsDoneRef.current = false;
     resetStreamTts();
     chatInFlightRef.current = false;
+    speakInFlightRef.current = false;
     ensureUiUnlocked();
-    voicePhaseRef.current = 'idle';
-    setVoicePhase('idle');
-    if (voiceEnabledRef.current) prewarmRecordingPipeline();
+    setVoicePhaseTransition('idle', { force: true, reason });
+    if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
   };
 
   const maybeFinishStreamTtsIdle = (turn: number, generation: number) => {
-    if (turn !== voiceTurnRef.current || generation !== speakGenerationRef.current) return;
+    if (!isActiveVoiceTurn(turn) || !isActiveSpeakGeneration(generation)) return;
     if (!streamTtsDoneRef.current) return;
     if (streamTtsDrainingRef.current || streamTtsQueueRef.current.length > 0) return;
-    setVoicePhaseTransition('idle');
-    if (voiceEnabledRef.current) prewarmRecordingPipeline();
+    if (speakInFlightRef.current || chatInFlightRef.current) return;
+    setVoicePhaseTransition('idle', { reason: 'stream_tts_queue_empty' });
   };
 
   const drainStreamTtsQueue = async (turn: number, generation: number) => {
     if (streamTtsDrainingRef.current) return;
+    if (!isActiveVoiceTurn(turn) || !isActiveSpeakGeneration(generation)) return;
+
+    const drainGen = voiceSessionRef.current.streamTtsDrainGen;
     streamTtsDrainingRef.current = true;
+    logVoiceState('stream_tts_drain_start', { turn, generation, drainGen });
+    logVoiceSnapshot('drain_start', { drainGen });
+    let betweenClips = false;
+    let prefetch: Promise<string | null> | null = null;
 
     try {
       while (streamTtsQueueRef.current.length > 0) {
-        if (turn !== voiceTurnRef.current || generation !== speakGenerationRef.current) return;
+        if (
+          !isActiveVoiceTurn(turn) ||
+          !isActiveSpeakGeneration(generation) ||
+          !isActiveStreamTtsDrain(voiceSessionRef.current, drainGen)
+        ) {
+          logVoiceState('stream_tts_drain_cancel', { turn, generation });
+          return;
+        }
 
         setVoicePlaybackError(null);
-        setVoicePhaseTransition('speaking');
-        const text = streamTtsQueueRef.current.shift()!;
-        const ok = await speakParts([{ text }]);
-        if (!ok) {
+        setVoicePhaseTransition('speaking', { reason: 'stream_tts_play' });
+
+        if (!prefetch) {
+          const text = streamTtsQueueRef.current.shift();
+          if (!text?.trim()) continue;
+          const playKey = streamTtsChunkKey(text);
+          if (playKey && playKey === lastPlayedTtsKeyRef.current) {
+            logVoiceState('skip_duplicate_play', { preview: playKey.slice(0, 48) });
+            continue;
+          }
+          lastPlayedTtsKeyRef.current = playKey;
+          prefetch = prepareTtsClip(text.trim(), generation, {
+            markFetchDone: !voiceTurnTimingRef.current?.marks.first_tts_fetch_done,
+          });
+        }
+
+        const path = await prefetch;
+        prefetch = null;
+        if (!path) {
+          betweenClips = false;
+          continue;
+        }
+
+        const nextText = streamTtsQueueRef.current[0]?.trim();
+        if (nextText) {
+          prefetch = prepareTtsClip(nextText, generation);
+        }
+
+        try {
+          await playTtsClip(path, generation, { betweenClips });
+          betweenClips = true;
+        } catch (err) {
+          const msg =
+            err instanceof Error ? err.message : typeof err === 'string' ? err : 'Voice failed';
+          setVoicePlaybackError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
           streamTtsQueueRef.current = [];
           releaseVoiceUi();
           return;
@@ -772,9 +1235,19 @@ export default function ChatScreen() {
       }
     } finally {
       streamTtsDrainingRef.current = false;
-      if (streamTtsQueueRef.current.length > 0) {
+      logVoiceState('stream_tts_drain_end', { turn, generation });
+      logVoiceSnapshot('drain_end');
+      if (
+        streamTtsQueueRef.current.length > 0 &&
+        isActiveVoiceTurn(turn) &&
+        isActiveSpeakGeneration(generation) &&
+        isActiveStreamTtsDrain(voiceSessionRef.current, drainGen)
+      ) {
         void drainStreamTtsQueue(turn, generation);
-      } else {
+      } else if (
+        isActiveVoiceTurn(turn) &&
+        isActiveSpeakGeneration(generation)
+      ) {
         maybeFinishStreamTtsIdle(turn, generation);
       }
     }
@@ -782,9 +1255,31 @@ export default function ChatScreen() {
 
   const enqueueStreamTtsChunks = (chunks: string[], turn: number, generation: number) => {
     if (!voiceEnabledRef.current || chunks.length === 0) return;
-    if (turn !== voiceTurnRef.current || generation !== speakGenerationRef.current) return;
-    streamTtsQueueRef.current.push(...chunks);
-    void drainStreamTtsQueue(turn, generation);
+    if (!isActiveVoiceTurn(turn) || !isActiveSpeakGeneration(generation)) return;
+    let added = false;
+    for (const chunk of chunks) {
+      const trimmed = chunk.trim();
+      if (!trimmed) continue;
+      const key = streamTtsChunkKey(trimmed);
+      if (!key || streamTtsEnqueuedKeysRef.current.has(key)) {
+        continue;
+      }
+      streamTtsEnqueuedKeysRef.current.add(key);
+      added = true;
+      logVoiceState('stream_tts_enqueue', {
+        turn,
+        chars: trimmed.length,
+        preview: trimmed.length > 48 ? `${trimmed.slice(0, 45)}…` : trimmed,
+      });
+      if (!voiceTurnTimingRef.current?.marks.first_tts_enqueue) {
+        markVoiceTiming(voiceTurnTimingRef.current, 'first_tts_enqueue');
+      }
+      streamTtsQueueRef.current.push(trimmed);
+    }
+    if (added) {
+      logVoiceSnapshot('after_enqueue', { addedChunks: chunks.length });
+      void drainStreamTtsQueue(turn, generation);
+    }
   };
 
   const feedIncrementalTtsFromStream = (
@@ -795,8 +1290,9 @@ export default function ChatScreen() {
     if (!voiceEnabledRef.current) return;
     const chunks = pullSpeakableChunks(
       streamTtsStateRef.current,
-      streamVoiceBufferRef.current,
+      streamTtsRawRef.current,
       flush,
+      streamTtsEnqueuedKeysRef.current,
     );
     enqueueStreamTtsChunks(chunks, turn, generation);
   };
@@ -805,49 +1301,89 @@ export default function ChatScreen() {
     keepConversationSession?: boolean;
     resumeListening?: boolean;
   }) => {
+    const fromPhase = voicePhaseRef.current;
+    const hadWork =
+      chatInFlightRef.current ||
+      speakInFlightRef.current ||
+      streamTtsDrainingRef.current ||
+      streamTtsQueueRef.current.length > 0 ||
+      isAssistantActivePhase(fromPhase);
+
     if (!options?.keepConversationSession) {
       endConversationSession();
     } else {
       conversationListenGenRef.current += 1;
       stopConversationBargeIn();
       stopConversationMetering();
-      const rec = recordingRef.current;
-      recordingRef.current = null;
-      recordingStartedAtRef.current = 0;
-      if (rec) void rec.stopAndUnloadAsync().catch(() => {});
+      void releaseAllActiveRecorders();
     }
 
+    if (hadWork && fromPhase !== 'interrupting') {
+      setVoicePhaseTransition('interrupting', {
+        force: true,
+        reason: 'user_interrupt',
+      });
+    }
+
+    logVoiceState('interrupt_begin', {
+      from: fromPhase,
+      resume: options?.resumeListening === true,
+    });
+    markVoiceTiming(voiceTurnTimingRef.current, 'interrupt');
+
     voiceUtteranceRef.current += 1;
-    voiceTurnRef.current += 1;
+    bumpTurn(voiceSessionRef.current, 'interrupt');
+    bumpSpeakGeneration(voiceSessionRef.current, 'interrupt');
+    bumpStreamHandlers(voiceSessionRef.current, 'interrupt');
+    setVoiceLogContext(
+      voiceSessionRef.current.turn,
+      voiceSessionRef.current.speakGeneration,
+    );
+    logVoiceSnapshot('interrupt');
+    abortTtsFetches('interrupt');
     chatAbortRef.current?.abort();
     chatAbortRef.current = null;
-    speakGenerationRef.current += 1;
     streamVoiceBufferRef.current = '';
     pendingStreamTextRef.current = '';
+    streamTtsQueueRef.current = [];
+    streamTtsDrainingRef.current = false;
+    streamTtsDoneRef.current = false;
+    streamTtsEnqueuedKeysRef.current = new Set();
     resetStreamTts();
     clearStreamUiFlush();
     voiceSendLockRef.current = false;
     lastVoiceTranscriptRef.current = '';
     micPressRef.current = false;
     chatInFlightRef.current = false;
+    speakInFlightRef.current = false;
     ensureUiUnlocked();
+    const assistantId = activeAssistantIdRef.current;
+    if (assistantId) {
+      finalizeInterruptedTurn(assistantId);
+    }
+
     void stopPlayback().catch(() => {});
     void discardPrewarm();
 
     const resumeConversation =
       options?.keepConversationSession &&
-      options?.resumeListening !== false &&
+      options?.resumeListening === true &&
       conversationSessionRef.current &&
       voiceInputModeRef.current === 'conversation' &&
       voiceEnabledRef.current;
 
     if (resumeConversation) {
-      void startConversationListening({ resumeAfterInterrupt: true });
+      setVoicePhaseTransition('idle', { force: true, reason: 'interrupt_to_listen' });
+      scheduleConversationListen(120);
     } else {
-      voicePhaseRef.current = 'idle';
-      setVoicePhase('idle');
-      if (voiceEnabledRef.current) prewarmRecordingPipeline();
+      setVoicePhaseTransition('idle', { force: true, reason: 'interrupt_done' });
+      syncRecordingPrewarmBlock('idle');
+      if (!options?.keepConversationSession && voiceEnabledRef.current) {
+        prewarmVoiceMicIfIdle();
+      }
     }
+
+    logVoiceState('interrupt_end', { resume: resumeConversation });
   };
 
   const finalizeInterruptedTurn = (assistantId: string) => {
@@ -897,13 +1433,32 @@ export default function ChatScreen() {
     );
   };
 
-  const buildSpeakParts = (mainText: string, forTest: boolean): SpeakPart[] => {
+  const buildSpeakParts = (
+    mainText: string,
+    forTest: boolean,
+    serverChunks?: string[] | null,
+  ): SpeakPart[] => {
+    if (serverChunks?.length) {
+      return serverChunks.filter(Boolean).map((text) => ({ text }));
+    }
     const trim = replyTrim(forTest) ?? {
       maxSentences: MAX_SPOKEN_SENTENCES,
       maxChars: MAX_SPOKEN_CHARS,
     };
-    const utterances = buildSpeechUtterances(mainText, trim);
-    return utterances.filter(Boolean).map((text) => ({ text }));
+    return buildConversationalSpeakParts(mainText, trim);
+  };
+
+  const playFastAckLine = async (text: string, turn: number, generation: number) => {
+    if (!voiceEnabledRef.current || turn !== voiceSessionRef.current.turn) return;
+    if (!isActiveSpeakGeneration(generation)) return;
+    try {
+      await prepareForTtsPlayback();
+      const path = await prepareTtsClip(text, generation);
+      if (!path || !isActiveSpeakGeneration(generation)) return;
+      await playTtsClip(path, generation);
+    } catch {
+      // Fast ack is optional — never block the turn.
+    }
   };
 
   const stopPlayback = async () => {
@@ -922,16 +1477,24 @@ export default function ChatScreen() {
   const prepareTtsClip = async (
     text: string,
     generation: number,
+    options?: { markFetchDone?: boolean },
   ): Promise<string | null> => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TTS_FETCH_TIMEOUT_MS);
+    if (!isActiveSpeakGeneration(generation)) return null;
+
+    const spoken = prepareTextForSpeech(text.trim());
+    if (!spoken) return null;
+
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), TTS_FETCH_TIMEOUT_MS);
+    const signal = mergeAbortSignals(ensureTtsAbortSignal(), timeoutController.signal);
     let response: Response;
     try {
+      logVoiceState('tts_fetch_start', { generation, chars: spoken.length });
       response = await fetch(TTS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text,
+          text: spoken,
           style: 'default',
           voice_gender: voiceGenderRef.current,
           ...(ttsExpressStyleRef.current
@@ -939,9 +1502,13 @@ export default function ChatScreen() {
             : {}),
           ...(ttsEmotionHintRef.current ? { emotion_hint: ttsEmotionHintRef.current } : {}),
         }),
-        signal: controller.signal,
+        signal,
       });
     } catch (err) {
+      if (isAbortError(err)) {
+        logVoiceState('tts_fetch_abort', { generation });
+        return null;
+      }
       if (err instanceof Error && err.name === 'AbortError') {
         throw new Error('Voice timed out — check backend and Azure Speech');
       }
@@ -950,7 +1517,7 @@ export default function ChatScreen() {
       clearTimeout(timeoutId);
     }
 
-    if (generation !== speakGenerationRef.current) return null;
+    if (!isActiveSpeakGeneration(generation)) return null;
 
     if (!response.ok) {
       const detail = await response.text();
@@ -958,7 +1525,7 @@ export default function ChatScreen() {
     }
 
     const buffer = await response.arrayBuffer();
-    if (generation !== speakGenerationRef.current) return null;
+    if (!isActiveSpeakGeneration(generation)) return null;
 
     if (buffer.byteLength < 100) {
       throw new Error('TTS returned empty or invalid audio');
@@ -976,28 +1543,33 @@ export default function ChatScreen() {
       encoding: FileSystem.EncodingType.Base64,
     });
 
+    if (options?.markFetchDone) {
+      markVoiceTiming(voiceTurnTimingRef.current, 'first_tts_fetch_done');
+    }
+
+    logVoiceState('tts_fetch_done', { generation });
     return path;
   };
 
-  const shouldResumeConversationBargeIn = () =>
-    conversationSessionRef.current &&
-    voiceInputModeRef.current === 'conversation' &&
-    voiceEnabledRef.current &&
-    voicePhaseRef.current === 'speaking';
-
-  const playTtsClip = async (path: string, generation: number): Promise<void> => {
+  const playTtsClip = async (
+    path: string,
+    generation: number,
+    options?: { betweenClips?: boolean },
+  ): Promise<void> => {
     let sound: Audio.Sound | null = null;
-    const resumeBargeIn = shouldResumeConversationBargeIn();
-    if (conversationBargeRecordingRef.current) {
-      stopConversationBargeIn();
+    if (!options?.betweenClips) {
+      if (recordingRef.current || conversationBargeRecordingRef.current) {
+        await releaseAllActiveRecorders();
+      }
+      await prepareForTtsPlayback();
     }
     try {
-      await prepareForTtsPlayback();
 
       const created = await Audio.Sound.createAsync(
         { uri: path },
         {
           shouldPlay: false,
+          isLooping: false,
           volume: 1.0,
           isMuted: false,
           rate: 1.0,
@@ -1006,20 +1578,30 @@ export default function ChatScreen() {
       );
       sound = created.sound;
 
-      if (generation !== speakGenerationRef.current) {
+      if (!isActiveSpeakGeneration(generation)) {
         await sound.unloadAsync();
         return;
       }
 
       activeSoundRef.current = sound;
+      logVoiceState('tts_play_start', { generation });
+      logVoiceSnapshot('play_start', { generation });
       await sound.setVolumeAsync(1.0);
 
       let settled = false;
       await new Promise<void>((resolve, reject) => {
+        let interruptPollId: ReturnType<typeof setInterval> | null = null;
         const settle = (fn: () => void) => {
           if (settled) return;
           settled = true;
           clearTimeout(timeoutId);
+          if (interruptPollId) clearInterval(interruptPollId);
+          try {
+            sound!.setOnPlaybackStatusUpdate(null);
+          } catch {
+            // ignore
+          }
+          logVoiceSnapshot('play_settle');
           fn();
         };
 
@@ -1027,7 +1609,17 @@ export default function ChatScreen() {
           settle(() => reject(new Error('Playback timeout — try again or check device volume')));
         }, 45_000);
 
-        const checkFinished = (status: Audio.AVPlaybackStatus) => {
+        const checkFinished = (
+          status: Awaited<ReturnType<Audio.Sound['getStatusAsync']>>,
+        ) => {
+          if (!isActiveSpeakGeneration(generation)) {
+            settle(() => resolve());
+            return;
+          }
+          if (activeSoundRef.current !== sound) {
+            settle(() => resolve());
+            return;
+          }
           if (!status.isLoaded) return;
           if ('error' in status && status.error) {
             settle(() => reject(new Error(String(status.error))));
@@ -1044,10 +1636,17 @@ export default function ChatScreen() {
           }
         };
 
+        interruptPollId = setInterval(() => {
+          if (!isActiveSpeakGeneration(generation) || activeSoundRef.current !== sound) {
+            settle(() => resolve());
+          }
+        }, 100);
+
         sound!.setProgressUpdateIntervalAsync(250).catch(() => {});
         sound!.setOnPlaybackStatusUpdate(checkFinished);
 
         void sound!.playAsync().then(async () => {
+          markVoiceChunkPlay(voiceTurnTimingRef.current);
           const status = await sound!.getStatusAsync();
           checkFinished(status);
         }).catch((e) => {
@@ -1069,32 +1668,29 @@ export default function ChatScreen() {
         }
         if (activeSoundRef.current === sound) activeSoundRef.current = null;
       }
-      if (
-        resumeBargeIn &&
-        generation === speakGenerationRef.current &&
-        shouldResumeConversationBargeIn()
-      ) {
-        void startConversationBargeIn({ forTts: true });
-      }
     }
   };
 
   const speakParts = async (parts: SpeakPart[]): Promise<boolean> => {
     if (parts.length === 0) return true;
 
-    const generation = speakGenerationRef.current;
+    const generation = voiceSessionRef.current.speakGeneration;
     speakInFlightRef.current = true;
 
     try {
-      await primeIosSpeaker();
+      if (iosSpeakerPrimedGenerationRef.current !== generation) {
+        await primeIosSpeaker();
+        iosSpeakerPrimedGenerationRef.current = generation;
+      }
 
       let nextPathPromise: Promise<string | null> | null = prepareTtsClip(
         parts[0].text,
         generation,
+        { markFetchDone: true },
       );
 
       for (let index = 0; index < parts.length; index += 1) {
-        if (generation !== speakGenerationRef.current) return true;
+        if (!isActiveSpeakGeneration(generation)) return true;
 
         let path: string | null;
         try {
@@ -1105,7 +1701,10 @@ export default function ChatScreen() {
           setVoicePlaybackError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
           return false;
         }
-        if (!path) return false;
+        if (!path) {
+          if (!isActiveSpeakGeneration(generation)) return true;
+          return false;
+        }
 
         if (index + 1 < parts.length) {
           nextPathPromise = prepareTtsClip(parts[index + 1].text, generation);
@@ -1114,7 +1713,7 @@ export default function ChatScreen() {
         }
 
         try {
-          await playTtsClip(path, generation);
+          await playTtsClip(path, generation, { betweenClips: index > 0 });
         } catch (err) {
           const msg =
             err instanceof Error ? err.message : typeof err === 'string' ? err : 'Voice failed';
@@ -1122,31 +1721,76 @@ export default function ChatScreen() {
           return false;
         }
 
-        const pauseMs = pauseBetweenUtterances(index + 1 < parts.length);
-        if (pauseMs > 0 && generation === speakGenerationRef.current) {
+        const pauseMs = utterancePauseMs(index, parts[index].text, parts.length);
+        if (pauseMs > 0 && isActiveSpeakGeneration(generation)) {
           await new Promise((resolve) => setTimeout(resolve, pauseMs));
         }
       }
       return true;
     } finally {
       speakInFlightRef.current = false;
-      if (generation === speakGenerationRef.current) {
+      if (isActiveSpeakGeneration(generation)) {
         activeSoundRef.current = null;
       }
     }
   };
 
+  const waitStreamTtsQueueIdle = async () => {
+    await waitPlaybackFullyStopped();
+  };
+
+  const finishStreamTtsTurn = (turn: number) => {
+    if (!isActiveVoiceTurn(turn)) return;
+    stopConversationBargeIn();
+    if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
+      setVoicePhaseTransition('idle', { reason: 'stream_tts_done' });
+      if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
+    } else {
+      setVoicePhaseTransition('idle', { reason: 'stream_tts_done' });
+      resumeConversationListeningAfterTurn();
+    }
+  };
+
   const runTtsForReply = async (reply: string, turn: number) => {
-    if (turn !== voiceTurnRef.current || !voiceEnabledRef.current || !reply.trim()) {
-      if (turn === voiceTurnRef.current) releaseVoiceUi();
+    if (!isActiveVoiceTurn(turn) || !voiceEnabledRef.current || !reply.trim()) {
+      if (isActiveVoiceTurn(turn)) releaseVoiceUi();
       return;
     }
 
-    const parts = buildSpeakParts(reply.trim(), false);
+    const streamTts = shouldStreamTtsWhileOpen(
+      voiceEnabledRef.current,
+      naturalVoiceEnabledRef.current,
+      rhythmMetaRef.current,
+    );
+
+    /**
+     * Stream TTS: onDone already flushed using streamTtsRawRef.
+     * Do NOT flush again here — UI buffer may be formatted and re-queue the last sentence.
+     */
+    if (streamTts) {
+      markVoiceTiming(voiceTurnTimingRef.current, 'final_tts_start');
+      if (useSingleClipStreamTts(reply)) {
+        voiceLog('run_tts_single_clip', { replyLen: reply.trim().length });
+        await speakStreamReplyAsSingleClip(turn, voiceSessionRef.current.speakGeneration);
+      }
+      logVoiceSnapshot('before_wait_idle');
+      await waitStreamTtsQueueIdle();
+      logVoiceSnapshot('after_wait_idle');
+      if (!isActiveVoiceTurn(turn)) return;
+      serverSpeechChunksRef.current = null;
+      finishStreamTtsTurn(turn);
+      return;
+    }
+
+    markVoiceTiming(voiceTurnTimingRef.current, 'final_tts_start');
+
+    const parts = buildSpeakParts(reply.trim(), false, serverSpeechChunksRef.current);
+    serverSpeechChunksRef.current = null;
+
     if (parts.length === 0) {
       if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
         setVoicePhaseTransition('idle');
-        if (voiceEnabledRef.current) prewarmRecordingPipeline();
+        if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
       } else {
         setVoicePhaseTransition('idle');
         resumeConversationListeningAfterTurn();
@@ -1154,25 +1798,36 @@ export default function ChatScreen() {
       return;
     }
 
+    if (!isActiveVoiceTurn(turn)) return;
+
     setVoicePlaybackError(null);
     setVoicePhaseTransition('speaking');
-    const generation = speakGenerationRef.current;
+    const generation = voiceSessionRef.current.speakGeneration;
 
     await prepareForTtsPlayback();
+    if (!isActiveVoiceTurn(turn)) return;
     const ok = await speakParts(parts);
 
-    if (generation === speakGenerationRef.current) {
+    if (isActiveVoiceTurn(turn) && isActiveSpeakGeneration(generation)) {
       stopConversationBargeIn();
       if (ok) {
         if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
           setVoicePhaseTransition('idle');
-          if (voiceEnabledRef.current) prewarmRecordingPipeline();
+          if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
         } else {
           setVoicePhaseTransition('idle');
           resumeConversationListeningAfterTurn();
         }
       } else {
-        releaseVoiceUi();
+        if (
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation'
+        ) {
+          setVoicePhaseTransition('idle');
+          scheduleConversationListen();
+        } else {
+          releaseVoiceUi();
+        }
       }
     }
   };
@@ -1186,16 +1841,16 @@ export default function ChatScreen() {
 
     setVoicePlaybackError(null);
     setVoicePhaseTransition('speaking');
-    const generation = speakGenerationRef.current;
+    const generation = voiceSessionRef.current.speakGeneration;
     await stopPlayback();
     await prepareForTtsPlayback();
     const ok = await speakParts(parts);
-    if (generation === speakGenerationRef.current) {
+    if (isActiveSpeakGeneration(generation)) {
       if (ok) {
-        setVoicePhaseTransition('idle');
-        prewarmRecordingPipeline();
+        setVoicePhaseTransition('idle', { reason: 'speak_reply_done' });
+        prewarmVoiceMicIfIdle();
       } else {
-        releaseVoiceUi();
+        releaseVoiceUi('speak_reply_failed');
       }
     }
   };
@@ -1207,7 +1862,7 @@ export default function ChatScreen() {
       void stopPlayback().catch(() => {});
       interruptAssistant();
     } else {
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
     }
   };
 
@@ -1216,6 +1871,41 @@ export default function ChatScreen() {
       stopConversationMetering();
       stopConversationBargeIn();
     };
+  }, []);
+
+  /** Recover from stuck assistant phases (missed interrupt, stale async). */
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const phase = voicePhaseRef.current;
+      const stuckMs = Date.now() - phaseChangedAtRef.current;
+
+      if (phase === 'interrupting' && stuckMs > INTERRUPTING_STUCK_MS) {
+        logVoiceState('watchdog_interrupting', { stuckMs });
+        releaseVoiceUi('watchdog_interrupting');
+        if (
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation'
+        ) {
+          scheduleConversationListen(80);
+        }
+        return;
+      }
+
+      if (!isAssistantActivePhase(phase)) return;
+      if (chatInFlightRef.current || speakInFlightRef.current) return;
+      if (streamTtsDrainingRef.current || streamTtsQueueRef.current.length > 0) return;
+      if (stuckMs < ASSISTANT_STUCK_MS) return;
+
+      logVoiceState('watchdog_assistant_stuck', { phase, stuckMs });
+      interruptAssistant({
+        keepConversationSession: conversationSessionRef.current,
+        resumeListening:
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation',
+      });
+    }, 2500);
+
+    return () => clearInterval(intervalId);
   }, []);
 
   const onNaturalVoiceToggle = (enabled: boolean) => {
@@ -1232,43 +1922,91 @@ export default function ChatScreen() {
     if (voiceSendLockRef.current) return;
 
     voiceSendLockRef.current = true;
+    const fromConversation =
+      options?.fromConversation === true && conversationSessionRef.current;
     try {
       const transcript = await transcribeRecording(uri, API_BASE);
-      if (utteranceId !== voiceUtteranceRef.current) return;
-      if (voicePhaseRef.current !== 'processing') return;
+      voiceLog('stt_result', {
+        fromConversation,
+        len: transcript.length,
+        preview:
+          transcript.length > 60 ? `${transcript.slice(0, 57)}…` : transcript,
+      });
+      if (utteranceId !== voiceUtteranceRef.current) {
+        if (fromConversation) {
+          scheduleConversationListen(200);
+        }
+        return;
+      }
+      if (
+        voicePhaseRef.current !== 'thinking' &&
+        voicePhaseRef.current !== 'streaming'
+      ) {
+        if (fromConversation) {
+          scheduleConversationListen(200);
+        }
+        return;
+      }
+      if (
+      fromConversation &&
+      (activeSoundRef.current ||
+        streamTtsDrainingRef.current ||
+        streamTtsQueueRef.current.length > 0 ||
+        voicePhaseRef.current === 'speaking')
+    ) {
+      logVoiceState('stt_ignored_during_tts', {
+        phase: voicePhaseRef.current,
+      });
+      scheduleConversationListen(400);
+      return;
+    }
+
+    if (fromConversation && isLikelyAssistantEcho(transcript)) {
+        logVoiceState('echo_suppressed', {
+          preview:
+            transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
+        });
+        setVoiceInputError('Heard my own voice — speak again.');
+        setVoicePhaseTransition('idle', { reason: 'echo_suppressed' });
+        scheduleConversationListen(300);
+        return;
+      }
       if (!isSubstantiveTranscript(transcript)) {
-        if (options?.fromConversation && conversationSessionRef.current) {
+        if (fromConversation) {
           setVoiceInputError('Didn’t catch that — try again.');
           setVoicePhaseTransition('idle');
+          scheduleConversationListen(200);
         } else {
           setVoiceInputError(
             'Didn’t catch that — hold Mic a little longer, or say a short word like "why" clearly.',
           );
           setVoicePhaseTransition('idle');
-          prewarmRecordingPipeline();
+          prewarmVoiceMicIfIdle();
         }
         return;
       }
       if (transcript === lastVoiceTranscriptRef.current) {
+        if (fromConversation) {
+          setVoiceInputError('Same as last message — say something new.');
+          setVoicePhaseTransition('idle');
+          scheduleConversationListen(200);
+        }
         return;
       }
       lastVoiceTranscriptRef.current = transcript;
       await sendMessage(transcript);
     } catch (err) {
-      if (utteranceId !== voiceUtteranceRef.current) return;
       const msg = err instanceof Error ? err.message : 'Voice input failed';
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
-      if (!options?.fromConversation || !conversationSessionRef.current) {
+      if (!fromConversation) {
         setVoicePhaseTransition('idle');
-        prewarmRecordingPipeline();
+        prewarmVoiceMicIfIdle();
+      } else {
+        setVoicePhaseTransition('idle');
+        scheduleConversationListen(200);
       }
     } finally {
-      if (utteranceId === voiceUtteranceRef.current) {
-        voiceSendLockRef.current = false;
-        if (options?.fromConversation) {
-          resumeConversationListeningAfterTurn();
-        }
-      }
+      voiceSendLockRef.current = false;
     }
   };
 
@@ -1304,7 +2042,7 @@ export default function ChatScreen() {
       if (!micPressRef.current || voicePhaseRef.current !== 'recording') {
         await recording.stopAndUnloadAsync();
         setVoicePhaseTransition('idle');
-        prewarmRecordingPipeline();
+        prewarmVoiceMicIfIdle();
         return;
       }
       recordingRef.current = recording;
@@ -1315,7 +2053,7 @@ export default function ChatScreen() {
       const msg = err instanceof Error ? err.message : 'Could not start recording';
       setVoiceInputError(msg);
       setVoicePhaseTransition('idle');
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
     }
   };
 
@@ -1338,12 +2076,12 @@ export default function ChatScreen() {
       recordingStartedAtRef.current = 0;
       if (stray) void stray.stopAndUnloadAsync().catch(() => {});
       setVoicePhaseTransition('idle');
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
       return;
     }
 
     const utteranceId = ++voiceUtteranceRef.current;
-    setVoicePhaseTransition('processing');
+    setVoicePhaseTransition('thinking', { reason: 'ptt_release' });
 
     const recording = recordingRef.current;
     recordingRef.current = null;
@@ -1352,7 +2090,7 @@ export default function ChatScreen() {
 
     if (!recording) {
       setVoicePhaseTransition('idle');
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
       return;
     }
 
@@ -1364,7 +2102,7 @@ export default function ChatScreen() {
         // ignore
       }
       setVoicePhaseTransition('idle');
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
       return;
     }
 
@@ -1375,42 +2113,79 @@ export default function ChatScreen() {
       const msg = err instanceof Error ? err.message : 'Recording failed';
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       setVoicePhaseTransition('idle');
-      prewarmRecordingPipeline();
+      prewarmVoiceMicIfIdle();
     }
   };
 
   const sendMessage = async (messageText?: string) => {
     const text = (messageText ?? input).trim();
     if (!text || chatInFlightRef.current) return;
-    if (voicePhaseRef.current === 'recording' || voicePhaseRef.current === 'listening') {
-      return;
-    }
 
     const fromVoice = messageText !== undefined;
 
+    if (!fromVoice && voicePhaseRef.current === 'listening') {
+      stopConversationListening();
+    }
+
+    if (voicePhaseRef.current === 'recording') {
+      return;
+    }
+    if (
+      voicePhaseRef.current === 'listening' &&
+      fromVoice &&
+      voiceInputModeRef.current !== 'conversation'
+    ) {
+      return;
+    }
+
     if (fromVoice) {
-      voiceTurnRef.current += 1;
+      bumpTurn(voiceSessionRef.current, 'new_voice_message');
+      bumpSpeakGeneration(voiceSessionRef.current, 'new_voice_message');
+      bumpStreamHandlers(voiceSessionRef.current, 'new_voice_message');
+      abortTtsFetches('new_voice_message');
       chatAbortRef.current?.abort();
       chatAbortRef.current = null;
-      speakGenerationRef.current += 1;
       streamVoiceBufferRef.current = '';
       pendingStreamTextRef.current = '';
       resetStreamTts();
       clearStreamUiFlush();
       await stopPlayback();
     } else {
-      interruptAssistant();
+      if (
+        conversationSessionRef.current &&
+        voiceInputModeRef.current === 'conversation'
+      ) {
+        interruptConversationAssistant();
+      } else {
+        interruptAssistant();
+      }
       const rec = recordingRef.current;
       recordingRef.current = null;
       if (rec) void rec.stopAndUnloadAsync().catch(() => {});
     }
 
-    const turn = voiceTurnRef.current;
+    const turn = voiceSessionRef.current.turn;
+    setVoiceLogContext(turn, voiceSessionRef.current.speakGeneration);
+    voiceTurnTimingRef.current = createVoiceTurnTiming(turn);
+    markVoiceTiming(voiceTurnTimingRef.current, 'send_start');
+    voiceLog('send_message', {
+      fromVoice,
+      textLen: text.length,
+      preview: text.length > 48 ? `${text.slice(0, 45)}…` : text,
+    });
+    logVoiceSnapshot('send_start');
     chatInFlightRef.current = true;
 
-    if (voiceEnabledRef.current && voicePhaseRef.current === 'idle') {
-      setVoicePhaseTransition('processing');
+    if (
+      voiceEnabledRef.current &&
+      (voicePhaseRef.current === 'idle' ||
+        voicePhaseRef.current === 'listening' ||
+        voicePhaseRef.current === 'thinking')
+    ) {
+      setVoicePhaseTransition('thinking', { reason: 'send_message' });
     }
+
+    const streamHandlerGen = voiceSessionRef.current.streamHandlerGen;
 
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
@@ -1420,14 +2195,18 @@ export default function ChatScreen() {
     const assistantId = `${Date.now()}-assistant`;
     activeAssistantIdRef.current = assistantId;
     streamVoiceBufferRef.current = '';
+    streamTtsRawRef.current = '';
     pendingStreamTextRef.current = '';
     resetStreamTts();
     clearStreamUiFlush();
+    rhythmMetaRef.current = null;
+    serverSpeechChunksRef.current = null;
     ttsExpressStyleRef.current = null;
     ttsEmotionHintRef.current = null;
 
     const abortController = new AbortController();
     chatAbortRef.current = abortController;
+    ensureTtsAbortSignal();
 
     setMessages((prev) => [
       ...prev,
@@ -1447,32 +2226,90 @@ export default function ChatScreen() {
         API_URL,
         text,
         {
-          onStart: () => {
+          onStart: (meta) => {
             if (abortController.signal.aborted) return;
+            if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return;
+            if (!isActiveVoiceTurn(turn)) return;
+            markVoiceTiming(voiceTurnTimingRef.current, 'stream_start');
+            rhythmMetaRef.current = meta?.rhythm ?? null;
             setLoading(false);
             setIsStreaming(true);
+            if (voiceEnabledRef.current) {
+              setVoicePhaseTransition('streaming', { reason: 'stream_start' });
+            }
+            const ack = meta?.rhythm?.fast_ack;
+            if (
+              ack &&
+              voiceEnabledRef.current &&
+              !useConversationSingleClipTts() &&
+              !fastAckAlreadyInReply(streamVoiceBufferRef.current, ack)
+            ) {
+              void playFastAckLine(ack, turn, voiceSessionRef.current.speakGeneration);
+            }
           },
           onText: (chunk) => {
             if (abortController.signal.aborted) return;
+            if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return;
+            if (!isActiveVoiceTurn(turn)) return;
+            markVoiceTiming(voiceTurnTimingRef.current, 'first_token');
             streamVoiceBufferRef.current += chunk;
+            streamTtsRawRef.current += chunk;
             appendAssistantChunk(chunk);
-            if (STREAM_TTS_WHILE_OPEN) {
-              feedIncrementalTtsFromStream(turn, speakGenerationRef.current);
+            if (
+              !streamTtsDoneRef.current &&
+              !useSingleClipStreamTts(streamTtsRawRef.current) &&
+              shouldStreamTtsWhileOpen(
+                voiceEnabledRef.current,
+                naturalVoiceEnabledRef.current,
+                rhythmMetaRef.current,
+              )
+            ) {
+              feedIncrementalTtsFromStream(turn, voiceSessionRef.current.speakGeneration);
             }
           },
           onDoneMeta: (meta: ChatStreamDoneMeta) => {
             if (abortController.signal.aborted) return;
+            if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return;
+            if (!isActiveVoiceTurn(turn)) return;
             ttsExpressStyleRef.current = meta.express_style ?? null;
             ttsEmotionHintRef.current = meta.emotion_hint ?? null;
+            if (meta.speech_chunks?.length) {
+              serverSpeechChunksRef.current = meta.speech_chunks;
+            }
           },
           onDone: (reply) => {
             if (abortController.signal.aborted) return reply;
+            if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return reply;
+            if (!isActiveVoiceTurn(turn)) return reply;
             if (streamFinished) return reply;
             streamFinished = true;
-            if (STREAM_TTS_WHILE_OPEN) {
-              feedIncrementalTtsFromStream(turn, speakGenerationRef.current, true);
+            streamTtsDoneRef.current = true;
+            markVoiceTiming(voiceTurnTimingRef.current, 'stream_done');
+            const rawReply = (reply || streamTtsRawRef.current || streamVoiceBufferRef.current).trim();
+            voiceLog('stream_on_done', {
+              rawLen: rawReply.length,
+              singleClip: useSingleClipStreamTts(rawReply),
+              preview:
+                rawReply.length > 56 ? `${rawReply.slice(0, 53)}…` : rawReply,
+            });
+            logVoiceSnapshot('stream_on_done');
+            streamTtsRawRef.current = rawReply;
+            lastAssistantTtsTextRef.current = rawReply;
+            if (
+              shouldStreamTtsWhileOpen(
+                voiceEnabledRef.current,
+                naturalVoiceEnabledRef.current,
+                rhythmMetaRef.current,
+              ) &&
+              !useSingleClipStreamTts(rawReply)
+            ) {
+              feedIncrementalTtsFromStream(
+                turn,
+                voiceSessionRef.current.speakGeneration,
+                true,
+              );
             }
-            const displayReply = formatAssistantReply(reply);
+            const displayReply = formatAssistantReply(rawReply);
             streamVoiceBufferRef.current = displayReply;
             pendingStreamTextRef.current = displayReply;
             clearStreamUiFlush();
@@ -1485,11 +2322,11 @@ export default function ChatScreen() {
             );
             setIsStreaming(false);
             scrollToEnd(false);
-            replyForTts = displayReply;
+            replyForTts = rawReply;
 
             if (!voiceEnabledRef.current && fromVoice) {
               setVoicePhaseTransition('idle');
-              prewarmRecordingPipeline();
+              prewarmVoiceMicIfIdle();
             }
 
             return displayReply;
@@ -1502,25 +2339,32 @@ export default function ChatScreen() {
         getDeviceTimezone(),
       );
 
-      if (voiceEnabledRef.current && replyForTts.trim()) {
+      if (voiceEnabledRef.current && replyForTts.trim() && isActiveVoiceTurn(turn)) {
         await runTtsForReply(replyForTts, turn);
-      } else if (voicePhaseRef.current === 'processing') {
+      } else if (
+        voicePhaseRef.current === 'thinking' ||
+        voicePhaseRef.current === 'streaming'
+      ) {
         if (conversationSessionRef.current && voiceInputModeRef.current === 'conversation') {
-          setVoicePhaseTransition('idle');
+          setVoicePhaseTransition('idle', { reason: 'no_tts_after_stream' });
+          scheduleConversationListen();
         } else {
-          releaseVoiceUi();
+          releaseVoiceUi('no_tts_after_stream');
         }
       }
     } catch (error) {
       if (isAbortError(error)) {
+        logVoiceState('stream_abort', { turn });
         finalizeInterruptedTurn(assistantId);
+        ensureUiUnlocked();
         const keepConversation =
           conversationSessionRef.current &&
           voiceInputModeRef.current === 'conversation';
         if (!keepConversation) {
-          releaseVoiceUi();
+          releaseVoiceUi('stream_abort');
         } else {
-          resumeConversationListeningAfterTurn();
+          setVoicePhaseTransition('idle', { force: true, reason: 'stream_abort' });
+          scheduleConversationListen(120);
         }
         return;
       }
@@ -1533,8 +2377,20 @@ export default function ChatScreen() {
             : item,
         ),
       );
-      releaseVoiceUi();
+      if (
+        conversationSessionRef.current &&
+        voiceInputModeRef.current === 'conversation'
+      ) {
+        setVoicePhaseTransition('idle');
+        scheduleConversationListen();
+      } else {
+        releaseVoiceUi();
+      }
     } finally {
+      if (!isActiveVoiceTurn(turn)) {
+        logVoiceState('send_message_stale_finally', { turn });
+        return;
+      }
       void fetchCompanionFromHealth().then((name) => {
         if (name) setCompanionName(name);
       });
@@ -1545,6 +2401,21 @@ export default function ChatScreen() {
       }
       activeAssistantIdRef.current = null;
       ensureUiUnlocked();
+      if (
+        (voicePhaseRef.current === 'thinking' ||
+          voicePhaseRef.current === 'streaming') &&
+        !speakInFlightRef.current &&
+        streamTtsQueueRef.current.length === 0 &&
+        !streamTtsDrainingRef.current
+      ) {
+        setVoicePhaseTransition('idle', { reason: 'send_finally_idle' });
+        if (
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation'
+        ) {
+          scheduleConversationListen();
+        }
+      }
       if (!streamFinished && !abortController.signal.aborted) {
         setMessages((prev) =>
           prev.map((message) =>
@@ -1558,6 +2429,9 @@ export default function ChatScreen() {
           ),
         );
       }
+      logVoiceTurnSummary(voiceTurnTimingRef.current);
+      logVoiceSnapshot('send_finally');
+      voiceTurnTimingRef.current = null;
     }
   };
 
@@ -1567,17 +2441,21 @@ export default function ChatScreen() {
     !(voicePhase === 'listening' && voiceInputMode === 'conversation');
   const inputLocked =
     busy ||
-    voicePhase === 'processing' ||
+    voicePhase === 'thinking' ||
+    voicePhase === 'streaming' ||
     voicePhase === 'speaking' ||
+    voicePhase === 'interrupting' ||
     voicePhase === 'recording';
   const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession);
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
     conversationSession &&
-    (voicePhase === 'processing' || voicePhase === 'speaking');
+    isAssistantActivePhase(voicePhase);
   const micShowSpinner =
-    voicePhase === 'processing' || (busy && voicePhase !== 'recording' && voicePhase !== 'listening');
+    voicePhase === 'thinking' ||
+    voicePhase === 'streaming' ||
+    (busy && voicePhase !== 'recording' && voicePhase !== 'listening');
   const micConversationActive =
     voiceInputMode === 'conversation' &&
     (conversationSession || voicePhase === 'listening');
@@ -1681,11 +2559,12 @@ export default function ChatScreen() {
                 styles.voiceStatusDot,
                 (voicePhase === 'recording' || voicePhase === 'listening') &&
                   styles.voiceStatusDotRecording,
-                voicePhase === 'processing' &&
+                (voicePhase === 'thinking' || voicePhase === 'streaming') &&
                   (isStreaming
                     ? styles.voiceStatusDotGenerating
                     : styles.voiceStatusDotProcessing),
                 voicePhase === 'speaking' && styles.voiceStatusDotSpeaking,
+                voicePhase === 'interrupting' && styles.voiceStatusDotProcessing,
               ]}
             />
             <View style={styles.voiceStatusText}>
@@ -1720,11 +2599,13 @@ export default function ChatScreen() {
                 ? `Voice error: ${voicePlaybackError} · tap to reset`
                 : conversationCanInterrupt
                   ? voicePhase === 'speaking'
-                    ? 'Speaking… say something or tap Mic to interrupt'
-                    : 'Thinking… say something or tap Mic to interrupt'
+                    ? 'Speaking… tap Mic to interrupt'
+                    : 'Thinking… tap Mic to interrupt, then speak'
                   : voicePhase === 'speaking'
                     ? 'Speaking… tap to stop'
-                    : isStreaming || voicePhase === 'processing'
+                    : isStreaming ||
+                      voicePhase === 'thinking' ||
+                      voicePhase === 'streaming'
                       ? 'Working… tap to stop'
                       : voiceInputMode === 'conversation'
                         ? `${formatVoiceStatusLine(voiceName)} · Tap Mic to start conversation`
@@ -1801,13 +2682,19 @@ export default function ChatScreen() {
               <ActivityIndicator color="#007aff" size="small" />
             ) : (
               <Text style={styles.micLabel}>
-                {voicePhase === 'recording' || voicePhase === 'listening'
-                  ? '···'
-                  : voiceInputMode === 'conversation' && conversationSession
-                    ? 'Stop'
-                    : voiceInputMode === 'conversation'
-                      ? 'Start'
-                      : 'Mic'}
+                {voicePhase === 'listening' &&
+                voiceInputMode === 'conversation' &&
+                conversationSession
+                  ? 'Stop'
+                  : voicePhase === 'recording' || voicePhase === 'listening'
+                    ? '···'
+                    : voiceInputMode === 'conversation' && conversationSession
+                      ? voicePhase === 'idle'
+                        ? 'Listen'
+                        : '···'
+                      : voiceInputMode === 'conversation'
+                        ? 'Start'
+                        : 'Mic'}
               </Text>
             )}
           </Pressable>
@@ -1815,19 +2702,28 @@ export default function ChatScreen() {
             style={styles.input}
             value={input}
             onChangeText={setInput}
+            onFocus={() => {
+              if (voicePhaseRef.current === 'listening') {
+                stopConversationListening();
+              }
+            }}
             placeholder={
               voicePhase === 'listening'
                 ? 'Listening…'
                 : voicePhase === 'recording'
                   ? 'Recording…'
-                  : voicePhase === 'processing'
+                  : voicePhase === 'thinking' || voicePhase === 'streaming'
                     ? conversationSession
                       ? 'Thinking…'
                       : 'Processing…'
                     : voicePhase === 'speaking'
                       ? 'Speaking…'
                       : voiceInputMode === 'conversation'
-                        ? 'Type or tap Mic to converse'
+                        ? conversationSession
+                          ? voicePhase === 'idle'
+                            ? 'Tap Mic (Listen) · or type below'
+                            : 'Type below anytime'
+                          : 'Type or tap Mic to converse'
                         : 'Type or hold Mic to talk'
             }
             placeholderTextColor="#888888"
@@ -1835,15 +2731,23 @@ export default function ChatScreen() {
             editable={!inputLocked}
           />
           <TouchableOpacity
-            style={[styles.sendButton, (loading || voicePhase === 'processing') && styles.sendDisabled]}
+            style={[
+              styles.sendButton,
+              (loading ||
+                voicePhase === 'thinking' ||
+                voicePhase === 'streaming') &&
+                styles.sendDisabled,
+            ]}
             onPress={() => void sendMessage().catch(() => {})}
             disabled={
               voicePhase === 'recording' ||
-              voicePhase === 'listening' ||
+              (voicePhase === 'listening' && !input.trim()) ||
               !input.trim()
             }
           >
-            {loading && voicePhase !== 'processing' ? (
+            {loading &&
+            voicePhase !== 'thinking' &&
+            voicePhase !== 'streaming' ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
               <Text style={styles.sendLabel}>Send</Text>

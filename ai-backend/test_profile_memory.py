@@ -116,6 +116,14 @@ class ProfileMemoryTests(unittest.TestCase):
         result = profile.learn_from_user_message("How old am I?")
         self.assertEqual(result.updated, [])
 
+    def test_age_learn_conflict_does_not_silent_overwrite(self) -> None:
+        profile.learn_from_user_message("I'm 47.")
+        reply = profile.try_user_age_learn_reply("I'm 48.")
+        self.assertIsNotNone(reply)
+        self.assertIn("48", reply or "")
+        self.assertIn("47", reply or "")
+        self.assertEqual(profile.get_facts().get("age"), "47")
+
     def test_user_age_is_memory_recall(self) -> None:
         self.assertTrue(profile.is_memory_recall_question("How old am I?"))
         self.assertTrue(profile.is_user_age_recall_question("What's my age?"))

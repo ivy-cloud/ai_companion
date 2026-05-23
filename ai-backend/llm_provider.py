@@ -28,6 +28,10 @@ def llm_provider() -> str:
 
 
 def active_model() -> str:
+    import dev_mode
+
+    if dev_mode.mock_llm_enabled():
+        return "dev-mock-llm"
     return GROQ_MODEL if llm_provider() == "groq" else OLLAMA_MODEL
 
 
@@ -90,6 +94,10 @@ def model_missing_message(installed: List[str]) -> str:
 
 def check_model_ready() -> tuple[bool, Optional[str], List[str]]:
     """Returns (ready, hint, installed_models_for_ollama)."""
+    import dev_mode
+
+    if dev_mode.mock_llm_enabled():
+        return True, "DEV_MOCK_LLM=1 (no Groq/Ollama)", []
     if llm_provider() == "groq":
         if not groq_configured():
             return False, model_missing_message([]), []
@@ -201,6 +209,11 @@ def _stream_groq(messages: List[dict], *, factual: bool) -> Iterator[str]:
 
 
 def stream_chat_text(messages: List[dict], *, factual: bool = False) -> Iterator[str]:
+    import dev_mode
+
+    if dev_mode.mock_llm_enabled():
+        yield from dev_mode.mock_stream_chat_text(messages, factual=factual)
+        return
     if llm_provider() == "groq":
         yield from _stream_groq(messages, factual=factual)
     else:
@@ -209,6 +222,10 @@ def stream_chat_text(messages: List[dict], *, factual: bool = False) -> Iterator
 
 def complete_chat(messages: List[dict], *, temperature: float = 0.1, max_tokens: int = 80) -> Optional[str]:
     """Non-streaming completion (grounding pass)."""
+    import dev_mode
+
+    if dev_mode.mock_llm_enabled():
+        return dev_mode.mock_complete_chat(messages, factual=temperature < 0.6)
     if llm_provider() == "groq":
         if not groq_configured():
             return None

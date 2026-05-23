@@ -37,12 +37,20 @@ write_frontend_env() {
   echo "  (ai-frontend/.env — reload Expo with: npx expo start --clear)"
 }
 
-LAN_IP="$(detect_lan_ip || true)"
-if [[ -z "$LAN_IP" ]]; then
+if [[ "${DEV_LOCAL_FRONTEND:-}" == "1" ]]; then
+  write_frontend_env "127.0.0.1"
+  echo "→ Dev mode: frontend uses localhost (phone Expo Go needs LAN IP instead)"
+elif LAN_IP="$(detect_lan_ip || true)"; [[ -n "$LAN_IP" ]]; then
+  write_frontend_env "$LAN_IP"
+else
   echo "⚠ Could not read LAN IP from en0/en1 (ipconfig getifaddr)."
   echo "  Set EXPO_PUBLIC_API_BASE manually in ai-frontend/.env"
-else
-  write_frontend_env "$LAN_IP"
+  echo "  Or: DEV_LOCAL_FRONTEND=1 ./start.sh for http://127.0.0.1:8000"
+fi
+
+if [[ "${DEV_MOCK_LLM:-}" == "1" || "${DEV_MOCK_TTS:-}" == "1" || "${DEV_MOCK_STT:-}" == "1" ]]; then
+  echo "→ ⚠ DEV MOCKS ON (not real AI/voice): LLM=${DEV_MOCK_LLM:-0} TTS=${DEV_MOCK_TTS:-0} STT=${DEV_MOCK_STT:-0}"
+  echo "  Chat replies are canned test text. unset DEV_MOCK_* for normal use."
 fi
 
 cd "$SCRIPT_DIR"
@@ -51,5 +59,5 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-echo "→ Backend http://0.0.0.0:${PORT} (LAN: http://${LAN_IP:-?}:${PORT})"
+echo "→ Backend http://0.0.0.0:${PORT} (LAN: http://${LAN_IP:-127.0.0.1}:${PORT})"
 exec uvicorn main:app --reload --host 0.0.0.0 --port "$PORT"

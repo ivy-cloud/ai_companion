@@ -10,7 +10,7 @@ export const MAX_SPOKEN_CHARS = 360;
 export const MAX_UTTERANCE_CHARS = 500;
 export const MAX_SPOKEN_SENTENCES = 3;
 export const MAX_SPOKEN_SENTENCES_CASUAL = 2;
-export const MAX_SPOKEN_CHARS_CASUAL = 220;
+export const MAX_SPOKEN_CHARS_CASUAL = 180;
 
 export type SpeechTrimOptions = {
   maxSentences: number;
@@ -142,12 +142,25 @@ export function firstCompleteSentence(text: string): string | null {
   return sentence;
 }
 
+/** Last sentence from normalized spoken text (for deduping stream vs final TTS). */
+export function lastSentenceOf(text: string): string | null {
+  const sentences = splitIntoSentences(prepareTextForSpeech(text));
+  return sentences.length > 0 ? sentences[sentences.length - 1] : null;
+}
+
 /** Text after an already-spoken prefix (same normalization). */
 export function remainderAfterSpoken(full: string, spokenPrefix: string): string | null {
   const fullClean = prepareTextForSpeech(full);
   const prefixClean = prepareTextForSpeech(spokenPrefix);
-  if (!fullClean || !prefixClean) return null;
-  if (!fullClean.startsWith(prefixClean)) return fullClean;
+  if (!fullClean) return null;
+  if (!prefixClean) return fullClean;
+  if (fullClean === prefixClean) return null;
+  if (prefixClean.startsWith(fullClean) || prefixClean.length >= fullClean.length * 0.88) {
+    return null;
+  }
+  if (!fullClean.startsWith(prefixClean)) {
+    return null;
+  }
   const rest = fullClean.slice(prefixClean.length).trim();
   return rest.length > 0 ? rest : null;
 }
@@ -195,9 +208,9 @@ export function buildSpeechUtterances(
   return utterances.length > 0 ? utterances : [cleaned];
 }
 
-/** Brief pause between sentence clips so multi-sentence replies breathe like a person. */
+/** @deprecated Prefer utterancePauseMs from conversationOrchestration for varied pacing. */
 export function pauseBetweenUtterances(hasMore: boolean): number {
-  return hasMore ? 220 : 0;
+  return hasMore ? 200 : 0;
 }
 
 /** Join queued stream chunks into one continuous speak line. */

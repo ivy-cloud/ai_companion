@@ -58,9 +58,24 @@ const CARDINAL_WORDS: Record<number, string> = {
   18: 'eighteen',
   19: 'nineteen',
   20: 'twenty',
+  21: 'twenty-one',
+  22: 'twenty-two',
+  23: 'twenty-three',
+  24: 'twenty-four',
+  25: 'twenty-five',
+  26: 'twenty-six',
+  27: 'twenty-seven',
+  28: 'twenty-eight',
+  29: 'twenty-nine',
   30: 'thirty',
+  31: 'thirty-one',
+  32: 'thirty-two',
   40: 'forty',
   50: 'fifty',
+  60: 'sixty',
+  70: 'seventy',
+  80: 'eighty',
+  90: 'ninety',
 };
 
 function cardinalWord(n: number): string {
@@ -69,9 +84,36 @@ function cardinalWord(n: number): string {
     const tens = Math.floor(n / 10) * 10;
     const ones = n % 10;
     if (ones === 0) return CARDINAL_WORDS[tens] ?? String(n);
-    return `${CARDINAL_WORDS[tens] ?? tens} ${CARDINAL_WORDS[ones] ?? ones}`;
+    const tensWord =
+      CARDINAL_WORDS[tens] ??
+      ({ 20: 'twenty', 30: 'thirty', 40: 'forty', 50: 'fifty', 60: 'sixty', 70: 'seventy', 80: 'eighty', 90: 'ninety' } as Record<number, string>)[tens] ??
+      String(tens);
+    return `${tensWord} ${CARDINAL_WORDS[ones] ?? ones}`;
+  }
+  if (n < 1000) {
+    const hundreds = Math.floor(n / 100);
+    const rest = n % 100;
+    const hw = `${CARDINAL_WORDS[hundreds] ?? hundreds} hundred`;
+    if (rest === 0) return hw;
+    return `${hw} ${cardinalWord(rest)}`;
   }
   return String(n);
+}
+
+export function spokenYear(year: number): string {
+  if (year >= 2000 && year <= 2099) {
+    const lastTwo = year % 100;
+    if (lastTwo === 0) return 'two thousand';
+    if (lastTwo < 10) return `twenty oh ${cardinalWord(lastTwo)}`;
+    return `twenty ${cardinalWord(lastTwo)}`;
+  }
+  if (year >= 1900 && year <= 1999) {
+    const lastTwo = year % 100;
+    if (lastTwo === 0) return 'nineteen hundred';
+    if (lastTwo < 10) return `nineteen oh ${cardinalWord(lastTwo)}`;
+    return `nineteen ${cardinalWord(lastTwo)}`;
+  }
+  return cardinalWord(year);
 }
 
 function ordinalWord(day: number): string {
@@ -95,6 +137,29 @@ function normalizeFragments(text: string): string {
   return text.replace(/\b([stnrl])\s+([hdts])\b/gi, '$1$2');
 }
 
+function verbalizeMath(text: string): string {
+  return text.replace(
+    /\b(\d{1,3})\s*([+\-*/×÷])\s*(\d{1,3})(?:\s*=\s*(\d{1,3}))?\b/g,
+    (_, a, op, b, result) => {
+      const opWords: Record<string, string> = {
+        '+': 'plus',
+        '-': 'minus',
+        '*': 'times',
+        '×': 'times',
+        '/': 'divided by',
+        '÷': 'divided by',
+      };
+      const left = cardinalWord(Number(a));
+      const right = cardinalWord(Number(b));
+      const word = opWords[op] ?? op;
+      if (result != null) {
+        return `${left} ${word} ${right} is ${cardinalWord(Number(result))}`;
+      }
+      return `${left} ${word} ${right}`;
+    },
+  );
+}
+
 function normalizeTime(text: string): string {
   return text.replace(/\b(\d{1,2}):(\d{2})\b/g, (_, h, m) => {
     const hour = Number(h);
@@ -113,8 +178,12 @@ function normalizeTime(text: string): string {
   });
 }
 
-function normalizeSmallNumbers(text: string): string {
-  return text.replace(/\b(\d{1,2})(?!'s\b)/g, (_, d) => cardinalWord(Number(d)));
+function normalizeYears(text: string): string {
+  return text.replace(/\b((?:19|20)\d{2})\b/g, (_, y) => spokenYear(Number(y)));
+}
+
+function normalizeStandaloneNumbers(text: string): string {
+  return text.replace(/\b(\d{1,4})(?!'s\b)/g, (_, d) => cardinalWord(Number(d)));
 }
 
 function applyPhraseMap(text: string): string {
@@ -135,18 +204,19 @@ function applyPhraseMap(text: string): string {
 
 /** Full spoken-text normalization (keep in sync with ai-backend/spoken_text.py). */
 export function normalizeForSpeech(text: string): string {
-  let cleaned = text
-    .replace(/[@#$%^&*+=|\\<>~`[\]{}©®™°§¶•·/]/g, '')
+  let cleaned = verbalizeMath(text.trim());
+  cleaned = cleaned
+    .replace(/[@#$%^&*\\|<>~`[\]{}©®™°§¶•·/]/g, '')
     .replace(/[—–]/g, ' ')
     .replace(/…+/g, '.')
     .replace(/\.{2,}/g, '.')
     .replace(/\s+/g, ' ')
     .trim();
-
   cleaned = normalizeOrdinals(cleaned);
   cleaned = normalizeFragments(cleaned);
   cleaned = normalizeTime(cleaned);
-  cleaned = normalizeSmallNumbers(cleaned);
+  cleaned = normalizeYears(cleaned);
+  cleaned = normalizeStandaloneNumbers(cleaned);
   cleaned = applyPhraseMap(cleaned);
   cleaned = normalizeFragments(cleaned);
 

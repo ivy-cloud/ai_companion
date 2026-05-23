@@ -41,6 +41,28 @@ export const RECORDING_OPTIONS: Audio.RecordingOptions = {
 
 let prewarmRecording: Audio.Recording | null = null;
 let prewarmPromise: Promise<void> | null = null;
+let recordingMutex: Promise<void> = Promise.resolve();
+
+/** Serialize prepare/start so Expo never has two Recording objects prepared at once. */
+export async function withRecordingMutex<T>(fn: () => Promise<T>): Promise<T> {
+  const run = recordingMutex.then(fn, fn);
+  recordingMutex = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+export async function safeUnloadRecording(
+  recording: Audio.Recording | null | undefined,
+): Promise<void> {
+  if (!recording) return;
+  try {
+    await recording.stopAndUnloadAsync();
+  } catch {
+    // Already stopped/unloaded.
+  }
+}
 
 export async function configurePlaybackAudioMode() {
   await Audio.setAudioModeAsync(PLAYBACK_AUDIO_MODE);
@@ -83,9 +105,16 @@ export async function ensureMicrophonePermission(): Promise<boolean> {
   return requested.granted;
 }
 
+/** When true, skip prewarm (caller is playing TTS — recording mode quiets iOS speaker). */
+let recordingPrewarmBlocked = false;
+
+export function setRecordingPrewarmBlocked(blocked: boolean): void {
+  recordingPrewarmBlocked = blocked;
+}
+
 /** Keep a prepared recorder hot so press-to-talk starts faster. */
 export function prewarmRecordingPipeline(): void {
-  if (prewarmPromise) return;
+  if (recordingPrewarmBlocked || prewarmPromise) return;
   prewarmPromise = (async () => {
     try {
       await configureRecordingAudioMode();
@@ -102,13 +131,10 @@ export function prewarmRecordingPipeline(): void {
 }
 
 export async function discardPrewarm(): Promise<void> {
-  if (prewarmPromise) await prewarmPromise;
-  if (!prewarmRecording) return;
-  try {
-    await prewarmRecording.stopAndUnloadAsync();
-  } catch {
-    // ignore
+  if (prewarmPromise) {
+    await prewarmPromise.catch(() => undefined);
   }
+  await safeUnloadRecording(prewarmRecording);
   prewarmRecording = null;
 }
 
@@ -129,23 +155,15 @@ export async function startConversationRecording(): Promise<Audio.Recording> {
 }
 
 export async function startPushToTalkRecording(): Promise<Audio.Recording> {
-  await configureRecordingAudioMode();
-
-  if (prewarmPromise) await prewarmPromise;
-
-  if (prewarmRecording) {
-    const recording = prewarmRecording;
-    prewarmRecording = null;
+  return withRecordingMutex(async () => {
+    await configureRecordingAudioMode();
+    await discardPrewarm();
+    const recording = new Audio.Recording();
+    await recording.prepareToRecordAsync(RECORDING_OPTIONS);
     await recording.startAsync();
     prewarmRecordingPipeline();
     return recording;
-  }
-
-  const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(RECORDING_OPTIONS);
-  await recording.startAsync();
-  prewarmRecordingPipeline();
-  return recording;
+  });
 }
 
 export async function stopRecordingToUri(recording: Audio.Recording): Promise<string> {

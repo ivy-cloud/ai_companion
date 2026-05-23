@@ -107,6 +107,24 @@ Then on **iPhone**:
 
 ---
 
+## Session log (track what you tried on the phone)
+
+While the backend runs, each message is logged to `ai-backend/data/session_log.jsonl` with the **route** used (memory recall, companion birthday, LLM, etc.).
+
+```bash
+# Live tail on your Mac
+tail -f ai-backend/data/session_log.jsonl
+
+# Last 40 turns, easy to read
+curl -s 'http://127.0.0.1:8000/debug/session-log?limit=40&format=text'
+```
+
+Clear before a new test session: `curl -X POST http://127.0.0.1:8000/debug/session-log/clear`
+
+See [DEV.md](DEV.md) for details.
+
+---
+
 ## Local API smoke test (Mac only, no phone)
 
 With `./start.sh` running in another terminal:

@@ -6,9 +6,17 @@
 import { appendSpoken, nextSpeakableChunk } from './streamingVoice';
 import {
   buildSpeechUtterances,
+  lastSentenceOf,
+  prepareTextForSpeech,
   remainderAfterSpoken,
   type SpeechTrimOptions,
 } from './speechPlayback';
+
+function isSameSpokenLine(a: string, b: string): boolean {
+  const left = prepareTextForSpeech(a);
+  const right = prepareTextForSpeech(b);
+  return Boolean(left && right && left === right);
+}
 
 export type IncrementalTtsState = {
   /** Normalized text already queued or spoken this turn. */
@@ -28,11 +36,18 @@ export function pullSpeakableChunks(
   state: IncrementalTtsState,
   fullStream: string,
   flush = false,
+  alreadyEnqueued?: Set<string>,
 ): string[] {
   const chunks: string[] = [];
   while (true) {
     const next = nextSpeakableChunk(fullStream, state.spokenPrefix, flush);
     if (!next) break;
+    const key = prepareTextForSpeech(next);
+    if (key && alreadyEnqueued?.has(key)) {
+      // Already queued — advance past it so flush can reach later sentences.
+      state.spokenPrefix = appendSpoken(state.spokenPrefix, next);
+      continue;
+    }
     chunks.push(next);
     state.spokenPrefix = appendSpoken(state.spokenPrefix, next);
   }
@@ -52,5 +67,51 @@ export function buildFinalTtsUtterances(
   const text = remainder ?? (state.spokenPrefix ? '' : trimmed);
   if (!text) return [];
 
-  return buildSpeechUtterances(text, trim === false ? false : trim);
+  const utterances = buildSpeechUtterances(text, trim === false ? false : trim);
+  const lastSpoken = lastSentenceOf(state.spokenPrefix);
+  if (!lastSpoken) return utterances;
+
+  const deduped = utterances.filter((u) => !isSameSpokenLine(u, lastSpoken));
+  return deduped;
+}
+
+/** True when streaming TTS already spoke the full reply (prevents repeating the last sentence). */
+export function streamTtsAlreadyComplete(
+  finalReply: string,
+  spokenPrefix: string,
+): boolean {
+  const trimmed = finalReply.trim();
+  if (!trimmed) return true;
+  if (!spokenPrefix.trim()) return false;
+
+  const remainder = remainderAfterSpoken(trimmed, spokenPrefix);
+  if (!remainder) return true;
+
+  const rest = prepareTextForSpeech(remainder);
+  const lastSpoken = lastSentenceOf(spokenPrefix);
+  if (lastSpoken && isSameSpokenLine(lastSpoken, rest)) {
+    return true;
+  }
+
+  // Trailing punctuation / filler only — not a repeat of a full new sentence.
+  if (rest.length < 12 && !/[.!?]/.test(rest)) {
+    return true;
+  }
+
+  const full = prepareTextForSpeech(trimmed);
+  const spoken = prepareTextForSpeech(spokenPrefix);
+  if (full === spoken) return true;
+  if (spoken.endsWith(rest)) {
+    return true;
+  }
+  if (!full.startsWith(spoken)) {
+    return false;
+  }
+  const tail = full.slice(spoken.length).trim();
+  if (!tail) return true;
+  if (lastSpoken && isSameSpokenLine(lastSpoken, tail)) {
+    return true;
+  }
+  // Short non-sentence crumbs only (not "Three."-style closings).
+  return tail.length < 12 && !/[.!?]/.test(tail);
 }

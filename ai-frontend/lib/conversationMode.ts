@@ -31,6 +31,10 @@ export const BARGE_IN_SPEECH_LEVEL_DB = -42;
 /** After a barge-in interrupt, ignore further triggers for this long (ms). */
 export const BARGE_IN_COOLDOWN_MS = 2000;
 
+/** Wait after TTS ends before opening the mic — avoids speaker bleed / echo in the room. */
+/** Wait after TTS before opening mic — reduces speaker bleed (see session_log echo). */
+export const POST_TTS_LISTEN_COOLDOWN_MS = 1200;
+
 /**
  * Expo metering is dBFS (negative). Above this ≈ speech; below ≈ silence.
  * Tune per device if needed.

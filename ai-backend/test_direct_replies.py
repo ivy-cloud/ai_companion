@@ -27,6 +27,7 @@ from companion import (
     is_companion_identity_turn,
     try_companion_age_reply,
     try_companion_birth_reply,
+    is_companion_directed_message,
     try_companion_family_reply,
     try_companion_voice_reply,
 )
@@ -162,6 +163,20 @@ class DirectReplyTests(unittest.TestCase):
     def test_user_age_not_companion_age_question(self):
         self.assertFalse(is_companion_identity_turn("How old am I?"))
         self.assertIsNone(try_companion_age_reply("How old am I?"))
+
+    def test_your_birthday_is_companion_not_user_recall(self):
+        import profile
+
+        for msg in (
+            "your birthday",
+            "your birthday?",
+            "do you remember your birthday",
+        ):
+            with self.subTest(msg=msg):
+                self.assertTrue(is_companion_directed_message(msg))
+                self.assertIsNotNone(try_companion_birth_reply(msg))
+                self.assertIsNone(profile.try_memory_recall_reply(msg))
+        self.assertIsNone(try_companion_birth_reply("my birthday is June 3"))
 
     def test_web_search_skips_user_age(self):
         import web_search

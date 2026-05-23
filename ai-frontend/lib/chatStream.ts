@@ -6,19 +6,28 @@ import { Platform } from 'react-native';
 import { createAbortError, isAbortError } from './abortError';
 
 export type StreamHandlers = {
-  onStart?: () => void;
+  onStart?: (meta?: ChatStreamStartMeta) => void;
   onText: (chunk: string) => void;
   onDone: (reply: string) => string;
   onError: (message: string) => void;
 };
 
+import type { RhythmMeta } from './conversationOrchestration';
+
+export type ChatStreamStartMeta = {
+  timezone?: string;
+  timezone_from_device?: boolean;
+  rhythm?: RhythmMeta;
+};
+
 export type ChatStreamDoneMeta = {
   emotion_hint?: string;
   express_style?: string;
+  speech_chunks?: string[];
 };
 
 type StreamEvent =
-  | { start: true }
+  | ({ start: true } & ChatStreamStartMeta)
   | { text: string }
   | ({ done: true; reply: string } & ChatStreamDoneMeta)
   | { error: string };
@@ -64,7 +73,11 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
 
   for (const event of events) {
     if ('start' in event && event.start) {
-      handlers.onStart?.();
+      handlers.onStart?.({
+        timezone: event.timezone,
+        timezone_from_device: event.timezone_from_device,
+        rhythm: event.rhythm,
+      });
     }
     if ('text' in event && event.text) {
       full += event.text;
@@ -78,7 +91,8 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
       const meta: ChatStreamDoneMeta = {};
       if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
       if (event.express_style) meta.express_style = event.express_style;
-      if (meta.emotion_hint || meta.express_style) {
+      if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
+      if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length) {
         (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
       }
       return handlers.onDone(event.reply || full);
@@ -146,7 +160,11 @@ export function streamChatWithXHR(
 
       for (const event of events) {
         if ('start' in event && event.start) {
-          handlers.onStart?.();
+          handlers.onStart?.({
+            timezone: event.timezone,
+            timezone_from_device: event.timezone_from_device,
+            rhythm: event.rhythm,
+          });
         }
         if ('text' in event && event.text) {
           if (!completed) {
@@ -169,7 +187,8 @@ export function streamChatWithXHR(
           const meta: ChatStreamDoneMeta = {};
           if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
           if (event.express_style) meta.express_style = event.express_style;
-          if (meta.emotion_hint || meta.express_style) {
+          if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
+          if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length) {
             (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
           }
           const reply = handlers.onDone(event.reply || full);

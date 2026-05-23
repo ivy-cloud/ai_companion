@@ -938,6 +938,11 @@ def try_memory_recall_reply(
     if not text:
         return None
 
+    from companion import is_companion_directed_message
+
+    if is_companion_directed_message(text):
+        return None
+
     birth_reply = try_user_birth_year_recall_reply(text, calendar_year=calendar_year)
     if birth_reply:
         return birth_reply
@@ -962,6 +967,9 @@ def try_memory_recall_reply(
 
     topic_match = _REMEMBER_TOPIC.search(text)
     if topic_match:
+        topic = topic_match.group(1).strip().lower()
+        if re.search(r"\byour\b", topic) and not re.search(r"\bmy\b", topic):
+            return None
         fact_type = _topic_to_fact_type(topic_match.group(1))
         if fact_type and fact_type in facts:
             entry = get_fact_entries()[fact_type]
