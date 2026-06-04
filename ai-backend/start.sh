@@ -53,6 +53,10 @@ if [[ "${DEV_MOCK_LLM:-}" == "1" || "${DEV_MOCK_TTS:-}" == "1" || "${DEV_MOCK_ST
   echo "  Chat replies are canned test text. unset DEV_MOCK_* for normal use."
 fi
 
+if [[ "${SESSION_LOG_VOICE_HTTP:-1}" == "0" ]]; then
+  echo "→ Voice HTTP logging off (SESSION_LOG_VOICE_HTTP=0); POST /debug/voice-log still returns 200"
+fi
+
 cd "$SCRIPT_DIR"
 if [[ -f .venv/bin/activate ]]; then
   # shellcheck source=/dev/null

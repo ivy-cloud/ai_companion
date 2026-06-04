@@ -196,6 +196,24 @@ class DirectReplyTests(unittest.TestCase):
         self.assertEqual(ctx.history, [])
         self.assertTrue(needs_friend_notes_context("How old am I?"))
 
+    def test_casual_chat_includes_friend_notes(self):
+        from main import build_system_prompt
+
+        with patch.object(
+            profile,
+            "format_notes_for_prompt",
+            return_value="Name: Alex (confidence: high, source: user)",
+        ):
+            prompt = build_system_prompt("How was your day?")
+        self.assertIn("Saved friend notes", prompt)
+        self.assertIn("Alex", prompt)
+
+    def test_math_turn_omits_friend_notes(self):
+        from main import build_system_prompt
+
+        prompt = build_system_prompt("What is 2+2?")
+        self.assertNotIn("## Saved friend notes", prompt)
+
     def test_polish_strips_lookup_age_talk(self):
         raw = (
             "I can't find your age or birth year in the lookup results. "

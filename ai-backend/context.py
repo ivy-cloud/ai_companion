@@ -337,6 +337,13 @@ def build_context_appendix(
             "- Answer **only** what they asked (e.g. math → one short sentence with the result).\n"
             "- Do **not** mention the current time, date, weekday, year, or saved friend notes."
         )
+    elif include_notes:
+        parts.append(
+            "## This turn\n"
+            "- Casual chat — no web lookup unless a live block is attached above.\n"
+            "- You may weave in **Saved friend notes** naturally when relevant; "
+            "never invent details not listed."
+        )
     else:
         parts.append("## This turn\n- Casual or personal — no web lookup.")
 

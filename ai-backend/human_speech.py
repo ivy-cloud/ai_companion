@@ -69,7 +69,7 @@ BANNED_PHRASES = (
     "on this call",
 )
 
-MAX_REPLY_WORDS = 20
+MAX_REPLY_WORDS = 16
 MAX_REPLY_SENTENCES = 2
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)

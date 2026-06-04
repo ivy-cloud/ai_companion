@@ -23,10 +23,10 @@ FAST_ACK_PHRASES = (
     "Okay,",
 )
 
-_MAX_CHUNK_CHARS = 140
+_MAX_CHUNK_CHARS = 120
 _MAX_CHUNK_SENTENCES = 2
 # Short replies: one Azure clip (no dead air between sentences).
-_MAX_SINGLE_CLIP_CHARS = 500
+_MAX_SINGLE_CLIP_CHARS = 420
 
 _STORY_OR_FACT = re.compile(
     r"\b(?:weather|forecast|president|population|calculate|math|what time|what day|"
@@ -64,7 +64,7 @@ def maybe_fast_ack(message: str, *, casual: bool) -> Optional[str]:
     text = message.strip()
     if not casual or len(text.split()) < 4:
         return None
-    if not _stable_roll(text, "fast_ack", 0.28):
+    if not _stable_roll(text, "fast_ack", 0.22):
         return None
     idx = int(hashlib.sha256(f"ack:{text.lower()}".encode()).hexdigest()[:6], 16) % len(
         FAST_ACK_PHRASES
@@ -77,7 +77,7 @@ def backchannel_turn_hint(message: str, casual: bool) -> str:
         return (
             "No backchannel openers (hmm, yeah, oh wow) — lead with the answer in plain words."
         )
-    if not _stable_roll(message, "backchannel", 0.35):
+    if not _stable_roll(message, "backchannel", 0.28):
         return (
             "Skip backchannel this turn — start with your point. Still brief and human."
         )

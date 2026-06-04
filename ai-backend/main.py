@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ import llm_provider
 import memory
 import profile
 import session_log
+import singing
 import stt
 import tts
 import web_search
@@ -35,7 +37,6 @@ from context import (
     format_local_now_parts,
     is_simple_math_question,
     needs_clock_context,
-    needs_friend_notes_context,
     resolve_clock,
 )
 from human_speech import polish_for_speech
@@ -51,6 +52,20 @@ def _bootstrap_profile_from_saved_chat() -> None:
     user_lines = [msg["text"] for msg in memory.get_history() if msg["role"] == "user"]
     profile.bootstrap_facts_from_user_history(user_lines)
 
+
+def _install_quiet_access_log_paths() -> None:
+    """Drop uvicorn access lines for high-frequency debug routes (e.g. voice-log)."""
+    quiet = ("/debug/voice-log",)
+
+    class _Filter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            return not any(path in msg for path in quiet)
+
+    logging.getLogger("uvicorn.access").addFilter(_Filter())
+
+
+_install_quiet_access_log_paths()
 
 app = FastAPI(title="AI Companion API")
 _bootstrap_profile_from_saved_chat()
@@ -105,10 +120,14 @@ def build_system_prompt(
         web_block = web_search.lookup_for_message(user_message, clock=clock)
     name = companion.get_companion_name()
     msg = user_message.strip()
-    return (
-        f"{build_personality_system_prompt(name)}\n\n"
-        f"{build_context_appendix(web_block, clock, include_clock=needs_clock_context(msg), include_notes=needs_friend_notes_context(msg))}"
+    math_turn = is_simple_math_question(msg)
+    appendix = build_context_appendix(
+        web_block,
+        clock,
+        include_clock=needs_clock_context(msg) and not math_turn,
+        include_notes=not math_turn,
     )
+    return f"{build_personality_system_prompt(name)}\n\n{appendix}"
 
 
 def _turn_emotion(
@@ -245,25 +264,35 @@ def _stream_canned_reply(
     started_at: float,
     clock,
     learn_at_start: profile.LearnResult,
+    polish_reply: bool = True,
+    singing_reply: bool = False,
+    speech_chunks: Optional[list[str]] = None,
 ) -> Generator[str, None, None]:
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
-    memory.append_exchange(trimmed, reply)
+    spoken_reply = polish_for_speech(reply) if polish_reply else reply.strip()
+    if not spoken_reply:
+        spoken_reply = "I don't have a reply right now. Please try again."
+    memory.append_exchange(trimmed, spoken_reply)
     session_log.log_turn(
         trimmed,
-        reply,
+        spoken_reply,
         route=route,
         **_turn_log_fields(started_at, clock, learn_at_start),
     )
     emotion_hint, express_style = _turn_emotion(trimmed)
-    for piece in _stream_text_chunks(reply):
+    for piece in _stream_text_chunks(spoken_reply):
         yield _ndjson_line({"text": piece})
     done_payload: dict = {
         "done": True,
-        "reply": reply,
+        "reply": spoken_reply,
         "emotion_hint": emotion_hint,
-        "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+        "speech_chunks": speech_chunks
+        if speech_chunks is not None
+        else conversation_rhythm.speech_chunks_for_reply(spoken_reply),
     }
+    if singing_reply:
+        done_payload["singing"] = True
     if express_style:
         done_payload["express_style"] = express_style
     yield _ndjson_line(done_payload)
@@ -300,7 +329,7 @@ def stream_chat_events(
     def _canned(raw_reply: str, route: str) -> Generator[str, None, None]:
         return _stream_canned_reply(
             trimmed,
-            polish_for_speech(raw_reply),
+            raw_reply,
             route=route,
             started_at=started_at,
             clock=clock,
@@ -361,6 +390,22 @@ def stream_chat_events(
         conflict_reply = profile.try_memory_conflict_reply(trimmed)
         if conflict_reply:
             yield from _canned(conflict_reply, "canned:memory_conflict")
+            return
+
+        song_reply = singing.build_song_reply(trimmed)
+        if song_reply:
+            song_lines = [line.strip() for line in song_reply.splitlines() if line.strip()]
+            yield from _stream_canned_reply(
+                trimmed,
+                song_reply,
+                route="canned:singing",
+                started_at=started_at,
+                clock=clock,
+                learn_at_start=learn_at_start,
+                polish_reply=False,
+                singing_reply=True,
+                speech_chunks=song_lines,
+            )
             return
 
         calendar_year = int(format_local_now_parts(clock)["year"])
@@ -614,9 +659,10 @@ def clear_session_log():
 @app.post("/debug/voice-log")
 def post_voice_log(body: VoiceLogRequest):
     """Append voice/TTS debug lines from Expo (readable via session-log)."""
-    session_log.log_voice(
-        body.event,
-        detail=body.detail,
-        platform=body.platform,
-    )
+    if session_log.voice_http_enabled():
+        session_log.log_voice(
+            body.event,
+            detail=body.detail,
+            platform=body.platform,
+        )
     return {"status": "ok"}

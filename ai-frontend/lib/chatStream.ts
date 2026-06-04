@@ -24,6 +24,7 @@ export type ChatStreamDoneMeta = {
   emotion_hint?: string;
   express_style?: string;
   speech_chunks?: string[];
+  singing?: boolean;
 };
 
 type StreamEvent =
@@ -92,7 +93,8 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
       if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
       if (event.express_style) meta.express_style = event.express_style;
       if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
-      if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length) {
+      if (event.singing) meta.singing = true;
+      if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length || meta.singing) {
         (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
       }
       return handlers.onDone(event.reply || full);
@@ -188,7 +190,8 @@ export function streamChatWithXHR(
           if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
           if (event.express_style) meta.express_style = event.express_style;
           if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
-          if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length) {
+          if (event.singing) meta.singing = true;
+          if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length || meta.singing) {
             (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
           }
           const reply = handlers.onDone(event.reply || full);

@@ -30,6 +30,16 @@ def _enabled() -> bool:
     )
 
 
+def voice_http_enabled() -> bool:
+    """Whether POST /debug/voice-log appends to session_log (backend log_voice is unaffected)."""
+    return os.environ.get("SESSION_LOG_VOICE_HTTP", "1").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+        "no",
+    )
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -226,6 +236,7 @@ def status() -> dict[str, Any]:
             count = 0
     return {
         "enabled": _enabled(),
+        "voice_http": voice_http_enabled(),
         "path": str(_LOG_PATH),
         "exists": _LOG_PATH.is_file(),
         "lines": count,

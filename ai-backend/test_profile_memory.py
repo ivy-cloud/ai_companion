@@ -63,6 +63,13 @@ class ProfileMemoryTests(unittest.TestCase):
         self.assertEqual(items[0]["category"], "preference")
         self.assertEqual(items[0]["confidence"], "high")
 
+    def test_music_preference_memory(self) -> None:
+        result = profile.learn_from_user_message("I prefer calm acoustic music.")
+        self.assertTrue(result.updated)
+        items = profile.get_memory_items()
+        self.assertTrue(any(i["category"] == "preference" for i in items))
+        self.assertTrue(any("calm acoustic" in i["value"].lower() for i in items))
+
     def test_favorite_conflict(self) -> None:
         profile.learn_from_user_message("My favorite color is blue.")
         result = profile.learn_from_user_message("My favorite color is red.")

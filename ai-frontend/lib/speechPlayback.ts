@@ -6,11 +6,11 @@
 import { normalizeForSpeech } from './spokenNormalize';
 
 /** ~3 short spoken sentences from the backend (25 words). */
-export const MAX_SPOKEN_CHARS = 360;
-export const MAX_UTTERANCE_CHARS = 500;
-export const MAX_SPOKEN_SENTENCES = 3;
+export const MAX_SPOKEN_CHARS = 300;
+export const MAX_UTTERANCE_CHARS = 420;
+export const MAX_SPOKEN_SENTENCES = 2;
 export const MAX_SPOKEN_SENTENCES_CASUAL = 2;
-export const MAX_SPOKEN_CHARS_CASUAL = 180;
+export const MAX_SPOKEN_CHARS_CASUAL = 140;
 
 export type SpeechTrimOptions = {
   maxSentences: number;

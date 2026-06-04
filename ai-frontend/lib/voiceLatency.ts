@@ -14,6 +14,9 @@ export type VoiceTimingMark =
   | 'chunk_play'
   | 'stream_done'
   | 'final_tts_start'
+  | 'play_settle'
+  | 'mic_open'
+  | 'listen_ready'
   | 'interrupt';
 
 export type VoiceTurnTiming = {
@@ -62,17 +65,33 @@ export function logVoiceTurnSummary(timing: VoiceTurnTiming | null): void {
     m[mark] != null ? m[mark]! - timing.t0 : null;
   voiceLog('turn_summary', {
     turn: timing.turn,
+    send_start_ms: 0,
     first_token_ms: ms('first_token') ?? '—',
-    first_tts_enqueue_ms: ms('first_tts_enqueue') ?? '—',
-    first_tts_fetch_done_ms: ms('first_tts_fetch_done') ?? '—',
-    first_audio_play_ms: ms('first_audio_play') ?? '—',
     stream_done_ms: ms('stream_done') ?? '—',
+    first_tts_fetch_ms: ms('first_tts_fetch_done') ?? '—',
+    first_audio_play_ms: ms('first_audio_play') ?? '—',
+    play_settle_ms: ms('play_settle') ?? '—',
+    mic_open_ms: ms('mic_open') ?? '—',
+    listen_ready_ms: ms('listen_ready') ?? '—',
+    first_tts_enqueue_ms: ms('first_tts_enqueue') ?? '—',
     audio_chunks: timing.chunkCount,
   });
   if (!voiceLatencyLoggingEnabled()) return;
   const line = (mark: VoiceTimingMark) =>
     m[mark] != null ? `${mark}=${m[mark]! - timing.t0}ms` : `${mark}=—`;
   console.log(
-    `[voice-latency] turn=${timing.turn} summary ${line('first_token')} ${line('first_tts_enqueue')} ${line('first_tts_fetch_done')} ${line('first_audio_play')} ${line('stream_done')} chunks=${timing.chunkCount}`,
+    `[voice-latency] turn=${timing.turn} summary ${line('first_token')} ${line('stream_done')} ${line('first_tts_fetch_done')} ${line('play_settle')} ${line('listen_ready')} chunks=${timing.chunkCount}`,
   );
+}
+
+/** Log summary once listen_ready (or fallback) so post-TTS mic timing is included. */
+export function finalizeVoiceTurnTiming(
+  timing: VoiceTurnTiming | null,
+  options?: { waitForListen?: boolean },
+): void {
+  if (!timing) return;
+  if (options?.waitForListen && timing.marks.listen_ready == null) {
+    return;
+  }
+  logVoiceTurnSummary(timing);
 }

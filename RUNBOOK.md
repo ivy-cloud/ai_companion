@@ -123,6 +123,17 @@ Clear before a new test session: `curl -X POST http://127.0.0.1:8000/debug/sessi
 
 See [DEV.md](DEV.md) for details.
 
+Conversation mode listen-debug checklist (phone):
+
+1. `schedule_listen` appears after assistant TTS finishes.
+2. `schedule_listen_open` appears once blockers clear.
+3. `mic_open` then `listen_ready` appear within the same reopen cycle.
+4. If reopening is delayed, inspect `schedule_listen_blocked` and `listen_blocked` reasons.
+5. If session idles unexpectedly, check for `watchdog_idle_reopen_listen` or `watchdog_listening_stuck`.
+6. After each turn, `turn_summary` should show `play_settle_ms` then `listen_ready_ms` (see [DEV.md](DEV.md#reading-turn_summary)).
+
+Voice error copy on device: **Microphone busy**, **That was my voice**, **Didn't catch that**, **No audio heard — tap above to hear**.
+
 ---
 
 ## Local API smoke test (Mac only, no phone)

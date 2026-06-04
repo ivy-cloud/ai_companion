@@ -66,6 +66,24 @@ _MEMORY_LEARN_PATTERNS: list[_MemoryPattern] = [
     (
         "preference",
         "high",
+        re.compile(r"\bi (?:like|love|prefer)\s+(?:music|songs?)\s+(?:that are|that's|that is)?\s*(.+?)(?:[.!?]|$)", re.I),
+        None,
+    ),
+    (
+        "preference",
+        "high",
+        re.compile(r"\bi prefer\s+(.+?)\s+(?:music|songs?)\b(?:[.!?]|$)", re.I),
+        None,
+    ),
+    (
+        "preference",
+        "high",
+        re.compile(r"\bmy favorite music (?:style|genre|mood|theme) is\s+(.+?)(?:[.!?]|$)", re.I),
+        None,
+    ),
+    (
+        "preference",
+        "high",
         re.compile(r"\bi (?:really )?(?:like|love|enjoy)\s+(.+?)(?:[.!?]|$)", re.I),
         None,
     ),
