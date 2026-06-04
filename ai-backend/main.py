@@ -24,6 +24,7 @@ import grounding
 import llm_provider
 import memory
 import profile
+import profile_growth
 import session_log
 import singing
 import stt
@@ -270,6 +271,7 @@ def _stream_canned_reply(
 ) -> Generator[str, None, None]:
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
+    profile_growth.record_usage_signals(trimmed, route)
     spoken_reply = polish_for_speech(reply) if polish_reply else reply.strip()
     if not spoken_reply:
         spoken_reply = "I don't have a reply right now. Please try again."
@@ -325,6 +327,7 @@ def stream_chat_events(
     started_at = time.monotonic()
     learn_at_start = profile.learn_from_user_message(trimmed)
     companion.try_learn_name_from_user(trimmed)
+    profile_growth.record_usage_signals(trimmed)
 
     def _canned(raw_reply: str, route: str) -> Generator[str, None, None]:
         return _stream_canned_reply(

@@ -55,7 +55,7 @@ Or one shot (starts mock backend, runs smoke, then stops when the script exits):
 
 ## What sim is good for
 
-- Profile memory, canned replies, web-search routing
+- Profile memory, growth prefs, canned replies, web-search routing
 - Singing intent routing with safe original-lyrics fallback
 - NDJSON stream shape and errors
 - Backend unit tests (`./dev/sim.sh` without `--live`)
@@ -126,6 +126,22 @@ Typical healthy conversation turn: `first_token` → `stream_done` → `first_tt
 **Phase 1 (conversation quality):** saved friend notes are in the system prompt on normal turns (not only explicit recall questions); canned recall routes unchanged. Voice replies target ~2 short sentences / ~16 words; clearer mic/echo/STT error copy.
 
 **Phase 2 (latency):** single-clip TTS prefetch, slightly faster playback-idle detection; `turn_summary` includes post-TTS mic timing. Post-TTS listen cooldown stays **700ms** for echo safety.
+
+**Phase 3 (polish):** **End conversation** button while a conversation session is active; health preflight on app load and before starting conversation mode (`lib/healthPreflight.ts`); louder TTS failure hints (volume / silent mode); watchdog thresholds tuned so recovery is rare in normal use (see below).
+
+**Growth:** `profile_growth.py` — structured prefs (`music_style`, `mood`, `topic`), “remember that” / correction / appreciation loops, usage-based **skill hints** in `/health` companion info and stream `rhythm.skill_hints`; occasional casual-chat nudge via turn hints (~18% of eligible turns).
+
+### Watchdog (safety only)
+
+The conversation watchdog should **not** fire on every turn. If you see `watchdog_idle_reopen_listen` or `watchdog_listening_stuck` often, fix the root blocker (`schedule_listen_blocked`, echo, TTS) instead of relying on recovery.
+
+| Constant | Value | Role |
+|----------|-------|------|
+| `LISTENING_STUCK_MS` | 6500 | No recorder while “listening” |
+| `IDLE_LISTEN_RECOVERY_MS` | 2800 | Idle + session, reopen listen |
+| `LISTEN_PAUSED_STUCK_MS` | 7000 | Idle stuck even with pending timer |
+| `WATCHDOG_RECOVERY_COOLDOWN_MS` | 8000 | Min gap between recoveries |
+| `ASSISTANT_STUCK_MS` | 28000 | Assistant phase with no in-flight work |
 
 For conversation-listen recovery and next-turn timing, also watch:
 

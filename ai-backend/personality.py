@@ -147,10 +147,19 @@ def build_turn_hints(
             f"{backchannel_turn_hint(trimmed, casual=False)}"
         )
     rhythm = backchannel_turn_hint(trimmed, casual=True)
+    growth = ""
+    try:
+        import profile_growth
+
+        growth = profile_growth.companion_growth_turn_hint(trimmed, casual=True)
+        if growth:
+            growth = f" {growth}"
+    except Exception:
+        pass
     short = trimmed.strip().lower().rstrip("?!.")
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{growth} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{growth} {rhythm}"

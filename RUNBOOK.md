@@ -132,7 +132,29 @@ Conversation mode listen-debug checklist (phone):
 5. If session idles unexpectedly, check for `watchdog_idle_reopen_listen` or `watchdog_listening_stuck`.
 6. After each turn, `turn_summary` should show `play_settle_ms` then `listen_ready_ms` (see [DEV.md](DEV.md#reading-turn_summary)).
 
-Voice error copy on device: **Microphone busy**, **That was my voice**, **Didn't catch that**, **No audio heard — tap above to hear**.
+Voice error copy on device: **Microphone busy**, **That was my voice**, **Didn't catch that**, **No audio heard — raise volume, silent switch off, tap above to hear**.
+
+On load, the app calls **`GET /health`** and shows an orange banner if the backend is unreachable, Azure speech is missing, or **`DEV_MOCK_*`** is on when you expected real AI/voice.
+
+While **Conversation** mode is active, tap **End conversation** (header) or **Stop** on the mic to tear down: stop recording, clear listen timers, abort in-flight TTS/chat, return to idle.
+
+---
+
+## Phone validation checklist (manual)
+
+Clear the session log before a run: `curl -X POST http://127.0.0.1:8000/debug/session-log/clear`
+
+| # | Step | Pass criteria |
+|---|------|----------------|
+| 1 | **Health** | App opens without orange backend banner; `curl http://127.0.0.1:8000/health` shows `"status":"ok"`, `dev_mode.mock_llm` false for real AI |
+| 2 | **Multi-turn** | Conversation mode: 3+ back-and-forth turns; after each reply, mic reopens (`listen_ready` in log / Metro `[voice]`) |
+| 3 | **Memory** | Say name + preference; ask “what’s my name?” / “what do I like?” — canned recall, no hallucination |
+| 4 | **Growth** | Say “Remember that I love tea” — later casual chat may nod briefly; optional “sing me a lullaby” twice → skill hints in `/health` `companion.skill_hints` |
+| 5 | **Sing** | Ask for a short song — original lyrics vibe, TTS plays, `route` contains sing in session log |
+| 6 | **Audio** | Hear assistant voice; if silent, banner/hint mentions volume; tap-to-hear replays last line |
+| 7 | **End session** | Tap **End conversation** — recording stops, phase idle, no stuck “Listening…” |
+
+Watchdog events (`watchdog_*`) should be **rare** in a healthy session — see [DEV.md](DEV.md#watchdog-safety-only).
 
 ---
 

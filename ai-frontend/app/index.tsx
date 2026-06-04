@@ -113,6 +113,10 @@ import {
   formatVoicePlaybackError,
 } from '../lib/voiceErrors';
 import {
+  fetchHealthPreflight,
+  formatHealthBanner,
+} from '../lib/healthPreflight';
+import {
   ASSISTANT_STUCK_MS,
   INTERRUPTING_STUCK_MS,
   blocksRecordingPrewarm,
@@ -247,6 +251,9 @@ export default function ChatScreen() {
   const [voicePlaybackError, setVoicePlaybackError] = useState<string | null>(null);
   const [ttsTapToHearText, setTtsTapToHearText] = useState<string | null>(null);
   const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
+  const [backendHealthBanner, setBackendHealthBanner] = useState<string | null>(
+    null,
+  );
   const [deviceTimezone, setDeviceTimezone] = useState<string | undefined>(() =>
     getDeviceTimezone(),
   );
@@ -322,6 +329,13 @@ export default function ChatScreen() {
   const ttsPlaySettledGenRef = useRef(-1);
   const ttsRetryUsedTurnRef = useRef(-1);
 
+  const refreshBackendHealth = async (): Promise<boolean> => {
+    const result = await fetchHealthPreflight(API_BASE);
+    const banner = formatHealthBanner(result);
+    setBackendHealthBanner(banner);
+    return result.reachable;
+  };
+
   useEffect(() => {
     voiceEnabledRef.current = voiceEnabled;
   }, [voiceEnabled]);
@@ -382,6 +396,7 @@ export default function ChatScreen() {
         const [name, label] = await Promise.all([
           fetchCompanionFromHealth(),
           fetchAzureVoiceLabel(voiceGenderRef.current),
+          refreshBackendHealth(),
         ]);
         if (!mounted) return;
         if (name) setCompanionName(name);
@@ -718,7 +733,7 @@ export default function ChatScreen() {
     });
   };
 
-  const endConversationSession = () => {
+  const endConversationSession = (reason = 'session_end') => {
     clearConversationListenResumeTimer();
     resetConversationListenRetries();
     conversationListenGenRef.current += 1;
@@ -730,10 +745,32 @@ export default function ChatScreen() {
     recordingRef.current = null;
     recordingStartedAtRef.current = 0;
     if (rec) void safeUnloadRecording(rec);
-    if (voicePhaseRef.current === 'listening') {
-      setVoicePhaseTransition('idle');
+    abortTtsFetches(reason);
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    const assistantBusy =
+      chatInFlightRef.current ||
+      speakInFlightRef.current ||
+      streamTtsDrainingRef.current ||
+      streamTtsQueueRef.current.length > 0 ||
+      isAssistantActivePhase(voicePhaseRef.current);
+    if (assistantBusy) {
+      releaseVoiceUi(reason);
+    } else if (voicePhaseRef.current === 'listening') {
+      setVoicePhaseTransition('idle', { reason });
+      if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
+    } else if (voicePhaseRef.current !== 'idle') {
+      setVoicePhaseTransition('idle', { force: true, reason });
       if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
     }
+  };
+
+  const endConversationSessionManually = () => {
+    if (!conversationSessionRef.current) return;
+    logVoiceState('conversation_session_ended', { manual: true });
+    endConversationSession('user_end_conversation');
+    setVoiceInputError(null);
+    prewarmVoiceMicIfIdle();
   };
 
   const beginConversationListenMeter = (listenGen: number) => {
@@ -1195,9 +1232,18 @@ export default function ChatScreen() {
     });
   };
 
-  const startConversationSession = () => {
+  const startConversationSession = async () => {
     if (!voiceEnabledRef.current) {
       setVoiceInputError('Turn on voice to use conversation mode.');
+      return;
+    }
+    const preflight = await fetchHealthPreflight(API_BASE);
+    const banner = formatHealthBanner(preflight);
+    setBackendHealthBanner(banner);
+    if (!preflight.reachable) {
+      setVoiceInputError(
+        banner ?? "Can't reach the backend — start ./start.sh on your Mac.",
+      );
       return;
     }
     if (conversationSessionRef.current) return;
@@ -1261,7 +1307,7 @@ export default function ChatScreen() {
       return;
     }
 
-    startConversationSession();
+    void startConversationSession();
   };
 
   const onVoiceInputModeChange = (mode: VoiceInputMode) => {
@@ -3213,6 +3259,21 @@ export default function ChatScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>{companionName}</Text>
         <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
+        {backendHealthBanner ? (
+          <Text style={styles.healthBanner}>{backendHealthBanner}</Text>
+        ) : null}
+        {conversationSession && voiceInputMode === 'conversation' ? (
+          <Pressable
+            onPress={endConversationSessionManually}
+            style={({ pressed }) => [
+              styles.endConversationButton,
+              pressed && styles.endConversationButtonPressed,
+            ]}
+            accessibilityLabel="End conversation"
+          >
+            <Text style={styles.endConversationLabel}>End conversation</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.voiceRow}>
           <Text style={styles.voiceLabel}>Enable voice</Text>
           <Switch
@@ -3537,6 +3598,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666666',
     marginBottom: 8,
+  },
+  healthBanner: {
+    fontSize: 12,
+    color: '#b45309',
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  endConversationButton: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#eeeeee',
+    borderWidth: 1,
+    borderColor: '#cccccc',
+  },
+  endConversationButtonPressed: {
+    backgroundColor: '#e0e0e0',
+  },
+  endConversationLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333333',
   },
   voiceRow: {
     flexDirection: 'row',

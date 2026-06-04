@@ -109,6 +109,14 @@ def rhythm_stream_meta(
     }
     if ack:
         meta["fast_ack"] = ack
+    try:
+        import profile_growth
+
+        growth = profile_growth.growth_meta_for_stream()
+        if growth.get("skill_hints"):
+            meta["skill_hints"] = growth["skill_hints"]
+    except Exception:
+        pass
     return meta
 
 

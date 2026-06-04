@@ -392,6 +392,12 @@ def get_companion_info() -> dict[str, Any]:
     record = get_companion_name_record()
     store = _load_store()
     age_entry = store.get("companion_age") if isinstance(store.get("companion_age"), dict) else {}
+    try:
+        import profile_growth
+
+        skills = profile_growth.get_skill_hints()
+    except Exception:
+        skills = []
     return {
         "name": record["value"],
         "source": record["source"],
@@ -399,6 +405,7 @@ def get_companion_info() -> dict[str, Any]:
         "user_set": record["source"] == "user",
         "age": get_companion_age(),
         "age_source": age_entry.get("source", "default"),
+        "skill_hints": skills,
     }
 
 

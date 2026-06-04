@@ -729,7 +729,7 @@ def _conflict_clarification_reply(conflict: MemoryConflict) -> str:
     )
 
 
-def learn_from_user_message(user_text: str) -> LearnResult:
+def learn_from_user_message(user_text: str, *, apply_growth: bool = True) -> LearnResult:
     """
     Store facts from an explicit user statement only.
     Never call for assistant text. Conflicts are not auto-overwritten.
@@ -737,6 +737,11 @@ def learn_from_user_message(user_text: str) -> LearnResult:
     text = user_text.strip()
     result = LearnResult()
     if not _eligible_to_learn(text):
+        if apply_growth:
+            import profile_growth
+
+            for tag in profile_growth.apply_growth_learn_extras(text):
+                result.updated.append(tag)
         return result
 
     facts = _load_user_facts()
@@ -796,6 +801,13 @@ def learn_from_user_message(user_text: str) -> LearnResult:
         _persist_user_facts(facts)
     if extracted:
         _persist_memory_items(items)
+
+    if apply_growth:
+        import profile_growth
+
+        for tag in profile_growth.apply_growth_learn_extras(text):
+            if tag not in result.updated:
+                result.updated.append(tag)
 
     return result
 

@@ -40,8 +40,8 @@ export const POST_TTS_LISTEN_COOLDOWN_MS = 700;
 /** Retry cadence when listen is temporarily blocked by TTS/drain/in-flight states. */
 export const LISTEN_RETRY_MS = 280;
 
-/** Recover when Listening… with no mic or blocked meter for this long. */
-export const LISTENING_STUCK_MS = 5000;
+/** Recover when Listening… with no mic or blocked meter for this long (safety only). */
+export const LISTENING_STUCK_MS = 6500;
 
 /**
  * Grace after entering listening before treating "no recorder" as stuck.
@@ -53,16 +53,16 @@ export const LISTEN_OPEN_GRACE_MS = 1400;
 export const MIN_SCHEDULE_LISTEN_MS = 400;
 
 /** Recover an active conversation when phase idles with no pending listen reopen. */
-export const IDLE_LISTEN_RECOVERY_MS = 2200;
+export const IDLE_LISTEN_RECOVERY_MS = 2800;
 
 /**
  * Idle + session stuck longer than this — recover even if a listen timer is pending.
  * Retry timers alone can thrash without opening the mic (blocked TTS / stale in-flight).
  */
-export const LISTEN_PAUSED_STUCK_MS = 5200;
+export const LISTEN_PAUSED_STUCK_MS = 7000;
 
 /** Do not repeat the same watchdog listen recovery within this window. */
-export const WATCHDOG_RECOVERY_COOLDOWN_MS = 5000;
+export const WATCHDOG_RECOVERY_COOLDOWN_MS = 8000;
 
 /** Window for detecting rapid phase flips (voiceLog diagnostic). */
 export const PHASE_OSCILLATION_WINDOW_MS = 2500;

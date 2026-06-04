@@ -46,9 +46,9 @@ test('fresh listen: only idle or speaking', () => {
 test('phase0: listen timing constants stay bounded', () => {
   assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 700);
   assert.equal(LISTEN_RETRY_MS, 280);
-  assert.equal(LISTENING_STUCK_MS, 5000);
+  assert.equal(LISTENING_STUCK_MS, 6500);
   assert.equal(LISTEN_OPEN_GRACE_MS, 1400);
-  assert.equal(IDLE_LISTEN_RECOVERY_MS, 2200);
+  assert.equal(IDLE_LISTEN_RECOVERY_MS, 2800);
 });
 
 test('listen open grace: no force-idle while mic is still opening', () => {

@@ -152,5 +152,5 @@ export function transitionVoicePhase(
 /** Max time to remain in interrupting before watchdog forces idle. */
 export const INTERRUPTING_STUCK_MS = 8_000;
 
-/** Assistant phase with no in-flight work — recover to idle/listen. */
-export const ASSISTANT_STUCK_MS = 20_000;
+/** Assistant phase with no in-flight work — recover to idle/listen (safety only). */
+export const ASSISTANT_STUCK_MS = 28_000;
