@@ -29,9 +29,25 @@ Phased path toward a **Her**-style voice companion: warm, intimate, remembers yo
 - Emotional hints + rhythm tuned for friend tone (not assistant / therapist)
 - Frontend `conversationState.ts`: speaking-phase blockers + watchdog recovery when TTS refs clear but phase stuck
 
-## Phase 4 — Smart glasses (hardware, later)
+## Her attunement (Jun 2026 — continued)
+
+- **Continuity** — `emotional_continuity_turn_hint` weaves prior `user_shared_moment` (~11% casual turns)
+- **Curiosity** — `curiosity_turn_hint` for gentle Her-style question back (~10%)
+- **Silence comfort** — `silence_comfort_turn_hint` when brief or low mood
+- **Session goodbye** — `GET /companion/session-goodbye` + spoken farewell on End conversation
+- **Skill hints UI** — unlocked labels from `/health` in app header
+- **Journal echo** — `journal_reflection_hint` for optional shared-moment callback
+
+## Phase 4 — Smart glasses (foundation started)
 
 **Recommendation: treat smart glasses as Phase 4, only after phone voice is stable for 2+ weeks** (low echo rate, predictable `turn_summary`, rare watchdog recovery).
+
+Foundation (no hardware required):
+
+- [docs/meta-glasses.md](docs/meta-glasses.md) — architecture, latency/privacy/echo notes
+- `ai-frontend/lib/wearablesAdapter.ts` — `phone` default, `meta-stub` placeholder
+- `EXPO_PUBLIC_WEARABLES_MODE=phone|meta-stub`
+- `X-Audio-Source` header on `/chat` → `session_log` `extra.audio_source`
 
 | Risk | Why wait |
 |------|----------|

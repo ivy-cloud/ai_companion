@@ -69,6 +69,50 @@ class CompanionMomentsTests(unittest.TestCase):
             any(i["id"].startswith("emotional_context:user_shared_moment") for i in items)
         )
 
+    def test_session_goodbye_line(self) -> None:
+        line = companion_moments.session_goodbye_line(resolve_clock("UTC"))
+        self.assertTrue(len(line) > 10)
+        self.assertLessEqual(len(line), 160)
+
+    def test_emotional_continuity_hint_when_shared(self) -> None:
+        import profile_growth
+
+        profile_growth.try_reflection_moment_learn(
+            "Today I found out my mom passed away last week."
+        )
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.emotional_continuity_turn_hint(
+                "work was okay today", casual=True
+            )
+        self.assertIn("Continuity", hint)
+        self.assertIn("shared", hint.lower())
+
+    def test_curiosity_hint_substantive_casual(self) -> None:
+        found = False
+        for msg in (
+            "I went to the park and sat by the lake for a while",
+            "work has been pretty intense this whole month honestly",
+        ):
+            hint = companion_moments.curiosity_turn_hint(msg, casual=True)
+            if hint:
+                found = True
+                self.assertIn("curious", hint.lower())
+        self.assertTrue(found)
+
+    def test_journal_reflection_hint(self) -> None:
+        import profile_growth
+
+        profile_growth.try_reflection_moment_learn(
+            "Last night I couldn't sleep because of the breakup."
+        )
+        found = False
+        for msg in ("yeah", "thinking about it again", "hard day today"):
+            hint = companion_moments.journal_reflection_hint(msg, casual=True)
+            if hint:
+                found = True
+                self.assertIn("shared", hint.lower())
+        self.assertTrue(found)
+
 
 if __name__ == "__main__":
     unittest.main()

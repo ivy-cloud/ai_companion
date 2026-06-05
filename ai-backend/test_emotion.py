@@ -7,6 +7,7 @@ from emotion import (
     express_style_for_hint,
     normalize_express_style,
     resolve_express_style,
+    silence_comfort_turn_hint,
     voice_supports_express,
 )
 class EmotionDetectionTests(unittest.TestCase):
@@ -37,6 +38,17 @@ class EmotionDetectionTests(unittest.TestCase):
             detect_emotion_hint("Yeah.", recent_history=history),
             "sympathetic",
         )
+
+    def test_silence_comfort_brief(self):
+        hint = silence_comfort_turn_hint("yeah", "warm")
+        self.assertIn("brief", hint.lower())
+
+    def test_silence_comfort_low(self):
+        hint = silence_comfort_turn_hint(
+            "I've been feeling really sad and overwhelmed lately",
+            "sympathetic",
+        )
+        self.assertIn("short", hint.lower())
 
 
 class ExpressStyleTests(unittest.TestCase):

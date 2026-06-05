@@ -466,15 +466,7 @@ def companion_growth_turn_hint(message: str, *, casual: bool) -> str:
         i
         for i in profile.get_memory_items()
         if profile._confidence_allows_assertion(i["confidence"])
-        and (
-            i["category"] in ("preference", "recurring_interest")
-            or (
-                i["category"] == "emotional_context"
-                and str(i.get("id", "")).startswith(
-                    "emotional_context:user_shared_moment"
-                )
-            )
-        )
+        and i["category"] in ("preference", "recurring_interest")
     ]
     if not prefs:
         return ""
@@ -494,13 +486,6 @@ def companion_growth_turn_hint(message: str, *, casual: bool) -> str:
         return (
             f"Saved note: they like {val}. Mention only if it fits this turn — "
             f"one brief nod, not a list.{skill_line}"
-        )
-    if pick["category"] == "emotional_context" and pick["id"].startswith(
-        "emotional_context:user_shared_moment"
-    ):
-        return (
-            f"Shared moment on file: {val}. Only if this chat touches it — "
-            f"gentle, no probing.{skill_line}"
         )
     return (
         f"Saved note: they're into {val}. Mention only if natural — "

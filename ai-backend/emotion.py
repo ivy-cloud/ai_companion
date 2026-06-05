@@ -152,6 +152,39 @@ def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
     return ""
 
 
+def silence_comfort_turn_hint(
+    user_message: str,
+    base_hint: EmotionHint,
+) -> str:
+    """
+    When they're brief or low — shorter, warmer replies; presence over questions.
+    """
+    msg = (user_message or "").strip()
+    if not msg:
+        return ""
+
+    words = len(msg.split())
+    brief = words <= 3 or (words <= 5 and not msg.rstrip("?!.").endswith("?"))
+    low = base_hint in ("sympathetic", "gentle") or _DISTRESS.search(msg)
+
+    if not brief and not low:
+        return ""
+    if brief and low:
+        return (
+            "Silence comfort: they're quiet and low — one warm sentence, "
+            "under 12 words if you can; presence, not fixing; no stacked questions."
+        )
+    if low:
+        return (
+            "Silence comfort: keep it short and warm — one sentence; "
+            "stay with them, don't coach or interview."
+        )
+    return (
+        "Silence comfort: they were brief — match their energy; "
+        "one relaxed sentence, warm not chatty."
+    )
+
+
 def conversation_tone_llm_hint(user_message: str, base_hint: EmotionHint) -> str:
     """Lightweight tone nudge: playful, calm, curious, thoughtful (casual turns only)."""
     msg = (user_message or "").strip()

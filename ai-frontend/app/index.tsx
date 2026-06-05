@@ -116,6 +116,7 @@ import {
   fetchHealthPreflight,
   formatHealthBanner,
 } from '../lib/healthPreflight';
+import { wearablesChatHeaders } from '../lib/wearablesAdapter';
 import {
   ASSISTANT_STUCK_MS,
   INTERRUPTING_STUCK_MS,
@@ -186,14 +187,23 @@ function bytesToBase64(bytes: Uint8Array): string {
   return output;
 }
 
-async function fetchCompanionFromHealth(): Promise<string | null> {
+async function fetchCompanionFromHealth(): Promise<{
+  name: string | null;
+  skillHints: string[];
+}> {
   try {
     const response = await fetch(`${API_BASE}/health`);
-    if (!response.ok) return null;
-    const data = (await response.json()) as { companion?: { name?: string } };
-    return data.companion?.name?.trim() || null;
+    if (!response.ok) return { name: null, skillHints: [] };
+    const data = (await response.json()) as {
+      companion?: { name?: string; skill_hints?: string[] };
+    };
+    const hints = data.companion?.skill_hints;
+    return {
+      name: data.companion?.name?.trim() || null,
+      skillHints: Array.isArray(hints) ? hints.filter((h) => typeof h === 'string') : [],
+    };
   } catch {
-    return null;
+    return { name: null, skillHints: [] };
   }
 }
 
@@ -256,6 +266,7 @@ export default function ChatScreen() {
   const [backendHealthBanner, setBackendHealthBanner] = useState<string | null>(
     null,
   );
+  const [skillHints, setSkillHints] = useState<string[]>([]);
   const [deviceTimezone, setDeviceTimezone] = useState<string | undefined>(() =>
     getDeviceTimezone(),
   );
@@ -395,13 +406,14 @@ export default function ChatScreen() {
     const prepareAudio = async () => {
       try {
         await configurePlaybackAudioMode();
-        const [name, label] = await Promise.all([
+        const [companionHealth, label] = await Promise.all([
           fetchCompanionFromHealth(),
           fetchAzureVoiceLabel(voiceGenderRef.current),
           refreshBackendHealth(),
         ]);
         if (!mounted) return;
-        if (name) setCompanionName(name);
+        if (companionHealth.name) setCompanionName(companionHealth.name);
+        setSkillHints(companionHealth.skillHints);
         setVoiceName(label);
 
         const { sound } = await Audio.Sound.createAsync(SILENT_SOUND, {
@@ -770,9 +782,15 @@ export default function ChatScreen() {
   const endConversationSessionManually = () => {
     if (!conversationSessionRef.current) return;
     logVoiceState('conversation_session_ended', { manual: true });
-    endConversationSession('user_end_conversation');
-    setVoiceInputError(null);
-    prewarmVoiceMicIfIdle();
+    void (async () => {
+      const goodbye = await fetchSessionGoodbyeLine();
+      endConversationSession('user_end_conversation');
+      setVoiceInputError(null);
+      if (goodbye && voiceEnabledRef.current) {
+        await speakFarewell(goodbye);
+      }
+      prewarmVoiceMicIfIdle();
+    })();
   };
 
   const beginConversationListenMeter = (listenGen: number) => {
@@ -2585,6 +2603,20 @@ export default function ChatScreen() {
     });
   };
 
+  const fetchSessionGoodbyeLine = async (): Promise<string | null> => {
+    try {
+      const tz = getDeviceTimezone();
+      const q = tz ? `?timezone=${encodeURIComponent(tz)}` : '';
+      const response = await fetch(`${API_BASE}/companion/session-goodbye${q}`);
+      if (!response.ok) return null;
+      const data = (await response.json()) as { line?: string | null };
+      const line = data.line?.trim();
+      return line || null;
+    } catch {
+      return null;
+    }
+  };
+
   const fetchSessionOpeningLine = async (): Promise<string | null> => {
     try {
       const tz = getDeviceTimezone();
@@ -2596,6 +2628,32 @@ export default function ChatScreen() {
       return line || null;
     } catch {
       return null;
+    }
+  };
+
+  /** Warm farewell when the user taps End conversation. */
+  const speakFarewell = async (text: string) => {
+    if (!voiceEnabledRef.current || !text.trim()) return;
+    if (voicePhaseRef.current !== 'idle') return;
+
+    const parts = buildSpeakParts(text.trim(), true);
+    if (parts.length === 0) return;
+
+    setVoicePlaybackError(null);
+    setVoicePhaseTransition('speaking', { reason: 'session_goodbye' });
+    const generation = voiceSessionRef.current.speakGeneration;
+    await stopPlayback();
+    await prepareForTtsPlayback();
+    const ok = await speakParts(parts);
+    if (!isActiveSpeakGeneration(generation)) {
+      void recoverSpeakingPhaseIfIdle('session_goodbye_stale_gen');
+      return;
+    }
+    if (ok) {
+      setVoicePhaseTransition('idle', { reason: 'session_goodbye_done' });
+      prewarmVoiceMicIfIdle();
+    } else {
+      releaseVoiceUi('session_goodbye_failed');
     }
   };
 
@@ -3256,6 +3314,7 @@ export default function ChatScreen() {
         },
         abortController.signal,
         getDeviceTimezone(),
+        wearablesChatHeaders(),
       );
 
       if (voiceEnabledRef.current && replyForTts.trim()) {
@@ -3339,8 +3398,9 @@ export default function ChatScreen() {
         }
         return;
       }
-      void fetchCompanionFromHealth().then((name) => {
-        if (name) setCompanionName(name);
+      void fetchCompanionFromHealth().then((health) => {
+        if (health.name) setCompanionName(health.name);
+        setSkillHints(health.skillHints);
       });
       clearStreamUiFlush();
       chatInFlightRef.current = false;
@@ -3424,6 +3484,9 @@ export default function ChatScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>{companionName}</Text>
         <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
+        {skillHints.length > 0 ? (
+          <Text style={styles.skillHintsLine}>{skillHints.join(' · ')}</Text>
+        ) : null}
         {backendHealthBanner ? (
           <Text style={styles.healthBanner}>{backendHealthBanner}</Text>
         ) : null}
@@ -3763,6 +3826,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666666',
     marginBottom: 8,
+  },
+  skillHintsLine: {
+    fontSize: 11,
+    color: '#888888',
+    fontStyle: 'italic',
+    marginBottom: 6,
   },
   healthBanner: {
     fontSize: 12,

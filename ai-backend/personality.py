@@ -3,7 +3,12 @@
 from typing import Optional
 
 from conversation_rhythm import backchannel_turn_hint
-from emotion import EmotionHint, conversation_tone_llm_hint, emotion_turn_hint_for_llm
+from emotion import (
+    EmotionHint,
+    conversation_tone_llm_hint,
+    emotion_turn_hint_for_llm,
+    silence_comfort_turn_hint,
+)
 from human_speech import (
     CONVERSATIONAL_STYLE_RULES,
     MAX_REPLY_SENTENCES,
@@ -149,6 +154,10 @@ def build_turn_hints(
     rhythm = backchannel_turn_hint(trimmed, casual=True)
     growth = ""
     moment = ""
+    continuity = ""
+    curiosity = ""
+    journal = ""
+    silence = ""
     try:
         import companion_moments
         import profile_growth
@@ -159,12 +168,26 @@ def build_turn_hints(
         moment = companion_moments.clock_moment_turn_hint()
         if moment:
             moment = f" {moment}"
+        continuity = companion_moments.emotional_continuity_turn_hint(trimmed, casual=True)
+        if continuity:
+            continuity = f" {continuity}"
+        curiosity = companion_moments.curiosity_turn_hint(trimmed, casual=True)
+        if curiosity:
+            curiosity = f" {curiosity}"
+        journal = companion_moments.journal_reflection_hint(trimmed, casual=True)
+        if journal:
+            journal = f" {journal}"
     except Exception:
         pass
+    if emotion_hint and not factual and not math_turn and not memory_recall:
+        silence = silence_comfort_turn_hint(trimmed, emotion_hint)
+        if silence:
+            silence = f" {silence}"
+    her_hints = f"{continuity}{curiosity}{journal}{silence}"
     short = trimmed.strip().lower().rstrip("?!.")
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints} {rhythm}"

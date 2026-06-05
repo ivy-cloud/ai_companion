@@ -168,3 +168,130 @@ def clock_context_moment_line(clock: Optional[ResolvedClock] = None) -> str:
         f"({p['weekday']}, {p['month']} {p['day']})\n"
         "- Evening/night: soft check-in OK on casual chat; never guilt or clinginess."
     )
+
+
+def _shared_moment_items() -> list[dict]:
+    return [
+        i
+        for i in profile.get_memory_items()
+        if str(i.get("id", "")).startswith("emotional_context:user_shared_moment")
+        and i.get("value", "").strip()
+        and profile._confidence_allows_assertion(i["confidence"])
+    ]
+
+
+def _stable_roll(message: str, salt: str, threshold: float) -> bool:
+    digest = hashlib.sha256(f"{salt}:{message.strip().lower()}".encode()).hexdigest()
+    return int(digest[:8], 16) / 0xFFFFFFFF < threshold
+
+
+def emotional_continuity_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Occasional nudge to weave a prior emotional share — not every turn.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+
+    shared = _shared_moment_items()
+    if not shared or not _stable_roll(text, "continuity", 0.11):
+        return ""
+
+    pick = shared[int(hashlib.sha256(f"cont:{text.lower()}".encode()).hexdigest()[8:12], 16) % len(shared)]
+    val = pick["value"].strip()
+    if len(val) > 56:
+        val = f"{val[:53].rstrip()}…"
+    return (
+        f"Continuity: they once shared — {val}. "
+        "Only if this moment connects — one natural nod, no recap lecture."
+    )
+
+
+def curiosity_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Her-style gentle curiosity — occasional soft question back, not interrogation.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if profile._is_question(text):
+        return ""
+    if len(text.split()) < 6:
+        return ""
+    if not _stable_roll(text, "curiosity", 0.10):
+        return ""
+
+    return (
+        "If it fits, one gentle curious question back (Her-style) — "
+        "warm and brief, not interview or therapy."
+    )
+
+
+def journal_reflection_hint(message: str, *, casual: bool) -> str:
+    """
+    Optional journal-style callback to something they shared earlier.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+
+    shared = _shared_moment_items()
+    if not shared or not _stable_roll(text, "journal", 0.08):
+        return ""
+
+    pick = shared[-1]
+    val = pick["value"].strip()
+    if len(val) > 48:
+        val = f"{val[:45].rstrip()}…"
+    return (
+        f"Journal echo OK once: something they shared — {val}. "
+        "Only if this chat touches it; soft 'I remember when you mentioned…' — no probing."
+    )
+
+
+_GOODBYE_EVENING = (
+    "I'm glad we talked. Rest easy — I'll be here when you want me.",
+    "Good talking with you. Sleep well — I'm around.",
+    "Take care tonight. I'm here whenever.",
+)
+_GOODBYE_DAY = (
+    "Glad we talked. I'm here whenever you want to pick this back up.",
+    "Take care — talk soon.",
+    "I'm around when you want me. Take care.",
+)
+_GOODBYE_MORNING = (
+    "Good talking — have a good one. I'm here later.",
+    "Take care out there. Talk soon.",
+)
+
+
+def session_goodbye_line(clock: Optional[ResolvedClock] = None) -> str:
+    """Warm spoken line when the user ends a voice session."""
+    resolved = clock or resolve_clock()
+    band = time_of_day_band(resolved)
+    name = _user_first_name()
+    companion_name = companion.get_companion_name()
+
+    if band in ("evening", "night"):
+        pool = _GOODBYE_EVENING
+    elif band == "morning":
+        pool = _GOODBYE_MORNING
+    else:
+        pool = _GOODBYE_DAY
+
+    digest = hashlib.sha256(
+        f"goodbye:{band}:{datetime.now(resolved.zone).strftime('%Y-%m-%d')}".encode()
+    ).hexdigest()
+    line = pool[int(digest[:8], 16) % len(pool)]
+
+    if name:
+        line = line.replace("Take care", f"Take care, {name}", 1)
+    if len(line) > 140:
+        line = f"Take care — it's {companion_name}. I'm here when you want to talk."
+    return line

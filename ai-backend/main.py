@@ -7,7 +7,7 @@ from typing import Generator, Iterator, List, NamedTuple, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
@@ -258,6 +258,20 @@ def _turn_log_fields(
     }
 
 
+def _merge_log_extra(
+    base: Optional[dict] = None,
+    audio_extra: Optional[dict] = None,
+) -> Optional[dict]:
+    if not base and not audio_extra:
+        return None
+    merged: dict = {}
+    if base:
+        merged.update(base)
+    if audio_extra:
+        merged.update(audio_extra)
+    return merged
+
+
 def _stream_canned_reply(
     trimmed: str,
     reply: str,
@@ -269,6 +283,7 @@ def _stream_canned_reply(
     polish_reply: bool = True,
     singing_reply: bool = False,
     speech_chunks: Optional[list[str]] = None,
+    log_extra: Optional[dict] = None,
 ) -> Generator[str, None, None]:
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
@@ -282,6 +297,7 @@ def _stream_canned_reply(
         spoken_reply,
         route=route,
         **_turn_log_fields(started_at, clock, learn_at_start),
+        extra=log_extra,
     )
     emotion_hint, express_style = _turn_emotion(trimmed)
     for piece in _stream_text_chunks(spoken_reply):
@@ -301,9 +317,25 @@ def _stream_canned_reply(
     yield _ndjson_line(done_payload)
 
 
+def _normalize_audio_source(raw: Optional[str]) -> str:
+    value = (raw or "phone").strip().lower() or "phone"
+    if value in ("meta-glasses", "meta-glasses-stub", "meta-stub"):
+        return "meta-glasses"
+    return value
+
+
+def _audio_source_extra(audio_source: Optional[str]) -> Optional[dict]:
+    normalized = _normalize_audio_source(audio_source)
+    if normalized == "phone":
+        return None
+    return {"audio_source": normalized}
+
+
 def stream_chat_events(
     user_message: str,
     client_timezone: Optional[str] = None,
+    *,
+    audio_source: Optional[str] = None,
 ) -> Generator[str, None, None]:
     trimmed = user_message.strip()
     clock = resolve_clock(client_timezone)
@@ -329,6 +361,7 @@ def stream_chat_events(
     learn_at_start = profile.learn_from_user_message(trimmed)
     companion.try_learn_name_from_user(trimmed)
     profile_growth.record_usage_signals(trimmed)
+    audio_extra = _audio_source_extra(audio_source)
 
     def _canned(raw_reply: str, route: str) -> Generator[str, None, None]:
         return _stream_canned_reply(
@@ -338,6 +371,7 @@ def stream_chat_events(
             started_at=started_at,
             clock=clock,
             learn_at_start=learn_at_start,
+            log_extra=audio_extra,
         )
 
     try:
@@ -409,6 +443,7 @@ def stream_chat_events(
                 polish_reply=False,
                 singing_reply=True,
                 speech_chunks=song_lines,
+                log_extra=audio_extra,
             )
             return
 
@@ -479,7 +514,7 @@ def stream_chat_events(
             reply,
             route=llm_route,
             **_turn_log_fields(started_at, clock, learn_at_start),
-            extra={"web_hits": len(hits) if hits else 0},
+            extra=_merge_log_extra({"web_hits": len(hits) if hits else 0}, audio_extra),
         )
         yield _ndjson_line(done_payload)
     except HTTPException as exc:
@@ -490,6 +525,7 @@ def stream_chat_events(
             route="error:http",
             error=detail,
             **_turn_log_fields(started_at, clock, learn_at_start),
+            extra=audio_extra,
         )
         yield _ndjson_line({"error": detail})
     except Exception as exc:
@@ -499,6 +535,7 @@ def stream_chat_events(
             route="error:exception",
             error=str(exc),
             **_turn_log_fields(started_at, clock, learn_at_start),
+            extra=audio_extra,
         )
         yield _ndjson_line({"error": str(exc)})
 
@@ -512,6 +549,17 @@ def companion_session_open(timezone: Optional[str] = None, force: bool = False):
         "line": line,
         "time_band": companion_moments.time_of_day_band(clock),
         "offered": line is not None,
+    }
+
+
+@app.get("/companion/session-goodbye")
+def companion_session_goodbye(timezone: Optional[str] = None):
+    """Warm spoken line when the user ends a voice conversation session."""
+    clock = resolve_clock(timezone)
+    line = companion_moments.session_goodbye_line(clock)
+    return {
+        "line": line,
+        "time_band": companion_moments.time_of_day_band(clock),
     }
 
 
@@ -554,13 +602,15 @@ def health(voice_gender: Optional[str] = None):
 
 
 @app.post("/chat")
-def chat(body: ChatRequest):
+def chat(body: ChatRequest, request: Request):
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
+    audio_source = request.headers.get("X-Audio-Source")
+
     return StreamingResponse(
-        stream_chat_events(message, body.timezone),
+        stream_chat_events(message, body.timezone, audio_source=audio_source),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache, no-transform",
