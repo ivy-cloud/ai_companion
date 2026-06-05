@@ -110,6 +110,7 @@ export function streamChatWithXHR(
   handlers: StreamHandlers,
   signal?: AbortSignal,
   timezone?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -204,6 +205,11 @@ export function streamChatWithXHR(
     xhr.open('POST', apiUrl);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Accept', 'application/x-ndjson');
+    if (extraHeaders) {
+      for (const [key, value] of Object.entries(extraHeaders)) {
+        xhr.setRequestHeader(key, value);
+      }
+    }
     xhr.timeout = STREAM_TIMEOUT_MS;
 
     xhr.onprogress = () => {
@@ -261,12 +267,14 @@ export async function streamChatWithFetch(
   handlers: StreamHandlers,
   signal?: AbortSignal,
   timezone?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<string> {
   const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/x-ndjson',
+      ...extraHeaders,
     },
     body: buildChatRequestBody(message, timezone),
     signal,
@@ -311,18 +319,19 @@ export async function streamChatMessage(
   handlers: StreamHandlers,
   signal?: AbortSignal,
   timezone?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<string> {
   // React Native fetch often buffers the full body; XHR onprogress streams reliably.
   if (Platform.OS !== 'web') {
-    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone);
+    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone, extraHeaders);
   }
 
   try {
-    return await streamChatWithFetch(apiUrl, message, handlers, signal, timezone);
+    return await streamChatWithFetch(apiUrl, message, handlers, signal, timezone, extraHeaders);
   } catch (err) {
     if (isAbortError(err)) {
       throw err;
     }
-    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone);
+    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone, extraHeaders);
   }
 }
