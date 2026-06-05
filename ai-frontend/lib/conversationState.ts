@@ -1,4 +1,21 @@
 import { voiceLog, voiceLogPhase } from './voiceTurnLog';
+import {
+  canEnterPhase,
+  type SpeakingPhaseBlockers,
+  type VoicePhase,
+} from './conversationStateGuards';
+
+export type { SpeakingPhaseBlockers, VoicePhase };
+export {
+  ASSISTANT_STUCK_MS,
+  INTERRUPTING_STUCK_MS,
+  blocksRecordingPrewarm,
+  canEnterPhase,
+  canExitSpeakingPhaseNow,
+  isAssistantActivePhase,
+  isSpeakingPhaseBlocked,
+  shouldRecoverStuckSpeakingPhase,
+} from './conversationStateGuards';
 
 /**
  * Conversation voice state machine — guards, logging, and stuck recovery.
@@ -8,15 +25,6 @@ import { voiceLog, voiceLogPhase } from './voiceTurnLog';
  *   any active phase → interrupting → listening | idle
  *   recording — push-to-talk only
  */
-
-export type VoicePhase =
-  | 'idle'
-  | 'recording'
-  | 'listening'
-  | 'thinking'
-  | 'streaming'
-  | 'speaking'
-  | 'interrupting';
 
 export type VoicePhaseTransitionOptions = {
   /** Bypass transition table (interrupt cleanup, watchdog recovery). */
@@ -46,73 +54,6 @@ export function logVoiceState(
 }
 
 export { voiceLogPhase };
-
-/** Legal transitions (interrupting is entered only via force). */
-export function canEnterPhase(from: VoicePhase, to: VoicePhase): boolean {
-  if (from === to) return true;
-
-  if (to === 'interrupting') {
-    return (
-      from === 'thinking' ||
-      from === 'streaming' ||
-      from === 'speaking' ||
-      from === 'listening'
-    );
-  }
-
-  switch (from) {
-    case 'idle':
-      return (
-        to === 'recording' ||
-        to === 'listening' ||
-        to === 'thinking' ||
-        to === 'streaming' ||
-        to === 'speaking'
-      );
-    case 'recording':
-      return to === 'thinking' || to === 'idle';
-    case 'listening':
-      return to === 'thinking' || to === 'idle';
-    case 'thinking':
-      return (
-        to === 'streaming' ||
-        to === 'speaking' ||
-        to === 'idle' ||
-        to === 'listening'
-      );
-    case 'streaming':
-      return (
-        to === 'speaking' ||
-        to === 'thinking' ||
-        to === 'idle' ||
-        to === 'listening'
-      );
-    case 'speaking':
-      return to === 'idle' || to === 'listening';
-    case 'interrupting':
-      return to === 'idle' || to === 'listening';
-    default:
-      return false;
-  }
-}
-
-export function isAssistantActivePhase(phase: VoicePhase): boolean {
-  return (
-    phase === 'thinking' ||
-    phase === 'streaming' ||
-    phase === 'speaking' ||
-    phase === 'interrupting'
-  );
-}
-
-export function blocksRecordingPrewarm(phase: VoicePhase): boolean {
-  return (
-    phase === 'speaking' ||
-    phase === 'thinking' ||
-    phase === 'streaming' ||
-    phase === 'interrupting'
-  );
-}
 
 export type VoicePhaseController = {
   get: () => VoicePhase;
@@ -148,9 +89,3 @@ export function transitionVoicePhase(
   }
   return true;
 }
-
-/** Max time to remain in interrupting before watchdog forces idle. */
-export const INTERRUPTING_STUCK_MS = 8_000;
-
-/** Assistant phase with no in-flight work — recover to idle/listen (safety only). */
-export const ASSISTANT_STUCK_MS = 28_000;

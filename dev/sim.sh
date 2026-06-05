@@ -40,6 +40,15 @@ fi
 echo "=== unittest (ai-backend) ==="
 python3 -m unittest discover -s . -p 'test_*.py' -q
 
+FRONTEND="$ROOT/ai-frontend"
+if [[ -f "$FRONTEND/lib/conversationState.test.ts" ]]; then
+  echo "=== voice state machine (ai-frontend) ==="
+  (
+    cd "$FRONTEND"
+    node --experimental-strip-types --no-warnings lib/conversationState.test.ts
+  )
+fi
+
 if [[ "$START_MOCK" -eq 1 ]]; then
   echo "=== starting mock backend on :8000 ==="
   export DEV_MOCK_LLM=1 DEV_MOCK_TTS=1 DEV_MOCK_STT=1 DEV_LOCAL_FRONTEND=1

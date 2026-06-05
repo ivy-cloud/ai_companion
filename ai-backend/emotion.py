@@ -137,14 +137,18 @@ def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
     if hint == "sympathetic":
         return (
             "They sound upset — caring friend on the phone, gentle and brief. "
-            "No lecture, no therapist voice, no stacked validation."
+            "Acknowledge the feeling in plain words; one soft follow-up OK. "
+            "No lecture, no therapist voice, no stacked validation, no 'I hear that you're'."
         )
     if hint == "excited":
         return "A little pleased — not cheerleader loud, not performative; still brief."
     if hint == "gentle":
         return "Calm, unhurried tone — soft and steady, not sleepy or clinical."
     if hint == "warm":
-        return "Warm, engaged friend — natural warmth, not flat or corporate."
+        return (
+            "Warm, engaged friend — natural warmth, not flat or corporate. "
+            "Stay with them; don't pivot to fixing or coaching unless they ask."
+        )
     return ""
 
 

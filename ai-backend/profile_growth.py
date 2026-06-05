@@ -83,6 +83,27 @@ _CORRECTION = re.compile(
     re.I,
 )
 
+_SHARED_MOMENT = re.compile(
+    r"\b(?:"
+    r"today (?:i|we)|just (?:found out|heard|learned|got|lost)|"
+    r"this morning (?:i|we)|last night (?:i|we)|"
+    r"my (?:mom|dad|mother|father|partner|wife|husband|dog|cat|friend)\s+(?:died|passed)|"
+    r"(?:we|i) broke up|got (?:fired|laid off)|"
+    r"i(?:'m| am) (?:heartbroken|devastated|grieving)|"
+    r"big day for me|rough day for me|hard day for me"
+    r")\b",
+    re.I,
+)
+
+_REFLECTION_DETAIL = re.compile(
+    r"\b(?:"
+    r"because\s+(.+?)(?:[.!?]|$)|"
+    r"it(?:'s| is)\s+(.+?)(?:[.!?]|$)|"
+    r"about\s+(.+?)(?:[.!?]|$)"
+    r")\b",
+    re.I,
+)
+
 _APPRECIATION = re.compile(
     r"\b(?:"
     r"thanks(?: a lot| so much)?|thank you|"
@@ -347,6 +368,50 @@ def try_correction_strengthen(user_text: str) -> bool:
     return True
 
 
+def try_reflection_moment_learn(user_text: str) -> bool:
+    """
+    Learn emotional shares as user_shared_moment — for gentle recall later.
+    Skips questions and assistant-echo phrasing.
+    """
+    text = user_text.strip()
+    if not text or len(text.split()) < 4:
+        return False
+    if not _SHARED_MOMENT.search(text):
+        return False
+    if profile._is_question(text) or profile._looks_like_assistant_echo(text):
+        return False
+    if not _growth_eligible(text) and not profile._eligible_to_learn(text):
+        return False
+
+    payload = profile._trim_value(text[:160])
+    detail = _REFLECTION_DETAIL.search(text)
+    if detail:
+        extra = profile._trim_value(_first_capture_group(detail))
+        if extra and len(extra) > 8 and extra.lower() not in payload.lower():
+            payload = profile._trim_value(f"{payload[:100]} — {extra[:60]}")
+    if not profile._is_valid_fact_value(payload):
+        return False
+
+    mem_id = f"emotional_context:user_shared_moment-{profile._slug(payload[:80])}"
+    items = profile._load_memory_items()
+    items = [i for i in items if i["id"] != mem_id]
+    items.append(
+        {
+            "id": mem_id,
+            "category": "emotional_context",
+            "value": payload,
+            "source": "user",
+            "confidence": "high",
+            "timestamp": profile._utc_now(),
+            "user_text": _store_user_text_for_memory(text, payload),
+        }
+    )
+    if len(items) > profile._MAX_MEMORY_ITEMS:
+        items = items[-profile._MAX_MEMORY_ITEMS :]
+    profile._persist_memory_items(items)
+    return True
+
+
 def try_appreciation_boost(user_text: str) -> bool:
     """Light positive signal — refresh timestamp on most recent memory."""
     text = user_text.strip()
@@ -374,6 +439,8 @@ def apply_growth_learn_extras(user_text: str) -> list[str]:
         updated.append("structured_pref")
     if try_correction_strengthen(user_text):
         updated.append("correction")
+    if try_reflection_moment_learn(user_text):
+        updated.append("user_shared_moment")
     if try_appreciation_boost(user_text):
         updated.append("appreciation_boost")
     return updated
@@ -398,22 +465,46 @@ def companion_growth_turn_hint(message: str, *, casual: bool) -> str:
     prefs = [
         i
         for i in profile.get_memory_items()
-        if i["category"] in ("preference", "recurring_interest")
-        and profile._confidence_allows_assertion(i["confidence"])
+        if profile._confidence_allows_assertion(i["confidence"])
+        and (
+            i["category"] in ("preference", "recurring_interest")
+            or (
+                i["category"] == "emotional_context"
+                and str(i.get("id", "")).startswith(
+                    "emotional_context:user_shared_moment"
+                )
+            )
+        )
     ]
     if not prefs:
         return ""
+
+    skills = get_skill_hints()
+    skill_line = ""
+    if skills and int(digest[12:16], 16) % 5 == 0:
+        label = skills[int(digest[16:20], 16) % len(skills)]
+        skill_line = (
+            f" You've grown into a good {label} for them — nod once if it fits, "
+            "not a sales pitch."
+        )
 
     pick = prefs[int(digest[8:12], 16) % len(prefs)]
     val = pick["value"]
     if pick["category"] == "preference":
         return (
             f"Saved note: they like {val}. Mention only if it fits this turn — "
-            "one brief nod, not a list."
+            f"one brief nod, not a list.{skill_line}"
+        )
+    if pick["category"] == "emotional_context" and pick["id"].startswith(
+        "emotional_context:user_shared_moment"
+    ):
+        return (
+            f"Shared moment on file: {val}. Only if this chat touches it — "
+            f"gentle, no probing.{skill_line}"
         )
     return (
         f"Saved note: they're into {val}. Mention only if natural — "
-        "never recite all notes."
+        f"never recite all notes.{skill_line}"
     )
 
 

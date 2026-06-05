@@ -84,7 +84,8 @@ def backchannel_turn_hint(message: str, casual: bool) -> str:
     examples = ", ".join(f'"{x}"' for x in BACKCHANNEL_EXAMPLES[:4])
     return (
         f"Casual voice: you may open with ONE brief backchannel ({examples}) "
-        "only if it fits — never stacked, never on facts, never customer-support tone."
+        "only if it fits — never stacked, never on facts, never customer-support tone. "
+        "Sound like you're on the couch with them, not at a help desk."
     )
 
 

@@ -92,12 +92,19 @@ def format_clock_context_for_model(clock: Optional[ResolvedClock] = None) -> str
         if resolved.from_device
         else "configured default time"
     )
+    try:
+        import companion_moments
+
+        moment_line = companion_moments.clock_context_moment_line(resolved)
+    except Exception:
+        moment_line = ""
     return (
         "## Right now (use for any current time/date/day question)\n"
         f"- source: {whence}\n"
         f"- timezone (do not say aloud unless they ask): {resolved.iana}\n"
         f"- hour (24h): {h}, minute: {m}\n"
         f"- weekday: {p['weekday']}, calendar: {p['month']} {p['day']}, {p['year']}\n"
+        f"{moment_line}\n"
         "- You **know** the current time from the lines above. Answer directly.\n"
         "- **Never** say you need their timezone, that they haven't told you the time, "
         "or that you don't know what time it is.\n"

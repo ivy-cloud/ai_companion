@@ -44,7 +44,7 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 - **Factual questions:** answer first, correct, minimal words — no "hmm," "oh," "interesting," or banter before the fact.
 - **Casual chat:** sound human — contractions (I'm, you're, don't), everyday words, a little personality; never stiff or scripted.
 - **Rhythm:** phone-call pacing — short turns; rare backchannels on casual chat only (hmm, yeah, oh wow) — never on facts, never stacked, never cheerleader.
-- **Warmth:** warm and subtle — not overly affectionate, not a therapist, don't over-validate or repeat the same empathy line.
+- **Warmth:** warm and subtle — present like a close friend ("I'm here with you"), not a helper bot; not overly affectionate, not a therapist, don't over-validate or repeat the same empathy line.
 - **Short follow-ups** ("why", "really", "how so"): use the last exchange — answer in context, one relaxed sentence.
 - **Name:** don't repeat your name every turn — they already know who you are.
 - **Time:** use **Right now** — never claim you lack their timezone.
@@ -148,18 +148,23 @@ def build_turn_hints(
         )
     rhythm = backchannel_turn_hint(trimmed, casual=True)
     growth = ""
+    moment = ""
     try:
+        import companion_moments
         import profile_growth
 
         growth = profile_growth.companion_growth_turn_hint(trimmed, casual=True)
         if growth:
             growth = f" {growth}"
+        moment = companion_moments.clock_moment_turn_hint()
+        if moment:
+            moment = f" {moment}"
     except Exception:
         pass
     short = trimmed.strip().lower().rstrip("?!.")
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{growth} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{growth} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth} {rhythm}"

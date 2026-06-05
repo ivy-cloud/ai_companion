@@ -16,6 +16,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(_BACKEND_DIR / ".env", override=True)
 
 import companion
+import companion_moments
 import conversation_rhythm
 import dev_mode
 import current_facts
@@ -500,6 +501,18 @@ def stream_chat_events(
             **_turn_log_fields(started_at, clock, learn_at_start),
         )
         yield _ndjson_line({"error": str(exc)})
+
+
+@app.get("/companion/session-open")
+def companion_session_open(timezone: Optional[str] = None, force: bool = False):
+    """Optional spoken opener when the app starts a voice conversation session."""
+    clock = resolve_clock(timezone)
+    line = companion_moments.session_opening_line(clock, force=force)
+    return {
+        "line": line,
+        "time_band": companion_moments.time_of_day_band(clock),
+        "offered": line is not None,
+    }
 
 
 @app.get("/health")

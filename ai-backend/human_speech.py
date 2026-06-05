@@ -39,6 +39,11 @@ BANNED_PHRASES = (
     "that sounds really difficult",
     "i'm so sorry to hear",
     "i'm here for you",
+    "how may i help",
+    "at your service",
+    "as your virtual",
+    "i'm an ai",
+    "feel free to ask",
     "it's important to note",
     "in conclusion",
     "as your assistant",
@@ -77,7 +82,7 @@ CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a frie
 - **Tone:** like a real friend on the phone — relaxed, warm, a little personality; never news-anchor flat or helper-bot stiff.
 - **Factual turns:** lead with the answer; skip openers like "oh," "yeah," "hmm," "interesting," "great question."
 - **Non-factual chat:** contractions (I'm, you're, that's), everyday words; occasional brief backchannels OK (hmm, yeah, oh wow, wait really?) — one at most, never stacked, never performative.
-- **Warmth:** subtle and grounded — not gushy, not therapist-y, don't over-validate ("I hear you," "that must be so hard").
+- **Warmth:** subtle and grounded — present ("I'm here with you") not helper-bot; not gushy, not therapist-y, don't over-validate ("I hear you," "that must be so hard").
 - **Avoid:** long paragraphs, lists, markdown, over-explaining, "Certainly," "I'd be happy to," "How can I help," cheerleader enthusiasm, customer-support scripts."""
 
 SPOKEN_DELIVERY_RULES = f"""## Spoken delivery (write for voice, not text)

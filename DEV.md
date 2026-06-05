@@ -129,7 +129,9 @@ Typical healthy conversation turn: `first_token` → `stream_done` → `first_tt
 
 **Phase 3 (polish):** **End conversation** button while a conversation session is active; health preflight on app load and before starting conversation mode (`lib/healthPreflight.ts`); louder TTS failure hints (volume / silent mode); watchdog thresholds tuned so recovery is rare in normal use (see below).
 
-**Growth:** `profile_growth.py` — structured prefs (`music_style`, `mood`, `topic`), “remember that” / correction / appreciation loops, usage-based **skill hints** in `/health` companion info and stream `rhythm.skill_hints`; occasional casual-chat nudge via turn hints (~18% of eligible turns).
+**Growth:** `profile_growth.py` — structured prefs (`music_style`, `mood`, `topic`), “remember that” / correction / appreciation loops, reflection memories (`user_shared_moment`), usage-based **skill hints** in `/health` companion info and stream `rhythm.skill_hints`; occasional casual-chat nudge via turn hints (~18% of eligible turns).
+
+**Her-style moments:** `companion_moments.py` — time-of-day bands, optional `GET /companion/session-open` opener when conversation mode starts, evening check-in tone in turn hints. Roadmap: [COMPANION_ROADMAP.md](COMPANION_ROADMAP.md) (Phase 4 smart glasses deferred until phone voice is stable 2+ weeks).
 
 ### Watchdog (safety only)
 
@@ -142,6 +144,9 @@ The conversation watchdog should **not** fire on every turn. If you see `watchdo
 | `LISTEN_PAUSED_STUCK_MS` | 7000 | Idle stuck even with pending timer |
 | `WATCHDOG_RECOVERY_COOLDOWN_MS` | 8000 | Min gap between recoveries |
 | `ASSISTANT_STUCK_MS` | 28000 | Assistant phase with no in-flight work |
+| Speaking recovery | `conversationState.ts` | Watchdog exits `speaking` when blockers clear but phase stuck ≥28s |
+
+Session opener: conversation mode may call `GET /companion/session-open` once; listen opens only after opener TTS (or immediately if no line).
 
 For conversation-listen recovery and next-turn timing, also watch:
 

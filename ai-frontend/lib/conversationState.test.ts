@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { canEnterPhase } from './conversationState';
+import {
+  ASSISTANT_STUCK_MS,
+  canEnterPhase,
+  canExitSpeakingPhaseNow,
+  isSpeakingPhaseBlocked,
+  shouldRecoverStuckSpeakingPhase,
+} from './conversationStateGuards.ts';
 
 function test(name: string, fn: () => void) {
   try {
@@ -36,6 +42,48 @@ test('interrupting → listening', () => {
   assert.equal(canEnterPhase('interrupting', 'listening'), true);
 });
 
-test('reject idle → speaking without path', () => {
+test('idle → speaking allowed for session opener', () => {
   assert.equal(canEnterPhase('idle', 'speaking'), true);
+});
+
+test('speaking blocked while TTS refs active', () => {
+  const blocked = {
+    speakInFlight: true,
+    streamTtsDraining: false,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: false,
+  };
+  assert.equal(isSpeakingPhaseBlocked(blocked), true);
+  assert.equal(canExitSpeakingPhaseNow('speaking', blocked), false);
+});
+
+test('speaking can exit when idle work', () => {
+  const clear = {
+    speakInFlight: false,
+    streamTtsDraining: false,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: false,
+  };
+  assert.equal(canExitSpeakingPhaseNow('speaking', clear), true);
+  assert.equal(canExitSpeakingPhaseNow('streaming', clear), false);
+});
+
+test('watchdog speaking recovery threshold', () => {
+  const clear = {
+    speakInFlight: false,
+    streamTtsDraining: false,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: false,
+  };
+  assert.equal(
+    shouldRecoverStuckSpeakingPhase('speaking', clear, ASSISTANT_STUCK_MS - 1),
+    false,
+  );
+  assert.equal(
+    shouldRecoverStuckSpeakingPhase('speaking', clear, ASSISTANT_STUCK_MS),
+    true,
+  );
 });

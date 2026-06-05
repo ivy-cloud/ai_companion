@@ -46,6 +46,12 @@ class ProfileGrowthTests(unittest.TestCase):
             any("tea" in i["value"].lower() for i in profile.get_memory_items())
         )
 
+    def test_reflection_via_growth_extras(self) -> None:
+        tags = profile_growth.apply_growth_learn_extras(
+            "Just found out we broke up and I'm heartbroken."
+        )
+        self.assertIn("user_shared_moment", tags)
+
 
 if __name__ == "__main__":
     unittest.main()
