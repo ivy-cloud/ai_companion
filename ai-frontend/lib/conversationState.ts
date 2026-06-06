@@ -8,6 +8,7 @@ import {
 export type { SpeakingPhaseBlockers, VoicePhase };
 export {
   ASSISTANT_STUCK_MS,
+  SPEAKING_STUCK_MS,
   INTERRUPTING_STUCK_MS,
   blocksRecordingPrewarm,
   canEnterPhase,

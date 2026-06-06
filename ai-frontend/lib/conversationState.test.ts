@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  ASSISTANT_STUCK_MS,
+  SPEAKING_STUCK_MS,
   canEnterPhase,
   canExitSpeakingPhaseNow,
   isSpeakingPhaseBlocked,
@@ -79,13 +79,25 @@ test('watchdog speaking recovery threshold', () => {
     chatInFlight: false,
   };
   assert.equal(
-    shouldRecoverStuckSpeakingPhase('speaking', clear, ASSISTANT_STUCK_MS - 1),
+    shouldRecoverStuckSpeakingPhase('speaking', clear, SPEAKING_STUCK_MS - 1),
     false,
   );
   assert.equal(
-    shouldRecoverStuckSpeakingPhase('speaking', clear, ASSISTANT_STUCK_MS),
+    shouldRecoverStuckSpeakingPhase('speaking', clear, SPEAKING_STUCK_MS),
     true,
   );
+});
+
+test('chat in flight does not block speaking exit', () => {
+  const chatStillOpen = {
+    speakInFlight: false,
+    streamTtsDraining: false,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: true,
+  };
+  assert.equal(isSpeakingPhaseBlocked(chatStillOpen), false);
+  assert.equal(canExitSpeakingPhaseNow('speaking', chatStillOpen), true);
 });
 
 test('speaking blocked while stream TTS draining', () => {
@@ -95,18 +107,6 @@ test('speaking blocked while stream TTS draining', () => {
     streamTtsQueueLen: 0,
     activeSound: false,
     chatInFlight: false,
-  };
-  assert.equal(isSpeakingPhaseBlocked(blocked), true);
-  assert.equal(canExitSpeakingPhaseNow('speaking', blocked), false);
-});
-
-test('speaking blocked while chat in flight', () => {
-  const blocked = {
-    speakInFlight: false,
-    streamTtsDraining: false,
-    streamTtsQueueLen: 0,
-    activeSound: false,
-    chatInFlight: true,
   };
   assert.equal(isSpeakingPhaseBlocked(blocked), true);
   assert.equal(canExitSpeakingPhaseNow('speaking', blocked), false);

@@ -119,6 +119,7 @@ import {
 import { wearablesChatHeaders } from '../lib/wearablesAdapter';
 import {
   ASSISTANT_STUCK_MS,
+  SPEAKING_STUCK_MS,
   INTERRUPTING_STUCK_MS,
   blocksRecordingPrewarm,
   canExitSpeakingPhaseNow,
@@ -1671,7 +1672,7 @@ export default function ChatScreen() {
     if (!isActiveVoiceTurn(turn) || !isActiveSpeakGeneration(generation)) return;
     if (!streamTtsDoneRef.current) return;
     if (streamTtsDrainingRef.current || streamTtsQueueRef.current.length > 0) return;
-    if (speakInFlightRef.current || chatInFlightRef.current) return;
+    if (speakInFlightRef.current) return;
     setVoicePhaseTransition('idle', { reason: 'stream_tts_queue_empty' });
     if (
       conversationSessionRef.current &&
@@ -1782,11 +1783,13 @@ export default function ChatScreen() {
         isActiveStreamTtsDrain(voiceSessionRef.current, drainGen)
       ) {
         void drainStreamTtsQueue(turn, generation);
-      } else if (
-        isActiveVoiceTurn(turn) &&
-        isActiveSpeakGeneration(generation)
-      ) {
-        maybeFinishStreamTtsIdle(turn, generation);
+      } else {
+        if (
+          isActiveVoiceTurn(turn) &&
+          isActiveSpeakGeneration(generation)
+        ) {
+          maybeFinishStreamTtsIdle(turn, generation);
+        }
         void recoverSpeakingPhaseIfIdle('drain_end', {
           scheduleListen:
             conversationSessionRef.current &&
@@ -2110,6 +2113,7 @@ export default function ChatScreen() {
     reason: string,
     options?: { scheduleListen?: boolean; force?: boolean },
   ) => {
+    if (voicePhaseRef.current !== 'speaking') return;
     await clearStaleTtsListenBlockers();
     const blockers = getSpeakingPhaseBlockers();
     if (!canExitSpeakingPhaseNow(voicePhaseRef.current, blockers)) {
@@ -2124,6 +2128,16 @@ export default function ChatScreen() {
       });
       return;
     }
+    const msInPhase = Date.now() - phaseChangedAtRef.current;
+    voiceLog('speaking_stuck_recovery', {
+      reason,
+      msInPhase,
+      speakInFlight: blockers.speakInFlight,
+      draining: blockers.streamTtsDraining,
+      queue: blockers.streamTtsQueueLen,
+      activeSound: blockers.activeSound,
+      chatInFlight: blockers.chatInFlight,
+    });
     voiceLog('speaking_phase_exit', {
       reason,
       speakInFlight: blockers.speakInFlight,
@@ -2400,6 +2414,7 @@ export default function ChatScreen() {
         }
         if (activeSoundRef.current === sound) activeSoundRef.current = null;
       }
+      void recoverSpeakingPhaseIfIdle('play_tts_clip_finally');
     }
   };
 
@@ -2468,13 +2483,8 @@ export default function ChatScreen() {
       speakInFlightRef.current = false;
       if (isActiveSpeakGeneration(generation)) {
         activeSoundRef.current = null;
-      } else {
-        void recoverSpeakingPhaseIfIdle('speak_parts_stale_gen', {
-          scheduleListen:
-            conversationSessionRef.current &&
-            voiceInputModeRef.current === 'conversation',
-        });
       }
+      void recoverSpeakingPhaseIfIdle('speak_parts_finally');
     }
   };
 
@@ -2513,110 +2523,104 @@ export default function ChatScreen() {
       naturalVoiceEnabledRef.current,
       rhythmMetaRef.current,
     );
+    const scheduleListenAfter =
+      conversationSessionRef.current &&
+      voiceInputModeRef.current === 'conversation';
 
     markVoiceTiming(voiceTurnTimingRef.current, 'final_tts_start');
 
-    /**
-     * Stream TTS: onDone already flushed using streamTtsRawRef.
-     * Do NOT re-flush formatted UI text — use raw reply and final utterance pass.
-     */
-    if (streamTts) {
-      if (useSingleClipStreamTts(trimmedReply)) {
-        voiceLog('run_tts_single_clip', { replyLen: trimmedReply.length });
-        await speakStreamReplyAsSingleClip(turn, generation);
-      } else {
-        enqueueFinalStreamTtsIfNeeded(trimmedReply, turn, generation);
+    try {
+      /**
+       * Stream TTS: onDone already flushed using streamTtsRawRef.
+       * Do NOT re-flush formatted UI text — use raw reply and final utterance pass.
+       */
+      if (streamTts) {
+        if (useSingleClipStreamTts(trimmedReply)) {
+          voiceLog('run_tts_single_clip', { replyLen: trimmedReply.length });
+          await speakStreamReplyAsSingleClip(turn, generation);
+        } else {
+          enqueueFinalStreamTtsIfNeeded(trimmedReply, turn, generation);
+        }
+        logVoiceSnapshot('before_wait_idle');
+        await waitStreamTtsQueueIdle();
+        logVoiceSnapshot('after_wait_idle');
+        if (!isActiveVoiceTurn(turn)) return;
+        await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, true);
+        serverSpeechChunksRef.current = null;
+        finishStreamTtsTurn(turn);
+        return;
       }
-      logVoiceSnapshot('before_wait_idle');
-      await waitStreamTtsQueueIdle();
-      logVoiceSnapshot('after_wait_idle');
-      if (!isActiveVoiceTurn(turn)) return;
-      await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, true);
+
+      const parts = buildSpeakParts(trimmedReply, false, serverSpeechChunksRef.current);
       serverSpeechChunksRef.current = null;
-      finishStreamTtsTurn(turn);
-      await recoverSpeakingPhaseIfIdle('run_tts_stream_after_exit', {
-        scheduleListen:
-          conversationSessionRef.current &&
-          voiceInputModeRef.current === 'conversation',
-      });
-      return;
-    }
 
-    const parts = buildSpeakParts(trimmedReply, false, serverSpeechChunksRef.current);
-    serverSpeechChunksRef.current = null;
-
-    if (parts.length === 0) {
-      voiceLog('tts_skip', { reason: 'no_speak_parts', replyLen: trimmedReply.length });
-      if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
-        setVoicePhaseTransition('idle');
-        if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
-      } else {
-        setVoicePhaseTransition('idle');
-        resumeConversationListeningAfterTurn();
+      if (parts.length === 0) {
+        voiceLog('tts_skip', { reason: 'no_speak_parts', replyLen: trimmedReply.length });
+        if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
+          setVoicePhaseTransition('idle');
+          if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
+        } else {
+          setVoicePhaseTransition('idle');
+          resumeConversationListeningAfterTurn();
+        }
+        return;
       }
-      return;
-    }
 
-    if (!isActiveVoiceTurn(turn)) return;
+      if (!isActiveVoiceTurn(turn)) return;
 
-    setVoicePlaybackError(null);
-    setVoicePhaseTransition('speaking');
+      setVoicePlaybackError(null);
+      setVoicePhaseTransition('speaking');
 
-    await clearStaleTtsListenBlockers();
-    await prepareForTtsPlayback();
-    if (!isActiveVoiceTurn(turn)) return;
-    let ok = await speakParts(parts);
-    if (
-      !ok &&
-      shouldAutoRetryTts(
-        ttsPlaySettledGenRef.current,
-        generation,
-        turn,
-        ttsRetryUsedTurnRef.current,
-        trimmedReply.length,
-      )
-    ) {
-      await retryTtsPlaybackOnce(trimmedReply, turn, generation, false);
-      ok = playSettledForGeneration(ttsPlaySettledGenRef.current, generation);
-    }
-    await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, false);
-
-    if (!isActiveVoiceTurn(turn)) return;
-
-    if (!isActiveSpeakGeneration(generation)) {
-      await recoverSpeakingPhaseIfIdle('run_tts_stale_generation', {
-        scheduleListen:
-          conversationSessionRef.current &&
-          voiceInputModeRef.current === 'conversation',
-      });
-      return;
-    }
-
-    stopConversationBargeIn();
-    if (ok) {
-      if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
-        setVoicePhaseTransition('idle');
-        if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
-      } else {
-        setVoicePhaseTransition('idle');
-        resumeConversationListeningAfterTurn();
-      }
-    } else {
+      await clearStaleTtsListenBlockers();
+      await prepareForTtsPlayback();
+      if (!isActiveVoiceTurn(turn)) return;
+      let ok = await speakParts(parts);
       if (
-        conversationSessionRef.current &&
-        voiceInputModeRef.current === 'conversation'
+        !ok &&
+        shouldAutoRetryTts(
+          ttsPlaySettledGenRef.current,
+          generation,
+          turn,
+          ttsRetryUsedTurnRef.current,
+          trimmedReply.length,
+        )
       ) {
-        setVoicePhaseTransition('idle');
-        scheduleConversationListen();
+        await retryTtsPlaybackOnce(trimmedReply, turn, generation, false);
+        ok = playSettledForGeneration(ttsPlaySettledGenRef.current, generation);
+      }
+      await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, false);
+
+      if (!isActiveVoiceTurn(turn)) return;
+
+      if (!isActiveSpeakGeneration(generation)) return;
+
+      stopConversationBargeIn();
+      if (ok) {
+        if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
+          setVoicePhaseTransition('idle');
+          if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
+        } else {
+          setVoicePhaseTransition('idle');
+          resumeConversationListeningAfterTurn();
+        }
       } else {
-        releaseVoiceUi();
+        if (
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation'
+        ) {
+          setVoicePhaseTransition('idle');
+          scheduleConversationListen();
+        } else {
+          releaseVoiceUi();
+        }
+      }
+    } finally {
+      if (isActiveVoiceTurn(turn)) {
+        await recoverSpeakingPhaseIfIdle('run_tts_finally', {
+          scheduleListen: scheduleListenAfter,
+        });
       }
     }
-    await recoverSpeakingPhaseIfIdle('run_tts_after_exit', {
-      scheduleListen:
-        conversationSessionRef.current &&
-        voiceInputModeRef.current === 'conversation',
-    });
   };
 
   const fetchSessionGoodbyeLine = async (): Promise<string | null> => {
@@ -2862,6 +2866,7 @@ export default function ChatScreen() {
           lastWatchdogRecoveryAtRef.current = now;
           voiceLog('speaking_stuck', {
             stuckMs,
+            thresholdMs: SPEAKING_STUCK_MS,
             speakInFlight: blockers.speakInFlight,
             draining: blockers.streamTtsDraining,
             queue: blockers.streamTtsQueueLen,
@@ -3455,12 +3460,21 @@ export default function ChatScreen() {
         streamTtsQueueRef.current.length === 0 &&
         !streamTtsDrainingRef.current
       ) {
-        setVoicePhaseTransition('idle', { reason: 'send_finally_idle' });
-        if (
-          conversationSessionRef.current &&
-          voiceInputModeRef.current === 'conversation'
-        ) {
-          scheduleConversationListen();
+        if (voicePhaseRef.current === 'speaking') {
+          void recoverSpeakingPhaseIfIdle('send_finally_speaking', {
+            scheduleListen:
+              conversationSessionRef.current &&
+              voiceInputModeRef.current === 'conversation',
+            force: true,
+          });
+        } else {
+          setVoicePhaseTransition('idle', { reason: 'send_finally_idle' });
+          if (
+            conversationSessionRef.current &&
+            voiceInputModeRef.current === 'conversation'
+          ) {
+            scheduleConversationListen();
+          }
         }
       }
       if (!streamFinished && !abortController.signal.aborted) {

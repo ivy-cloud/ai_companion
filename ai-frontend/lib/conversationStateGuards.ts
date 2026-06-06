@@ -84,6 +84,9 @@ export const INTERRUPTING_STUCK_MS = 8_000;
 /** Assistant phase with no in-flight work — recover to idle/listen (safety only). */
 export const ASSISTANT_STUCK_MS = 28_000;
 
+/** Max time to remain in speaking with no playback work (watchdog safety net). */
+export const SPEAKING_STUCK_MS = 3_000;
+
 export type SpeakingPhaseBlockers = {
   speakInFlight: boolean;
   streamTtsDraining: boolean;
@@ -98,8 +101,7 @@ export function isSpeakingPhaseBlocked(blockers: SpeakingPhaseBlockers): boolean
     blockers.speakInFlight ||
     blockers.activeSound ||
     blockers.streamTtsDraining ||
-    blockers.streamTtsQueueLen > 0 ||
-    blockers.chatInFlight
+    blockers.streamTtsQueueLen > 0
   );
 }
 
@@ -115,7 +117,7 @@ export function shouldRecoverStuckSpeakingPhase(
   phase: VoicePhase,
   blockers: SpeakingPhaseBlockers,
   stuckMs: number,
-  thresholdMs = ASSISTANT_STUCK_MS,
+  thresholdMs = SPEAKING_STUCK_MS,
 ): boolean {
   return (
     phase === 'speaking' &&
