@@ -45,6 +45,7 @@ import {
   LISTEN_RETRY_MAX_DELAY_MS,
   LISTEN_RETRY_MS,
   LISTENING_STUCK_MS,
+  LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
   MIN_SCHEDULE_LISTEN_MS,
   PHASE_OSCILLATION_COOLDOWN_MS,
@@ -52,6 +53,7 @@ import {
   PHASE_OSCILLATION_WINDOW_MS,
   POST_TTS_LISTEN_COOLDOWN_MS,
   shouldForceIdleListeningWithoutRecording,
+  shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
   WATCHDOG_RECOVERY_COOLDOWN_MS,
   createBargeInMeterState,
@@ -124,6 +126,7 @@ import {
   blocksRecordingPrewarm,
   canExitSpeakingPhaseNow,
   isAssistantActivePhase,
+  isSpeakingPhaseBlocked,
   logVoiceState,
   shouldRecoverStuckSpeakingPhase,
   transitionVoicePhase,
@@ -308,6 +311,7 @@ export default function ChatScreen() {
   const phaseFlipTimesRef = useRef<number[]>([]);
   const lastWatchdogRecoveryAtRef = useRef(0);
   const conversationListenRetryCountRef = useRef(0);
+  const listenMeterBlockedSinceRef = useRef<number | null>(null);
   const phaseOscillationCooldownUntilRef = useRef(0);
   const conversationMeterTickInFlightRef = useRef(false);
   const conversationBargeMeterTickInFlightRef = useRef(false);
@@ -805,6 +809,7 @@ export default function ChatScreen() {
         if (listenGen !== conversationListenGenRef.current) return;
         const recording = recordingRef.current;
         if (!recording || voicePhaseRef.current !== 'listening') return;
+        const now = Date.now();
         await clearStaleActiveSoundIfIdle();
         if (
           streamTtsDrainingRef.current &&
@@ -817,8 +822,37 @@ export default function ChatScreen() {
           speakInFlightRef.current = false;
         }
         if (isTtsBlockingConversationListen()) {
+          const blockedSince = listenMeterBlockedSinceRef.current ?? now;
+          listenMeterBlockedSinceRef.current = blockedSince;
+          const blockedMs = now - blockedSince;
+          if (shouldRecoverListeningMeterBlocked(blockedMs, true)) {
+            listenMeterBlockedSinceRef.current = null;
+            await clearStaleTtsListenBlockers();
+            if (isTtsBlockingConversationListen()) {
+              voiceLog('listen_stuck_recovery', {
+                reason: 'meter_tts_blocked',
+                blockedMs,
+                draining: streamTtsDrainingRef.current,
+                queue: streamTtsQueueRef.current.length,
+                speakInFlight: speakInFlightRef.current,
+                activeSound: Boolean(activeSoundRef.current),
+                listenGen,
+              });
+              stopConversationMetering();
+              const rec = recordingRef.current;
+              recordingRef.current = null;
+              recordingStartedAtRef.current = 0;
+              if (rec) await safeUnloadRecording(rec);
+              setVoicePhaseTransition('idle', {
+                force: true,
+                reason: 'listen_meter_blocked',
+              });
+              ensureConversationListening('listen_meter_blocked');
+            }
+          }
           return;
         }
+        listenMeterBlockedSinceRef.current = null;
 
         let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
         try {
@@ -828,7 +862,6 @@ export default function ChatScreen() {
         }
         if (!status.isRecording) return;
 
-        const now = Date.now();
         const prev = conversationMeterStateRef.current ?? createConversationMeterState(now);
         const tick = tickConversationMeter(prev, status.metering, now);
         conversationMeterStateRef.current = tick.state;
@@ -1015,7 +1048,35 @@ export default function ChatScreen() {
     speakInFlightRef.current = false;
     ensureUiUnlocked();
     if (voicePhaseRef.current === 'listening' && recordingRef.current) {
-      return;
+      const meterDead = !conversationMeterRef.current;
+      const ttsBlocked = isTtsBlockingConversationListen();
+      const blockedMs = listenMeterBlockedSinceRef.current
+        ? Date.now() - listenMeterBlockedSinceRef.current
+        : Date.now() - phaseChangedAtRef.current;
+      if (!meterDead && !shouldRecoverListeningMeterBlocked(blockedMs, ttsBlocked)) {
+        return;
+      }
+      voiceLog('listen_stuck_recovery', {
+        reason,
+        meterDead,
+        ttsBlocked,
+        blockedMs,
+        listenGen: conversationListenGenRef.current,
+      });
+      if (meterDead) {
+        beginConversationListenMeter(conversationListenGenRef.current);
+        return;
+      }
+      stopConversationMetering();
+      listenMeterBlockedSinceRef.current = null;
+      const stuckRec = recordingRef.current;
+      recordingRef.current = null;
+      recordingStartedAtRef.current = 0;
+      if (stuckRec) void safeUnloadRecording(stuckRec);
+      setVoicePhaseTransition('idle', {
+        force: true,
+        reason: 'listen_stuck_recovery',
+      });
     }
     if (voicePhaseRef.current === 'listening' && !recordingRef.current) {
       const msInPhase = Date.now() - phaseChangedAtRef.current;
@@ -1101,6 +1162,14 @@ export default function ChatScreen() {
             activeSound: Boolean(activeSoundRef.current),
             speakInFlight: speakInFlightRef.current,
           });
+          retryConversationListen();
+          return;
+        }
+        if (
+          voicePhaseRef.current === 'speaking' &&
+          isSpeakingPhaseBlocked(getSpeakingPhaseBlockers())
+        ) {
+          voiceLog('schedule_listen_blocked', { reason: 'still_speaking' });
           retryConversationListen();
           return;
         }
@@ -2113,7 +2182,20 @@ export default function ChatScreen() {
     reason: string,
     options?: { scheduleListen?: boolean; force?: boolean },
   ) => {
-    if (voicePhaseRef.current !== 'speaking') return;
+    if (voicePhaseRef.current !== 'speaking') {
+      if (
+        options?.scheduleListen &&
+        voicePhaseRef.current === 'idle' &&
+        conversationSessionRef.current &&
+        voiceInputModeRef.current === 'conversation' &&
+        voiceEnabledRef.current
+      ) {
+        scheduleConversationListen(
+          reason.includes('watchdog') ? 80 : POST_TTS_LISTEN_COOLDOWN_MS,
+        );
+      }
+      return;
+    }
     await clearStaleTtsListenBlockers();
     const blockers = getSpeakingPhaseBlockers();
     if (!canExitSpeakingPhaseNow(voicePhaseRef.current, blockers)) {
@@ -2414,7 +2496,6 @@ export default function ChatScreen() {
         }
         if (activeSoundRef.current === sound) activeSoundRef.current = null;
       }
-      void recoverSpeakingPhaseIfIdle('play_tts_clip_finally');
     }
   };
 
@@ -2483,8 +2564,13 @@ export default function ChatScreen() {
       speakInFlightRef.current = false;
       if (isActiveSpeakGeneration(generation)) {
         activeSoundRef.current = null;
+      } else {
+        void recoverSpeakingPhaseIfIdle('speak_parts_stale_gen', {
+          scheduleListen:
+            conversationSessionRef.current &&
+            voiceInputModeRef.current === 'conversation',
+        });
       }
-      void recoverSpeakingPhaseIfIdle('speak_parts_finally');
     }
   };
 
@@ -2712,10 +2798,15 @@ export default function ChatScreen() {
       return;
     }
     if (ok) {
-      void recoverSpeakingPhaseIfIdle('session_open_done', {
-        scheduleListen: true,
-        force: true,
-      });
+      if (voicePhaseRef.current === 'speaking') {
+        void recoverSpeakingPhaseIfIdle('session_open_done', {
+          scheduleListen: true,
+          force: true,
+        });
+      } else {
+        setVoicePhaseTransition('idle', { reason: 'session_open_done' });
+        scheduleConversationListen(POST_TTS_LISTEN_COOLDOWN_MS);
+      }
     } else {
       releaseVoiceUi('session_open_failed');
       if (conversationSessionRef.current) {
@@ -3466,6 +3557,18 @@ export default function ChatScreen() {
               conversationSessionRef.current &&
               voiceInputModeRef.current === 'conversation',
             force: true,
+          }).then(() => {
+            if (voicePhaseRef.current !== 'speaking') return;
+            setVoicePhaseTransition('idle', {
+              force: true,
+              reason: 'send_finally_force',
+            });
+            if (
+              conversationSessionRef.current &&
+              voiceInputModeRef.current === 'conversation'
+            ) {
+              scheduleConversationListen();
+            }
           });
         } else {
           setVoicePhaseTransition('idle', { reason: 'send_finally_idle' });

@@ -5,10 +5,12 @@ import {
   LISTEN_PAUSED_STUCK_MS,
   LISTEN_RETRY_MS,
   LISTENING_STUCK_MS,
+  LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
   POST_TTS_LISTEN_COOLDOWN_MS,
   canResumeConversationListen,
   shouldForceIdleListeningWithoutRecording,
+  shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
 } from './conversationMode.ts';
 
@@ -77,4 +79,11 @@ test('phase0: listen paused stuck constant after idle recovery', () => {
 test('listen retry cap is bounded', () => {
   assert.ok(MAX_LISTEN_SCHEDULE_RETRIES >= 20);
   assert.ok(MAX_LISTEN_SCHEDULE_RETRIES <= 120);
+});
+
+test('listen meter blocked recovery threshold', () => {
+  assert.equal(LISTEN_METER_BLOCKED_MS, 2200);
+  assert.equal(shouldRecoverListeningMeterBlocked(1000, true), false);
+  assert.equal(shouldRecoverListeningMeterBlocked(LISTEN_METER_BLOCKED_MS, true), true);
+  assert.equal(shouldRecoverListeningMeterBlocked(10_000, false), false);
 });

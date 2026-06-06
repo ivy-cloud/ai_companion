@@ -43,6 +43,9 @@ export const LISTEN_RETRY_MS = 280;
 /** Recover when Listening… with no mic or blocked meter for this long (safety only). */
 export const LISTENING_STUCK_MS = 6500;
 
+/** Meter may bail while TTS refs are stale — reopen listen after this (ms). */
+export const LISTEN_METER_BLOCKED_MS = 2200;
+
 /**
  * Grace after entering listening before treating "no recorder" as stuck.
  * Mic open is async; forcing idle too early caused listen ↔ idle ↔ interrupt flicker.
@@ -88,6 +91,14 @@ export function shouldForceIdleListeningWithoutRecording(
 ): boolean {
   if (hasRecording) return false;
   return msInListeningPhase >= LISTEN_OPEN_GRACE_MS;
+}
+
+/** True when the listen meter has been TTS-blocked long enough to force recovery. */
+export function shouldRecoverListeningMeterBlocked(
+  blockedMs: number,
+  ttsBlocked: boolean,
+): boolean {
+  return ttsBlocked && blockedMs >= LISTEN_METER_BLOCKED_MS;
 }
 
 /**
