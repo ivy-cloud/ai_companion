@@ -87,3 +87,31 @@ test('watchdog speaking recovery threshold', () => {
     true,
   );
 });
+
+test('speaking blocked while stream TTS draining', () => {
+  const blocked = {
+    speakInFlight: false,
+    streamTtsDraining: true,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: false,
+  };
+  assert.equal(isSpeakingPhaseBlocked(blocked), true);
+  assert.equal(canExitSpeakingPhaseNow('speaking', blocked), false);
+});
+
+test('speaking blocked while chat in flight', () => {
+  const blocked = {
+    speakInFlight: false,
+    streamTtsDraining: false,
+    streamTtsQueueLen: 0,
+    activeSound: false,
+    chatInFlight: true,
+  };
+  assert.equal(isSpeakingPhaseBlocked(blocked), true);
+  assert.equal(canExitSpeakingPhaseNow('speaking', blocked), false);
+});
+
+test('idle can enter listening for conversation session', () => {
+  assert.equal(canEnterPhase('idle', 'listening'), true);
+});

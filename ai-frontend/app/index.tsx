@@ -759,6 +759,7 @@ export default function ChatScreen() {
     recordingRef.current = null;
     recordingStartedAtRef.current = 0;
     if (rec) void safeUnloadRecording(rec);
+    cancelActiveStreamTtsDrain();
     abortTtsFetches(reason);
     chatAbortRef.current?.abort();
     chatAbortRef.current = null;
@@ -1654,8 +1655,9 @@ export default function ChatScreen() {
   };
 
   const releaseVoiceUi = (reason = 'release') => {
-    streamTtsQueueRef.current = [];
-    streamTtsDrainingRef.current = false;
+    cancelActiveStreamTtsDrain();
+    bumpSpeakGeneration(voiceSessionRef.current, reason);
+    void stopPlayback().catch(() => {});
     streamTtsDoneRef.current = false;
     resetStreamTts();
     chatInFlightRef.current = false;
@@ -2111,6 +2113,15 @@ export default function ChatScreen() {
     await clearStaleTtsListenBlockers();
     const blockers = getSpeakingPhaseBlockers();
     if (!canExitSpeakingPhaseNow(voicePhaseRef.current, blockers)) {
+      voiceLog('speaking_phase_exit_blocked', {
+        reason,
+        phase: voicePhaseRef.current,
+        speakInFlight: blockers.speakInFlight,
+        draining: blockers.streamTtsDraining,
+        queue: blockers.streamTtsQueueLen,
+        activeSound: blockers.activeSound,
+        chatInFlight: blockers.chatInFlight,
+      });
       return;
     }
     voiceLog('speaking_phase_exit', {
@@ -2523,6 +2534,11 @@ export default function ChatScreen() {
       await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, true);
       serverSpeechChunksRef.current = null;
       finishStreamTtsTurn(turn);
+      await recoverSpeakingPhaseIfIdle('run_tts_stream_after_exit', {
+        scheduleListen:
+          conversationSessionRef.current &&
+          voiceInputModeRef.current === 'conversation',
+      });
       return;
     }
 
@@ -2634,25 +2650,41 @@ export default function ChatScreen() {
   /** Warm farewell when the user taps End conversation. */
   const speakFarewell = async (text: string) => {
     if (!voiceEnabledRef.current || !text.trim()) return;
-    if (voicePhaseRef.current !== 'idle') return;
 
     const parts = buildSpeakParts(text.trim(), true);
     if (parts.length === 0) return;
 
+    voiceLog('session_goodbye_start', {
+      textLen: text.trim().length,
+      phase: voicePhaseRef.current,
+      speakGen: voiceSessionRef.current.speakGeneration,
+    });
+
+    await stopPlayback();
+    cancelActiveStreamTtsDrain();
+    await clearStaleTtsListenBlockers();
+    if (voicePhaseRef.current !== 'idle') {
+      voiceLog('session_goodbye_force_idle', { from: voicePhaseRef.current });
+      setVoicePhaseTransition('idle', { force: true, reason: 'session_goodbye_prep' });
+    }
+
     setVoicePlaybackError(null);
     setVoicePhaseTransition('speaking', { reason: 'session_goodbye' });
     const generation = voiceSessionRef.current.speakGeneration;
-    await stopPlayback();
     await prepareForTtsPlayback();
     const ok = await speakParts(parts);
     if (!isActiveSpeakGeneration(generation)) {
-      void recoverSpeakingPhaseIfIdle('session_goodbye_stale_gen');
+      voiceLog('session_goodbye_stale_gen', {
+        generation,
+        activeGen: voiceSessionRef.current.speakGeneration,
+      });
+      void recoverSpeakingPhaseIfIdle('session_goodbye_stale_gen', { force: true });
       return;
     }
     if (ok) {
-      setVoicePhaseTransition('idle', { reason: 'session_goodbye_done' });
-      prewarmVoiceMicIfIdle();
+      void recoverSpeakingPhaseIfIdle('session_goodbye_done', { force: true });
     } else {
+      voiceLog('session_goodbye_failed', { generation });
       releaseVoiceUi('session_goodbye_failed');
     }
   };
@@ -3151,7 +3183,10 @@ export default function ChatScreen() {
         phase === 'streaming' ||
         phase === 'speaking'
       ) {
-        setVoicePhaseTransition('thinking', { reason: 'send_message' });
+        setVoicePhaseTransition('thinking', {
+          reason: 'send_message',
+          force: phase === 'speaking' || phase === 'interrupting',
+        });
       }
     }
 
@@ -3206,7 +3241,10 @@ export default function ChatScreen() {
             setLoading(false);
             setIsStreaming(true);
             if (voiceEnabledRef.current) {
-              setVoicePhaseTransition('streaming', { reason: 'stream_start' });
+              setVoicePhaseTransition('streaming', {
+                reason: 'stream_start',
+                force: voicePhaseRef.current === 'speaking',
+              });
             }
             const ack = meta?.rhythm?.fast_ack;
             if (
