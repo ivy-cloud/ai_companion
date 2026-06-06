@@ -520,6 +520,11 @@ def stream_chat_events(
             yield from _canned(identity_reply, "canned:companion_identity")
             return
 
+        presence_reply = companion.try_companion_presence_reply(trimmed)
+        if presence_reply:
+            yield from _canned(presence_reply, "canned:companion_presence")
+            return
+
         family_reply = companion.try_companion_family_reply(trimmed)
         if family_reply:
             yield from _canned(family_reply, "canned:companion_family")
@@ -601,6 +606,7 @@ def stream_chat_events(
         raw_reply = "".join(collected).strip()
         raw_reply = companion.finalize_birth_reply(trimmed, raw_reply)
         raw_reply = companion.finalize_voice_reply(trimmed, raw_reply)
+        raw_reply = companion.finalize_presence_reply(trimmed, raw_reply)
         raw_reply = companion.finalize_family_reply(trimmed, raw_reply)
         reply = polish_for_speech(raw_reply)
         if not reply:

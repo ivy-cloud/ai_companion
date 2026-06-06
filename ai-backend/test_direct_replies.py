@@ -18,10 +18,12 @@ from companion import (
     companion_family_reply_text,
     companion_mom_reply_text,
     companion_parents_reply_text,
+    companion_presence_reply_text,
     companion_siblings_reply_text,
     companion_voice_reply_text,
     finalize_birth_reply,
     finalize_family_reply,
+    finalize_presence_reply,
     finalize_voice_reply,
     get_companion_birth_year,
     is_companion_identity_turn,
@@ -29,6 +31,7 @@ from companion import (
     try_companion_birth_reply,
     is_companion_directed_message,
     try_companion_family_reply,
+    try_companion_presence_reply,
     try_companion_voice_reply,
 )
 from human_speech import polish_for_speech
@@ -92,6 +95,36 @@ class DirectReplyTests(unittest.TestCase):
             companion_voice_reply_text(),
         )
         self.assertIsNone(try_companion_voice_reply("How do I change my voice?"))
+
+    def test_companion_presence_not_web_or_clarification(self):
+        import web_search
+
+        for msg in (
+            "where are you?",
+            "where are you",
+            "where do you live",
+            "are you here",
+            "you still there?",
+        ):
+            with self.subTest(msg=msg):
+                self.assertTrue(is_companion_identity_turn(msg))
+                self.assertFalse(web_search.is_factual_question(msg))
+                self.assertFalse(web_search.should_search(msg))
+                reply = try_companion_presence_reply(msg)
+                self.assertIsNotNone(reply)
+                self.assertEqual(reply, companion_presence_reply_text())
+                self.assertIn("here with you", reply.lower())
+
+        self.assertIsNone(try_companion_presence_reply("where do I live?"))
+        self.assertFalse(is_companion_identity_turn("where do I live?"))
+
+        confused = (
+            "I'm not sure where you mean, like a specific place or something?"
+        )
+        self.assertEqual(
+            finalize_presence_reply("where are you?", confused),
+            companion_presence_reply_text(),
+        )
 
     def test_companion_family_blocks_web_and_robot_talk(self):
         mom_q = "who is your mom?"

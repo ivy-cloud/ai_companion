@@ -161,6 +161,29 @@ _COMPANION_IDENTITY_OTHER = re.compile(
     re.I,
 )
 
+# User's location — saved friend notes, not companion presence.
+_USER_LOCATION_TOPIC = re.compile(
+    r"\b(?:"
+    r"where am i\b|where do i live|where am i from|where am i right now|"
+    r"what(?:'s| is) my location|remember where i live"
+    r")\b",
+    re.I,
+)
+
+# Companion virtual presence — not a map address or web lookup.
+_ASK_COMPANION_PRESENCE = re.compile(
+    r"\b(?:"
+    r"where are you(?: at| now| right now)?(?! from)\b|"
+    r"where(?:'re| are) you at\b|"
+    r"where do you live\b|"
+    r"where(?:'s| is) your (?:home|place|house|apartment)\b|"
+    r"are you (?:here|with me|around|nearby|still here|still there|still around)\b|"
+    r"you still (?:here|there|around)\b|"
+    r"still with me\b"
+    r")\b",
+    re.I,
+)
+
 # User's family — saved friend notes, not companion backstory.
 _USER_FAMILY_TOPIC = re.compile(
     r"\b(?:"
@@ -590,6 +613,12 @@ def _is_companion_voice_question(text: str) -> bool:
     return bool(_ASK_COMPANION_VOICE.search(text))
 
 
+def _is_companion_presence_question(text: str) -> bool:
+    if _USER_LOCATION_TOPIC.search(text):
+        return False
+    return bool(_ASK_COMPANION_PRESENCE.search(text))
+
+
 def _is_companion_family_question(text: str) -> bool:
     """Your family, childhood, relationships — never web lookup."""
     if _USER_FAMILY_TOPIC.search(text):
@@ -613,6 +642,8 @@ def is_companion_identity_turn(message: str) -> bool:
     if _is_companion_birth_question(text) or _is_companion_age_question(text):
         return True
     if _is_companion_voice_question(text):
+        return True
+    if _is_companion_presence_question(text):
         return True
     if _is_companion_family_question(text):
         return True
@@ -678,6 +709,23 @@ def try_companion_identity_reply(message: str) -> Optional[str]:
         return None
     name = get_companion_name()
     return f"Yeah — I'm {name}. I'm a real person talking with you."
+
+
+def companion_presence_reply_text() -> str:
+    """Her-style: present with them, not a confused map question."""
+    return "I'm right here with you — in this conversation, wherever you are."
+
+
+def try_companion_presence_reply(message: str) -> Optional[str]:
+    if not _is_companion_presence_question(message):
+        return None
+    return companion_presence_reply_text()
+
+
+def finalize_presence_reply(user_message: str, reply: str) -> str:
+    if not _is_companion_presence_question(user_message):
+        return reply
+    return companion_presence_reply_text()
 
 
 def companion_mom_reply_text() -> str:
@@ -763,7 +811,10 @@ def format_companion_persona_for_prompt() -> str:
         f"do **not** invent names or stories; do **not** mention lookup, context, or search.\n"
         f"- Say naturally you haven't shared that yet — warm, brief, like a friend on the phone.\n"
         f"- Never describe yourself as a \"here and now\" or \"right-now\" person, "
-        f"and never explain your conversational mode or that you're focused on \"this call.\""
+        f"and never explain your conversational mode or that you're focused on \"this call.\"\n"
+        f"- If they ask **where you are**, **where you live**, or **are you here**: "
+        f"you are **with them in this conversation** — warm and brief; "
+        f"never ask what place they mean or say you're unsure."
     )
     voice_lines = (
         "- They can change **your** voice with the **Female / Male tone** picker on their screen "
