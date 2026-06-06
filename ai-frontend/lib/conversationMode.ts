@@ -36,9 +36,11 @@ export const BARGE_IN_SPEECH_LEVEL_DB = -42;
 /** After a barge-in interrupt, ignore further triggers for this long (ms). */
 export const BARGE_IN_COOLDOWN_MS = 2000;
 
-/** Wait after TTS ends before opening the mic — avoids speaker bleed / echo in the room. */
-/** Wait after TTS before opening mic — reduces speaker bleed (see session_log echo). */
-export const POST_TTS_LISTEN_COOLDOWN_MS = 700;
+/**
+ * Brief delay after TTS ends before opening the mic — room echo only; STT is not blocked
+ * during this window once the recorder is open (see isLikelyAssistantEchoTranscript).
+ */
+export const POST_TTS_LISTEN_COOLDOWN_MS = 450;
 
 /** Retry cadence when listen is temporarily blocked by TTS/drain/in-flight states. */
 export const LISTEN_RETRY_MS = 280;
@@ -129,7 +131,8 @@ export function shouldRecoverListenPausedStuck(
  * Expo metering is dBFS (negative). Above this ≈ speech; below ≈ silence.
  * Tune per device if needed.
  */
-export const SPEECH_LEVEL_DB = -50;
+/** Slightly below -50 so quiet speech on phone mic still registers. */
+export const SPEECH_LEVEL_DB = -52;
 
 export function isSpeechLevel(metering?: number): boolean {
   if (metering === undefined || metering === null || Number.isNaN(metering)) {

@@ -28,6 +28,8 @@ import {
   prepareForTtsPlayback,
   prewarmRecordingPipeline,
   isSubstantiveTranscript,
+  isEmptySttError,
+  isLikelyAssistantEchoTranscript,
   MIN_RECORDING_MS,
   startConversationRecording,
   startPushToTalkRecording,
@@ -906,7 +908,9 @@ export default function ChatScreen() {
         if (speakInFlightRef.current && !chatInFlightRef.current && !activeSoundRef.current) {
           speakInFlightRef.current = false;
         }
-        if (isTtsBlockingConversationListen()) {
+        const listeningWithRecording =
+          voicePhaseRef.current === 'listening' && Boolean(recordingRef.current);
+        if (!listeningWithRecording && isTtsBlockingConversationListen()) {
           const blockedSince = listenMeterBlockedSinceRef.current ?? now;
           listenMeterBlockedSinceRef.current = blockedSince;
           const blockedMs = now - blockedSince;
@@ -936,6 +940,9 @@ export default function ChatScreen() {
             }
           }
           return;
+        }
+        if (listeningWithRecording) {
+          await clearStaleTtsListenBlockers();
         }
         listenMeterBlockedSinceRef.current = null;
 
@@ -1787,24 +1794,12 @@ export default function ChatScreen() {
     }
   };
 
-  const isLikelyAssistantEcho = (transcript: string): boolean => {
-    const heard = prepareTextForSpeech(transcript).toLowerCase();
-    const spoken = prepareTextForSpeech(lastAssistantTtsTextRef.current).toLowerCase();
-    if (!heard || heard.length < 6 || !spoken) return false;
-    if (spoken.includes(heard) || heard.includes(spoken)) return true;
-    const tail = lastSentenceOf(lastAssistantTtsTextRef.current);
-    if (tail) {
-      const tailNorm = prepareTextForSpeech(tail).toLowerCase();
-      if (tailNorm.includes(heard) || heard.includes(tailNorm)) return true;
-      const heardWords = heard.split(/\s+/).filter((w) => w.length > 2);
-      const tailWords = new Set(tailNorm.split(/\s+/).filter((w) => w.length > 2));
-      const overlap = heardWords.filter((w) => tailWords.has(w)).length;
-      if (heardWords.length >= 2 && overlap >= Math.min(3, heardWords.length)) {
-        return true;
-      }
-    }
-    return false;
-  };
+  const isLikelyAssistantEcho = (transcript: string): boolean =>
+    isLikelyAssistantEchoTranscript(transcript, lastAssistantTtsTextRef.current, {
+      playbackActive: Boolean(activeSoundRef.current),
+      normalizeSpoken: (text) => prepareTextForSpeech(text).toLowerCase(),
+      lastSentence: lastSentenceOf,
+    });
 
   const streamTtsChunkKey = (text: string) => prepareTextForSpeech(text.trim());
 
@@ -3142,22 +3137,24 @@ export default function ChatScreen() {
         return;
       }
       if (
-      fromConversation &&
-      (activeSoundRef.current ||
-        streamTtsDrainingRef.current ||
-        streamTtsQueueRef.current.length > 0)
-    ) {
-      logVoiceState('stt_ignored_during_tts', {
-        phase: voicePhaseRef.current,
-      });
-      retryConversationListen();
-      return;
-    }
+        fromConversation &&
+        activeSoundRef.current
+      ) {
+        logVoiceState('stt_ignored_during_tts', {
+          phase: voicePhaseRef.current,
+          preview:
+            transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
+          activeSound: true,
+        });
+        retryConversationListen();
+        return;
+      }
 
     if (fromConversation && isLikelyAssistantEcho(transcript)) {
         logVoiceState('echo_suppressed', {
           preview:
             transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
+          activeSound: Boolean(activeSoundRef.current),
         });
         setVoiceInputError('That was my voice — say yours again.');
         setVoicePhaseTransition('idle', { reason: 'echo_suppressed' });
@@ -3165,6 +3162,11 @@ export default function ChatScreen() {
         return;
       }
       if (!isSubstantiveTranscript(transcript)) {
+        logVoiceState('stt_rejected_substantive', {
+          preview:
+            transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
+          len: transcript.length,
+        });
         if (fromConversation) {
           setVoiceInputError('Didn’t catch that — try again.');
           setVoicePhaseTransition('idle');
@@ -3191,6 +3193,12 @@ export default function ChatScreen() {
       await sendMessage(transcript);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Voice input failed';
+      if (fromConversation && isEmptySttError(err)) {
+        logVoiceState('stt_empty', {
+          preview: msg.length > 80 ? `${msg.slice(0, 77)}…` : msg,
+          phase: voicePhaseRef.current,
+        });
+      }
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       if (!fromConversation) {
         setVoicePhaseTransition('idle');

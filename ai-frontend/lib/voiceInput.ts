@@ -1,4 +1,11 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { isEmptySttError } from './voiceTranscript';
+
+export {
+  isEmptySttError,
+  isLikelyAssistantEchoTranscript,
+  isSubstantiveTranscript,
+} from './voiceTranscript';
 
 /** Loud TTS: Playback category on iOS (speaker), not PlayAndRecord/earpiece. */
 const PLAYBACK_AUDIO_MODE = {
@@ -176,61 +183,7 @@ export async function stopRecordingToUri(recording: Audio.Recording): Promise<st
 /** Ignore accidental tap-and-release and STT noise phrases. */
 export const MIN_RECORDING_MS = 450;
 
-const PHANTOM_TRANSCRIPTS = new Set([
-  'you',
-  'the',
-  'a',
-  'uh',
-  'um',
-  'hmm',
-  'thank you',
-  'thanks',
-]);
-
-/** Short follow-ups are valid voice input (STT often returns one word). */
-const SHORT_VALID_UTTERANCES = new Set([
-  'why',
-  'how',
-  'who',
-  'what',
-  'when',
-  'where',
-  'which',
-  'really',
-  'huh',
-  'wow',
-  'hey',
-  'hi',
-  'hello',
-  'yes',
-  'no',
-  'yeah',
-  'yep',
-  'nope',
-  'ok',
-  'okay',
-  'sure',
-  'right',
-  'true',
-  'false',
-  'more',
-  'again',
-  'wait',
-  'stop',
-]);
-
-export function isSubstantiveTranscript(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, '');
-  if (!normalized) return false;
-  if (SHORT_VALID_UTTERANCES.has(normalized)) return true;
-  if (PHANTOM_TRANSCRIPTS.has(normalized)) return false;
-  if (normalized.length < 4) return false;
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (words.length === 1 && words[0].length < 4) return false;
-  return true;
-}
-
-export async function transcribeRecording(uri: string, apiBase: string): Promise<string> {
+async function transcribeRecordingOnce(uri: string, apiBase: string): Promise<string> {
   const form = new FormData();
   form.append('file', {
     uri,
@@ -259,4 +212,14 @@ export async function transcribeRecording(uri: string, apiBase: string): Promise
   const text = data.text?.trim() ?? '';
   if (!text) throw new Error('No speech detected');
   return text;
+}
+
+/** STT with one retry when Azure returns empty / no-match (transient or clipped audio). */
+export async function transcribeRecording(uri: string, apiBase: string): Promise<string> {
+  try {
+    return await transcribeRecordingOnce(uri, apiBase);
+  } catch (err) {
+    if (!isEmptySttError(err)) throw err;
+    return transcribeRecordingOnce(uri, apiBase);
+  }
 }

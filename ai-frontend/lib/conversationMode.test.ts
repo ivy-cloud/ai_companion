@@ -13,8 +13,10 @@ import {
   PROACTIVE_MAX_PER_SESSION,
   PROACTIVE_MIN_GAP_MS,
   SILENCE_END_MS,
+  SPEECH_LEVEL_DB,
   canResumeConversationListen,
   createConversationMeterState,
+  isSpeechLevel,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
@@ -53,11 +55,18 @@ test('fresh listen: only idle or speaking', () => {
 });
 
 test('phase0: listen timing constants stay bounded', () => {
-  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 700);
+  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 450);
   assert.equal(LISTEN_RETRY_MS, 280);
   assert.equal(LISTENING_STUCK_MS, 6500);
   assert.equal(LISTEN_OPEN_GRACE_MS, 1400);
   assert.equal(IDLE_LISTEN_RECOVERY_MS, 2800);
+});
+
+test('speech level: quiet speech above threshold registers', () => {
+  assert.equal(SPEECH_LEVEL_DB, -52);
+  assert.equal(isSpeechLevel(-51), true);
+  assert.equal(isSpeechLevel(-52), false);
+  assert.equal(isSpeechLevel(-50), true);
 });
 
 test('listen open grace: no force-idle while mic is still opening', () => {
