@@ -55,10 +55,10 @@ test('fresh listen: only idle or speaking', () => {
 });
 
 test('phase0: listen timing constants stay bounded', () => {
-  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 450);
-  assert.equal(LISTEN_RETRY_MS, 280);
+  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 280);
+  assert.equal(LISTEN_RETRY_MS, 180);
   assert.equal(LISTENING_STUCK_MS, 6500);
-  assert.equal(LISTEN_OPEN_GRACE_MS, 1400);
+  assert.equal(LISTEN_OPEN_GRACE_MS, 800);
   assert.equal(IDLE_LISTEN_RECOVERY_MS, 2800);
 });
 

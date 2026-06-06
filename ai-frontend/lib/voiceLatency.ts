@@ -48,6 +48,27 @@ export function markVoiceTiming(
   console.log(`[voice-latency] turn=${timing.turn} ${mark} +${ms}ms`);
 }
 
+export type ListenLatencyGaps = {
+  playSettleToMicOpenMs: number;
+  micOpenToListenReadyMs: number;
+  playSettleToListenReadyMs: number;
+};
+
+/** Post-TTS mic reopen gaps for voiceLog listen_latency_gaps. */
+export function computeListenLatencyGaps(
+  timing: VoiceTurnTiming | null,
+): ListenLatencyGaps | null {
+  if (timing?.marks.play_settle == null || timing.marks.mic_open == null) {
+    return null;
+  }
+  const listenReady = timing.marks.listen_ready ?? Date.now();
+  return {
+    playSettleToMicOpenMs: timing.marks.mic_open - timing.marks.play_settle,
+    micOpenToListenReadyMs: listenReady - timing.marks.mic_open,
+    playSettleToListenReadyMs: listenReady - timing.marks.play_settle,
+  };
+}
+
 export function markVoiceChunkPlay(timing: VoiceTurnTiming | null): void {
   if (!timing) return;
   timing.chunkCount += 1;

@@ -111,6 +111,7 @@ import {
   refreshDeviceTimezoneCache,
 } from '../lib/deviceTimezone';
 import {
+  computeListenLatencyGaps,
   createVoiceTurnTiming,
   logVoiceTurnSummary,
   markVoiceTiming,
@@ -491,11 +492,30 @@ export default function ChatScreen() {
     return ttsAbortRef.current.signal;
   };
 
+  /** Prewarm conversation recorder even when phase blocks default prewarm (TTS fetch window). */
+  const prewarmConversationMicAggressive = () => {
+    if (!voiceEnabledRef.current) return;
+    if (voiceInputModeRef.current !== 'conversation') return;
+    if (!conversationSessionRef.current) return;
+    if (voicePhaseRef.current === 'listening' && recordingRef.current) return;
+    setRecordingPrewarmBlocked(false);
+    prewarmRecordingPipeline();
+    syncRecordingPrewarmBlock(voicePhaseRef.current);
+  };
+
   const prewarmVoiceMicIfIdle = () => {
     if (
       conversationSessionRef.current &&
       voiceInputModeRef.current === 'conversation'
     ) {
+      // Prewarm while LLM/TTS runs — overlaps fetch + post-TTS cooldown before mic open.
+      if (
+        voicePhaseRef.current === 'thinking' ||
+        voicePhaseRef.current === 'streaming' ||
+        voicePhaseRef.current === 'speaking'
+      ) {
+        prewarmConversationMicAggressive();
+      }
       return;
     }
     if (
@@ -503,6 +523,19 @@ export default function ChatScreen() {
       isAssistantActivePhase(voicePhaseRef.current) ||
       voicePhaseRef.current === 'listening'
     ) {
+      return;
+    }
+    prewarmRecordingPipeline();
+  };
+
+  /** Prewarm during post-TTS cooldown so mic open overlaps the echo-decay window. */
+  const prewarmConversationMicForListen = () => {
+    if (!voiceEnabledRef.current) return;
+    if (voiceInputModeRef.current !== 'conversation') return;
+    if (!conversationSessionRef.current) return;
+    if (voicePhaseRef.current === 'listening' && recordingRef.current) return;
+    if (blocksRecordingPrewarm(voicePhaseRef.current)) {
+      prewarmConversationMicAggressive();
       return;
     }
     prewarmRecordingPipeline();
@@ -627,6 +660,9 @@ export default function ChatScreen() {
         }
         if (from === 'speaking' && next !== 'speaking') {
           stopConversationBargeIn();
+        }
+        if (next === 'speaking') {
+          prewarmVoiceMicIfIdle();
         }
       }
       phaseChangedAtRef.current = Date.now();
@@ -1237,6 +1273,7 @@ export default function ChatScreen() {
     ) {
       return;
     }
+    prewarmConversationMicForListen();
     if (Date.now() < phaseOscillationCooldownUntilRef.current) {
       delayMs = Math.max(delayMs, LISTEN_RETRY_MAX_DELAY_MS);
     }
@@ -1635,6 +1672,8 @@ export default function ChatScreen() {
 
   const markListenReadyTiming = () => {
     markVoiceTiming(voiceTurnTimingRef.current, 'listen_ready');
+    const gaps = computeListenLatencyGaps(voiceTurnTimingRef.current);
+    if (gaps) voiceLog('listen_latency_gaps', gaps);
     flushVoiceTurnSummary('listen_ready');
   };
 
@@ -1774,9 +1813,9 @@ export default function ChatScreen() {
 
   const waitPlaybackFullyStopped = async () => {
     let stable = 0;
-    for (let i = 0; i < 100; i += 1) {
-      if (i % 6 === 0 && activeSoundRef.current) {
-        // If Expo leaves activeSoundRef set after playback finishes, clear it early.
+    for (let i = 0; i < 40; i += 1) {
+      if (activeSoundRef.current) {
+        // Expo/iOS can leave activeSoundRef set after playback finishes — clear early.
         await clearStaleActiveSoundIfIdle();
       }
       if (
@@ -1786,11 +1825,11 @@ export default function ChatScreen() {
         !speakInFlightRef.current
       ) {
         stable += 1;
-        if (stable >= 4) return;
+        if (stable >= 2) return;
       } else {
         stable = 0;
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 15));
     }
   };
 

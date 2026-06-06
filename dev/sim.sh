@@ -37,17 +37,8 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-echo "=== unittest (ai-backend) ==="
-python3 -m unittest discover -s . -p 'test_*.py' -q
-
-FRONTEND="$ROOT/ai-frontend"
-if [[ -f "$FRONTEND/lib/conversationState.test.ts" ]]; then
-  echo "=== voice state machine (ai-frontend) ==="
-  (
-    cd "$FRONTEND"
-    node --experimental-strip-types --no-warnings lib/conversationState.test.ts
-  )
-fi
+echo "=== test-all (backend + frontend) ==="
+"$ROOT/scripts/test-all.sh"
 
 if [[ "$START_MOCK" -eq 1 ]]; then
   echo "=== starting mock backend on :8000 ==="

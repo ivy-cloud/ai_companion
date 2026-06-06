@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "tsx --test lib/*.test.ts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "tsx": "^4.22.4",
     "typescript": "~5.9.2"
   },
   "private": true

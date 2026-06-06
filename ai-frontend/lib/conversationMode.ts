@@ -37,13 +37,14 @@ export const BARGE_IN_SPEECH_LEVEL_DB = -42;
 export const BARGE_IN_COOLDOWN_MS = 2000;
 
 /**
- * Brief delay after TTS ends before opening the mic — room echo only; STT is not blocked
- * during this window once the recorder is open (see isLikelyAssistantEchoTranscript).
+ * Brief delay after TTS ends before opening the mic — room echo decay only.
+ * Listen is blocked while activeSound/drain/queue remain; STT echo uses
+ * isLikelyAssistantEchoTranscript once the recorder is open.
  */
-export const POST_TTS_LISTEN_COOLDOWN_MS = 450;
+export const POST_TTS_LISTEN_COOLDOWN_MS = 280;
 
 /** Retry cadence when listen is temporarily blocked by TTS/drain/in-flight states. */
-export const LISTEN_RETRY_MS = 280;
+export const LISTEN_RETRY_MS = 180;
 
 /** Recover when Listening… with no mic or blocked meter for this long (safety only). */
 export const LISTENING_STUCK_MS = 6500;
@@ -55,10 +56,10 @@ export const LISTEN_METER_BLOCKED_MS = 2200;
  * Grace after entering listening before treating "no recorder" as stuck.
  * Mic open is async; forcing idle too early caused listen ↔ idle ↔ interrupt flicker.
  */
-export const LISTEN_OPEN_GRACE_MS = 1400;
+export const LISTEN_OPEN_GRACE_MS = 800;
 
 /** Minimum gap between non-retry schedule_listen calls (coalesces rapid reopen). */
-export const MIN_SCHEDULE_LISTEN_MS = 400;
+export const MIN_SCHEDULE_LISTEN_MS = 180;
 
 /** Recover an active conversation when phase idles with no pending listen reopen. */
 export const IDLE_LISTEN_RECOVERY_MS = 2800;
