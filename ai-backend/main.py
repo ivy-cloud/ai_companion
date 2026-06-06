@@ -17,6 +17,7 @@ load_dotenv(_BACKEND_DIR / ".env", override=True)
 
 import companion
 import companion_moments
+import companion_thread
 import conversation_rhythm
 import dev_mode
 import current_facts
@@ -85,6 +86,8 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     timezone: Optional[str] = None  # IANA from the phone, e.g. America/New_York
+    proactive: bool = False
+    thread_beat: Optional[str] = None
 
 
 class TtsRequest(BaseModel):
@@ -231,6 +234,33 @@ def build_grounded_chat_context(
     )
 
 
+def build_proactive_chat_context(
+    *,
+    thread_beat: Optional[str] = None,
+    clock=None,
+) -> ChatContext:
+    """Companion continues its thread while the user listens quietly."""
+    beat = thread_beat or companion_thread.consume_next_beat()
+    hint = companion_thread.proactive_turn_hint(beat)
+    trimmed = companion_thread.PROACTIVE_USER_MARKER
+    history = memory.to_ollama_messages(trimmed)
+    user_content = (
+        "(Companion continues while the user is quiet — they may interrupt anytime.)\n\n"
+        f"{COMPANION_REPLY_INSTRUCTIONS}\n\n"
+        f"({hint})"
+    )
+    return ChatContext(
+        system={
+            "role": "system",
+            "content": build_system_prompt("", clock=clock),
+        },
+        history=history,
+        latest_user={"role": "user", "content": user_content},
+        trimmed_latest=trimmed,
+        factual_reply=False,
+    )
+
+
 def _ndjson_line(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
@@ -336,9 +366,94 @@ def stream_chat_events(
     client_timezone: Optional[str] = None,
     *,
     audio_source: Optional[str] = None,
+    proactive: bool = False,
+    thread_beat: Optional[str] = None,
 ) -> Generator[str, None, None]:
     trimmed = user_message.strip()
     clock = resolve_clock(client_timezone)
+    audio_extra = _audio_source_extra(audio_source)
+
+    if proactive or companion_thread.is_proactive_user_message(trimmed):
+        rhythm: dict = {
+            "casual": True,
+            "stream_tts": True,
+            "interruptible": True,
+            "proactive": True,
+        }
+        beats = companion_thread.proactive_beats_for_stream()
+        if beats:
+            rhythm["proactive_beats"] = beats
+        yield _ndjson_line(
+            {
+                "start": True,
+                "timezone": clock.iana,
+                "timezone_from_device": clock.from_device,
+                "rhythm": rhythm,
+            }
+        )
+        started_at = time.monotonic()
+        learn_at_start = profile.LearnResult()
+        try:
+            context = build_proactive_chat_context(thread_beat=thread_beat, clock=clock)
+            collected: List[str] = []
+            for piece in llm_provider.stream_chat_text(
+                context.to_ollama_messages(),
+                factual=False,
+            ):
+                collected.append(piece)
+                yield _ndjson_line({"text": piece})
+
+            raw_reply = "".join(collected).strip()
+            reply = polish_for_speech(raw_reply)
+            if not reply:
+                reply = "I'm still here with you."
+
+            memory.append_assistant_continuation(reply)
+            companion_thread.update_after_reply(context.trimmed_latest, reply)
+            emotion_hint, express_style = _turn_emotion("", factual=False, memory_recall=False)
+            done_payload: dict = {
+                "done": True,
+                "reply": reply,
+                "emotion_hint": emotion_hint,
+                "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+                "proactive": True,
+            }
+            refreshed = companion_thread.proactive_beats_for_stream()
+            if refreshed:
+                done_payload["proactive_beats"] = refreshed
+            if express_style:
+                done_payload["express_style"] = express_style
+            session_log.log_turn(
+                context.trimmed_latest,
+                reply,
+                route="llm:proactive",
+                **_turn_log_fields(started_at, clock, learn_at_start),
+                extra=audio_extra,
+            )
+            yield _ndjson_line(done_payload)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            session_log.log_turn(
+                trimmed,
+                "",
+                route="error:http",
+                error=detail,
+                **_turn_log_fields(started_at, clock, learn_at_start),
+                extra=audio_extra,
+            )
+            yield _ndjson_line({"error": detail})
+        except Exception as exc:
+            session_log.log_turn(
+                trimmed,
+                "",
+                route="error:exception",
+                error=str(exc),
+                **_turn_log_fields(started_at, clock, learn_at_start),
+                extra=audio_extra,
+            )
+            yield _ndjson_line({"error": str(exc)})
+        return
+
     math_turn = is_simple_math_question(trimmed)
     memory_recall = profile.is_user_profile_turn(trimmed)
     factual_guess = math_turn or memory_recall or web_search.is_factual_question(trimmed)
@@ -495,6 +610,8 @@ def stream_chat_events(
         companion.try_learn_name_from_user(context.trimmed_latest)
         profile.learn_from_user_message(context.trimmed_latest)
         memory.append_exchange(context.trimmed_latest, reply)
+        if not context.factual_reply and not profile.is_user_profile_turn(context.trimmed_latest):
+            companion_thread.update_after_reply(context.trimmed_latest, reply)
         emotion_hint, express_style = _turn_emotion(
             context.trimmed_latest,
             factual=context.factual_reply,
@@ -506,6 +623,9 @@ def stream_chat_events(
             "emotion_hint": emotion_hint,
             "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
         }
+        proactive_beats = companion_thread.proactive_beats_for_stream()
+        if proactive_beats:
+            done_payload["proactive_beats"] = proactive_beats
         if express_style:
             done_payload["express_style"] = express_style
         llm_route = "llm:grounded" if grounded else "llm"
@@ -603,14 +723,23 @@ def health(voice_gender: Optional[str] = None):
 
 @app.post("/chat")
 def chat(body: ChatRequest, request: Request):
-    message = body.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message cannot be empty")
+    if body.proactive:
+        message = companion_thread.PROACTIVE_USER_MARKER
+    else:
+        message = body.message.strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="message cannot be empty")
 
     audio_source = request.headers.get("X-Audio-Source")
 
     return StreamingResponse(
-        stream_chat_events(message, body.timezone, audio_source=audio_source),
+        stream_chat_events(
+            message,
+            body.timezone,
+            audio_source=audio_source,
+            proactive=body.proactive,
+            thread_beat=body.thread_beat,
+        ),
         media_type="application/x-ndjson",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -659,6 +788,7 @@ async def transcribe(file: UploadFile = File(...)):
 @app.post("/chat/reset")
 def reset_conversation():
     memory.clear()
+    companion_thread.clear_thread()
     return {"status": "ok", "profile_facts_kept": profile.get_facts()}
 
 

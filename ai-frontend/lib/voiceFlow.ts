@@ -11,7 +11,16 @@ export function voicePhaseLabel(
   phase: VoicePhase,
   _isStreaming = false,
   conversationSession = false,
+  options?: { proactive?: boolean; companionName?: string },
 ): string {
+  if (
+    options?.proactive &&
+    conversationSession &&
+    (phase === 'thinking' || phase === 'streaming')
+  ) {
+    const name = options.companionName?.trim() || 'Companion';
+    return `${name} is thinking aloud…`;
+  }
   switch (phase) {
     case 'listening':
       return 'Listening…';

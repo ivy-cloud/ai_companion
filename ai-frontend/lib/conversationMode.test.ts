@@ -7,11 +7,18 @@ import {
   LISTENING_STUCK_MS,
   LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
+  MIN_SPEECH_MS,
   POST_TTS_LISTEN_COOLDOWN_MS,
+  PROACTIVE_IDLE_MS,
+  PROACTIVE_MAX_PER_SESSION,
+  PROACTIVE_MIN_GAP_MS,
+  SILENCE_END_MS,
   canResumeConversationListen,
+  createConversationMeterState,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
+  tickConversationMeter,
 } from './conversationMode.ts';
 
 function test(name: string, fn: () => void) {
@@ -86,4 +93,30 @@ test('listen meter blocked recovery threshold', () => {
   assert.equal(shouldRecoverListeningMeterBlocked(1000, true), false);
   assert.equal(shouldRecoverListeningMeterBlocked(LISTEN_METER_BLOCKED_MS, true), true);
   assert.equal(shouldRecoverListeningMeterBlocked(10_000, false), false);
+});
+
+test('silence timing: endSilence needs MIN_SPEECH_MS + SILENCE_END_MS', () => {
+  assert.equal(SILENCE_END_MS, 1500);
+  assert.equal(MIN_SPEECH_MS, 450);
+  const t0 = 1000;
+  let state = createConversationMeterState(t0);
+  state = {
+    ...state,
+    sawSpeech: true,
+    speechStartedAt: t0,
+    silenceSince: t0 + MIN_SPEECH_MS,
+    lastSpeechAt: t0 + MIN_SPEECH_MS - 1,
+  };
+  const tooEarly = tickConversationMeter(state, -60, t0 + MIN_SPEECH_MS + SILENCE_END_MS - 1);
+  assert.equal(tooEarly.endSilence, false);
+  const ready = tickConversationMeter(state, -60, t0 + MIN_SPEECH_MS + SILENCE_END_MS);
+  assert.equal(ready.endSilence, true);
+  assert.ok(ready.speechDurationMs >= MIN_SPEECH_MS);
+  assert.ok(ready.silenceDurationMs >= SILENCE_END_MS);
+});
+
+test('proactive timing constants bounded', () => {
+  assert.ok(PROACTIVE_IDLE_MS >= 8000 && PROACTIVE_IDLE_MS <= 12_000);
+  assert.equal(PROACTIVE_MIN_GAP_MS, 20_000);
+  assert.equal(PROACTIVE_MAX_PER_SESSION, 3);
 });

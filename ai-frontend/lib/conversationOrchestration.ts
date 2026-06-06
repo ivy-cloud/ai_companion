@@ -23,6 +23,8 @@ export type RhythmMeta = {
   stream_tts?: boolean;
   fast_ack?: string;
   interruptible?: boolean;
+  proactive?: boolean;
+  proactive_beats?: string[];
 };
 
 export function shouldStreamTtsWhileOpen(

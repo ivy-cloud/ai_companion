@@ -25,6 +25,8 @@ export type ChatStreamDoneMeta = {
   express_style?: string;
   speech_chunks?: string[];
   singing?: boolean;
+  proactive?: boolean;
+  proactive_beats?: string[];
 };
 
 type StreamEvent =
@@ -42,11 +44,24 @@ const STREAM_TIMEOUT_MS = 180_000;
 export type ChatRequestBody = {
   message: string;
   timezone?: string;
+  proactive?: boolean;
+  thread_beat?: string;
 };
 
-function buildChatRequestBody(message: string, timezone?: string): string {
+export type ChatRequestOptions = {
+  proactive?: boolean;
+  threadBeat?: string;
+};
+
+function buildChatRequestBody(
+  message: string,
+  timezone?: string,
+  options?: ChatRequestOptions,
+): string {
   const body: ChatRequestBody = { message };
   if (timezone) body.timezone = timezone;
+  if (options?.proactive) body.proactive = true;
+  if (options?.threadBeat) body.thread_beat = options.threadBeat;
   return JSON.stringify(body);
 }
 
@@ -94,7 +109,16 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
       if (event.express_style) meta.express_style = event.express_style;
       if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
       if (event.singing) meta.singing = true;
-      if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length || meta.singing) {
+      if (event.proactive) meta.proactive = true;
+      if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
+      if (
+        meta.emotion_hint ||
+        meta.express_style ||
+        meta.speech_chunks?.length ||
+        meta.singing ||
+        meta.proactive ||
+        meta.proactive_beats?.length
+      ) {
         (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
       }
       return handlers.onDone(event.reply || full);
@@ -111,6 +135,7 @@ export function streamChatWithXHR(
   signal?: AbortSignal,
   timezone?: string,
   extraHeaders?: Record<string, string>,
+  requestOptions?: ChatRequestOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -192,7 +217,16 @@ export function streamChatWithXHR(
           if (event.express_style) meta.express_style = event.express_style;
           if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
           if (event.singing) meta.singing = true;
-          if (meta.emotion_hint || meta.express_style || meta.speech_chunks?.length || meta.singing) {
+          if (event.proactive) meta.proactive = true;
+          if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
+          if (
+            meta.emotion_hint ||
+            meta.express_style ||
+            meta.speech_chunks?.length ||
+            meta.singing ||
+            meta.proactive ||
+            meta.proactive_beats?.length
+          ) {
             (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
           }
           const reply = handlers.onDone(event.reply || full);
@@ -257,7 +291,7 @@ export function streamChatWithXHR(
       finish(() => reject(new Error('Request timed out — check backend and Ollama')));
     };
 
-    xhr.send(buildChatRequestBody(message, timezone));
+    xhr.send(buildChatRequestBody(message, timezone, requestOptions));
   });
 }
 
@@ -268,6 +302,7 @@ export async function streamChatWithFetch(
   signal?: AbortSignal,
   timezone?: string,
   extraHeaders?: Record<string, string>,
+  requestOptions?: ChatRequestOptions,
 ): Promise<string> {
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -276,7 +311,7 @@ export async function streamChatWithFetch(
       Accept: 'application/x-ndjson',
       ...extraHeaders,
     },
-    body: buildChatRequestBody(message, timezone),
+    body: buildChatRequestBody(message, timezone, requestOptions),
     signal,
   });
 
@@ -320,18 +355,43 @@ export async function streamChatMessage(
   signal?: AbortSignal,
   timezone?: string,
   extraHeaders?: Record<string, string>,
+  requestOptions?: ChatRequestOptions,
 ): Promise<string> {
   // React Native fetch often buffers the full body; XHR onprogress streams reliably.
   if (Platform.OS !== 'web') {
-    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone, extraHeaders);
+    return streamChatWithXHR(
+      apiUrl,
+      message,
+      handlers,
+      signal,
+      timezone,
+      extraHeaders,
+      requestOptions,
+    );
   }
 
   try {
-    return await streamChatWithFetch(apiUrl, message, handlers, signal, timezone, extraHeaders);
+    return await streamChatWithFetch(
+      apiUrl,
+      message,
+      handlers,
+      signal,
+      timezone,
+      extraHeaders,
+      requestOptions,
+    );
   } catch (err) {
     if (isAbortError(err)) {
       throw err;
     }
-    return streamChatWithXHR(apiUrl, message, handlers, signal, timezone, extraHeaders);
+    return streamChatWithXHR(
+      apiUrl,
+      message,
+      handlers,
+      signal,
+      timezone,
+      extraHeaders,
+      requestOptions,
+    );
   }
 }

@@ -81,6 +81,20 @@ def append_exchange(user_message: str, assistant_message: str) -> None:
     _persist()
 
 
+def append_assistant_continuation(assistant_message: str) -> None:
+    """Proactive companion line — no user turn; chains after prior assistant if needed."""
+    text = _trim(assistant_message)
+    if not text:
+        return
+    if _history and _history[-1]["role"] == "assistant":
+        prev = _history[-1]["text"]
+        merged = _trim(f"{prev} {text}")
+        _history[-1] = {"role": "assistant", "text": merged}
+    else:
+        _history.append({"role": "assistant", "text": text})
+    _persist()
+
+
 def clear() -> None:
     _history.clear()
     if _HISTORY_PATH.is_file():

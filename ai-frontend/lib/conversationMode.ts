@@ -4,11 +4,14 @@ import type { VoicePhase } from './conversationState';
  * Semi-continuous voice session — silence end detection via recording metering.
  */
 
-/** Silence after speech before auto-send (ms). */
-export const SILENCE_END_MS = 1000;
+/** Silence after speech before auto-send (ms). Tunable — longer reduces cut-off mid-thought. */
+export const SILENCE_END_MS = 1500;
 
 /** Minimum time above speech threshold before silence can trigger send. */
-export const MIN_SPEECH_MS = 400;
+export const MIN_SPEECH_MS = 450;
+
+/** Extra tail captured after silence detected — reduces clipped last syllables. */
+export const RECORDING_TAIL_MS = 180;
 
 /** End conversation session after this much idle time (ms). */
 export const SESSION_INACTIVITY_MS = 60_000;
@@ -66,6 +69,15 @@ export const LISTEN_PAUSED_STUCK_MS = 7000;
 
 /** Do not repeat the same watchdog listen recovery within this window. */
 export const WATCHDOG_RECOVERY_COOLDOWN_MS = 8000;
+
+/** Idle listen with no user speech before a proactive companion turn (ms). */
+export const PROACTIVE_IDLE_MS = 10_000;
+
+/** Minimum gap between proactive turns (ms). */
+export const PROACTIVE_MIN_GAP_MS = 20_000;
+
+/** Max proactive turns per session without user speech. */
+export const PROACTIVE_MAX_PER_SESSION = 3;
 
 /** Window for detecting rapid phase flips (voiceLog diagnostic). */
 export const PHASE_OSCILLATION_WINDOW_MS = 2500;
@@ -157,6 +169,10 @@ export type MeterTickResult = {
   endSilence: boolean;
   /** No speech for SESSION_INACTIVITY_MS — end session. */
   inactive: boolean;
+  /** Ms of speech when endSilence fired (0 otherwise). */
+  speechDurationMs: number;
+  /** Ms of trailing silence when endSilence fired (0 otherwise). */
+  silenceDurationMs: number;
 };
 
 export function tickConversationMeter(
@@ -174,22 +190,29 @@ export function tickConversationMeter(
       silenceSince: null,
       lastSpeechAt: now,
     };
-    return { state: next, endSilence: false, inactive: false };
+    return { state: next, endSilence: false, inactive: false, speechDurationMs: 0, silenceDurationMs: 0 };
   }
 
   const silenceSince = state.silenceSince ?? now;
   const next: ConversationMeterState = { ...state, silenceSince };
   const speechMs =
     state.sawSpeech && state.speechStartedAt != null ? now - state.speechStartedAt : 0;
+  const silenceMs = now - silenceSince;
   const endSilence =
     state.sawSpeech &&
     speechMs >= MIN_SPEECH_MS &&
-    now - silenceSince >= SILENCE_END_MS;
+    silenceMs >= SILENCE_END_MS;
 
   const anchor = state.lastSpeechAt ?? state.listenStartedAt;
   const inactive = now - anchor >= SESSION_INACTIVITY_MS;
 
-  return { state: next, endSilence, inactive };
+  return {
+    state: next,
+    endSilence,
+    inactive,
+    speechDurationMs: endSilence ? speechMs : 0,
+    silenceDurationMs: endSilence ? silenceMs : 0,
+  };
 }
 
 export type BargeInMeterState = {

@@ -118,6 +118,14 @@ def rhythm_stream_meta(
             meta["skill_hints"] = growth["skill_hints"]
     except Exception:
         pass
+    try:
+        import companion_thread
+
+        beats = companion_thread.proactive_beats_for_stream()
+        if beats:
+            meta["proactive_beats"] = beats
+    except Exception:
+        pass
     return meta
 
 

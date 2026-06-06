@@ -52,12 +52,17 @@ import {
   PHASE_OSCILLATION_MAX_FLIPS,
   PHASE_OSCILLATION_WINDOW_MS,
   POST_TTS_LISTEN_COOLDOWN_MS,
+  PROACTIVE_IDLE_MS,
+  PROACTIVE_MAX_PER_SESSION,
+  PROACTIVE_MIN_GAP_MS,
+  RECORDING_TAIL_MS,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
   WATCHDOG_RECOVERY_COOLDOWN_MS,
   createBargeInMeterState,
   createConversationMeterState,
+  isSpeechLevel,
   METERING_INTERVAL_MS,
   tickConversationBargeIn,
   tickConversationMeter,
@@ -346,6 +351,12 @@ export default function ChatScreen() {
   /** speakGeneration that completed at least one natural play_settle this turn. */
   const ttsPlaySettledGenRef = useRef(-1);
   const ttsRetryUsedTurnRef = useRef(-1);
+  const proactiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastProactiveAtRef = useRef(0);
+  const proactiveSessionCountRef = useRef(0);
+  const proactiveTurnActiveRef = useRef(false);
+  const [proactiveTurnActive, setProactiveTurnActive] = useState(false);
+  const proactiveBeatsRef = useRef<string[]>([]);
 
   const refreshBackendHealth = async (): Promise<boolean> => {
     const result = await fetchHealthPreflight(API_BASE);
@@ -753,6 +764,12 @@ export default function ChatScreen() {
   };
 
   const endConversationSession = (reason = 'session_end') => {
+    clearProactiveTimer();
+    proactiveSessionCountRef.current = 0;
+    lastProactiveAtRef.current = 0;
+    proactiveTurnActiveRef.current = false;
+    setProactiveTurnActive(false);
+    proactiveBeatsRef.current = [];
     clearConversationListenResumeTimer();
     resetConversationListenRetries();
     conversationListenGenRef.current += 1;
@@ -797,6 +814,74 @@ export default function ChatScreen() {
       }
       prewarmVoiceMicIfIdle();
     })();
+  };
+
+  const clearProactiveTimer = () => {
+    if (proactiveTimerRef.current) {
+      clearTimeout(proactiveTimerRef.current);
+      proactiveTimerRef.current = null;
+    }
+  };
+
+  const canFireProactiveTurn = (): boolean => {
+    if (
+      !conversationSessionRef.current ||
+      voiceInputModeRef.current !== 'conversation' ||
+      !voiceEnabledRef.current
+    ) {
+      return false;
+    }
+    if (proactiveSessionCountRef.current >= PROACTIVE_MAX_PER_SESSION) return false;
+    if (
+      lastProactiveAtRef.current > 0 &&
+      Date.now() - lastProactiveAtRef.current < PROACTIVE_MIN_GAP_MS
+    ) {
+      return false;
+    }
+    if (chatInFlightRef.current || voiceSendLockRef.current) return false;
+    if (voicePhaseRef.current !== 'listening' || !recordingRef.current) return false;
+    const meter = conversationMeterStateRef.current;
+    if (meter?.sawSpeech) return false;
+    return true;
+  };
+
+  const scheduleProactiveTurn = () => {
+    clearProactiveTimer();
+    if (!conversationSessionRef.current) return;
+    proactiveTimerRef.current = setTimeout(() => {
+      proactiveTimerRef.current = null;
+      void fireProactiveTurnIfIdle();
+    }, PROACTIVE_IDLE_MS);
+  };
+
+  const fireProactiveTurnIfIdle = async () => {
+    if (!canFireProactiveTurn()) return;
+    voiceLog('proactive_turn_start', {
+      sessionCount: proactiveSessionCountRef.current,
+      beatsQueued: proactiveBeatsRef.current.length,
+    });
+    proactiveTurnActiveRef.current = true;
+    setProactiveTurnActive(true);
+    lastProactiveAtRef.current = Date.now();
+    proactiveSessionCountRef.current += 1;
+    stopConversationMetering();
+    const rec = recordingRef.current;
+    recordingRef.current = null;
+    recordingStartedAtRef.current = 0;
+    if (rec) await safeUnloadRecording(rec);
+    setVoicePhaseTransition('idle', { reason: 'proactive_handoff' });
+    const threadBeat = proactiveBeatsRef.current[0];
+    await sendMessage('', {
+      proactive: true,
+      threadBeat,
+      skipUserBubble: true,
+    });
+  };
+
+  const resetProactiveOnUserSpeech = () => {
+    clearProactiveTimer();
+    proactiveSessionCountRef.current = 0;
+    lastProactiveAtRef.current = 0;
   };
 
   const beginConversationListenMeter = (listenGen: number) => {
@@ -866,6 +951,10 @@ export default function ChatScreen() {
         const tick = tickConversationMeter(prev, status.metering, now);
         conversationMeterStateRef.current = tick.state;
 
+        if (isSpeechLevel(status.metering)) {
+          clearProactiveTimer();
+        }
+
         if (tick.inactive) {
           endConversationSession();
           setVoiceInputError('Conversation ended — no speech heard.');
@@ -874,10 +963,27 @@ export default function ChatScreen() {
         }
 
         if (tick.endSilence) {
+          voiceLog('end_silence', {
+            speechMs: tick.speechDurationMs,
+            silenceMs: tick.silenceDurationMs,
+            listenGen,
+          });
+          clearProactiveTimer();
           stopConversationMetering();
           const active = recordingRef.current;
           recordingRef.current = null;
           if (!active) return;
+          if (RECORDING_TAIL_MS > 0) {
+            await new Promise((resolve) => setTimeout(resolve, RECORDING_TAIL_MS));
+          }
+          if (listenGen !== conversationListenGenRef.current) {
+            try {
+              await active.stopAndUnloadAsync();
+            } catch {
+              // ignore
+            }
+            return;
+          }
           void finalizeConversationListenChunk(active, listenGen);
         }
         } finally {
@@ -935,6 +1041,8 @@ export default function ChatScreen() {
         listenStartedAt: now,
         lastSpeechAt: now,
       };
+
+      resetProactiveOnUserSpeech();
 
       setVoiceInputError(null);
       voiceUtteranceRef.current += 1;
@@ -1268,6 +1376,7 @@ export default function ChatScreen() {
         resetConversationListenRetries();
         conversationMeterStateRef.current = createConversationMeterState();
         beginConversationListenMeter(listenGen);
+        scheduleProactiveTurn();
         if (micOpenAtRef.current !== null) {
           voiceLog('listen_ready', { dtSinceMicOpenMs: Date.now() - micOpenAtRef.current });
           markListenReadyTiming();
@@ -1303,6 +1412,7 @@ export default function ChatScreen() {
               resetConversationListenRetries();
               conversationMeterStateRef.current = createConversationMeterState();
               beginConversationListenMeter(listenGen);
+              scheduleProactiveTurn();
               if (micOpenAtRef.current !== null) {
                 voiceLog('listen_ready', {
                   dtSinceMicOpenMs: Date.now() - micOpenAtRef.current,
@@ -3077,6 +3187,7 @@ export default function ChatScreen() {
         return;
       }
       lastVoiceTranscriptRef.current = transcript;
+      resetProactiveOnUserSpeech();
       await sendMessage(transcript);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Voice input failed';
@@ -3200,14 +3311,26 @@ export default function ChatScreen() {
     }
   };
 
-  const sendMessage = async (messageText?: string) => {
+  const sendMessage = async (
+    messageText?: string,
+    sendOptions?: {
+      proactive?: boolean;
+      threadBeat?: string;
+      skipUserBubble?: boolean;
+    },
+  ) => {
+    const isProactive = sendOptions?.proactive === true;
     const text = (messageText ?? input).trim();
-    if (!text || chatInFlightRef.current) return;
+    if ((!text && !isProactive) || chatInFlightRef.current) return;
 
-    const fromVoice = messageText !== undefined;
+    const fromVoice = messageText !== undefined || isProactive;
 
     if (!fromVoice && voicePhaseRef.current === 'listening') {
       stopConversationListening();
+    }
+
+    if (isProactive) {
+      clearProactiveTimer();
     }
 
     if (voicePhaseRef.current === 'recording') {
@@ -3264,6 +3387,7 @@ export default function ChatScreen() {
     markVoiceTiming(voiceTurnTimingRef.current, 'send_start');
     voiceLog('send_message', {
       fromVoice,
+      proactive: isProactive,
       textLen: text.length,
       preview: text.length > 48 ? `${text.slice(0, 45)}…` : text,
     });
@@ -3288,11 +3412,14 @@ export default function ChatScreen() {
 
     const streamHandlerGen = voiceSessionRef.current.streamHandlerGen;
 
-    const userMessage: ChatMessage = {
-      id: `${Date.now()}-user`,
-      role: 'user',
-      text,
-    };
+    const userMessage: ChatMessage | null =
+      sendOptions?.skipUserBubble || isProactive
+        ? null
+        : {
+            id: `${Date.now()}-user`,
+            role: 'user',
+            text,
+          };
     const assistantId = `${Date.now()}-assistant`;
     activeAssistantIdRef.current = assistantId;
     streamVoiceBufferRef.current = '';
@@ -3312,7 +3439,7 @@ export default function ChatScreen() {
 
     setMessages((prev) => [
       ...prev,
-      userMessage,
+      ...(userMessage ? [userMessage] : []),
       { id: assistantId, role: 'assistant', text: '', streaming: true },
     ]);
     if (messageText === undefined) setInput('');
@@ -3334,6 +3461,9 @@ export default function ChatScreen() {
             if (!isActiveVoiceTurn(turn)) return;
             markVoiceTiming(voiceTurnTimingRef.current, 'stream_start');
             rhythmMetaRef.current = meta?.rhythm ?? null;
+            if (meta?.rhythm?.proactive_beats?.length) {
+              proactiveBeatsRef.current = meta.rhythm.proactive_beats;
+            }
             setLoading(false);
             setIsStreaming(true);
             if (voiceEnabledRef.current) {
@@ -3380,6 +3510,9 @@ export default function ChatScreen() {
             ttsEmotionHintRef.current = meta.emotion_hint ?? null;
             if (meta.speech_chunks?.length) {
               serverSpeechChunksRef.current = meta.speech_chunks;
+            }
+            if (meta.proactive_beats?.length) {
+              proactiveBeatsRef.current = meta.proactive_beats;
             }
             currentReplyIsSingingRef.current = meta.singing === true;
           },
@@ -3449,6 +3582,9 @@ export default function ChatScreen() {
         abortController.signal,
         getDeviceTimezone(),
         wearablesChatHeaders(),
+        isProactive
+          ? { proactive: true, threadBeat: sendOptions?.threadBeat }
+          : undefined,
       );
 
       if (voiceEnabledRef.current && replyForTts.trim()) {
@@ -3605,6 +3741,10 @@ export default function ChatScreen() {
         voiceTurnTimingRef.current = null;
       }
       logVoiceSnapshot('send_finally');
+      if (isProactive) {
+        proactiveTurnActiveRef.current = false;
+        setProactiveTurnActive(false);
+      }
     }
   };
 
@@ -3619,7 +3759,10 @@ export default function ChatScreen() {
     voicePhase === 'speaking' ||
     voicePhase === 'interrupting' ||
     voicePhase === 'recording';
-  const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession);
+  const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
+    proactive: proactiveTurnActive,
+    companionName,
+  });
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
