@@ -134,6 +134,18 @@ Conversation mode listen-debug checklist (phone):
 
 Voice error copy on device: **Microphone busy**, **That was my voice**, **Didn't catch that**, **No audio heard — raise volume, silent switch off, tap above to hear**.
 
+### Quiet speech not heard (phone)
+
+If the app stays on **Listening…** but never responds:
+
+1. **Speak closer** to the phone mic (bottom edge on iPhone) — arm's-length quiet speech may sit below the meter threshold.
+2. **Quiet room** — fan/HVAC noise can steal headroom; a quieter room helps more than lowering thresholds further.
+3. In Metro / `[voice]` logs, look for:
+   - `quiet_voice_timeout` — listening 5s with no meter speech (try louder or closer).
+   - `end_silence` — meter saw speech and sent a chunk (STT may still fail if too quiet).
+   - `quiet_listen_retry` — one automatic re-listen after quiet speech + empty STT.
+4. Current tuning: `SPEECH_LEVEL_DB` **-56**, `MIN_SPEECH_MS` **400**, `MIN_RECORDING_MS` **400** (`lib/conversationMode.ts`, `lib/voiceInput.ts`).
+
 On load, the app calls **`GET /health`** and shows an orange banner if the backend is unreachable, Azure speech is missing, or **`DEV_MOCK_*`** is on when you expected real AI/voice.
 
 While **Conversation** mode is active, tap **End conversation** (header) or **Stop** on the mic to tear down: stop recording, clear listen timers, abort in-flight TTS/chat, return to idle.

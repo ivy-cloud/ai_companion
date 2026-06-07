@@ -12,8 +12,10 @@ import {
   PROACTIVE_IDLE_MS,
   PROACTIVE_MAX_PER_SESSION,
   PROACTIVE_MIN_GAP_MS,
+  QUIET_VOICE_TIMEOUT_MS,
   SILENCE_END_MS,
   SPEECH_LEVEL_DB,
+  shouldSecondChanceQuietListen,
   canResumeConversationListen,
   createConversationMeterState,
   isSpeechLevel,
@@ -63,9 +65,9 @@ test('phase0: listen timing constants stay bounded', () => {
 });
 
 test('speech level: quiet speech above threshold registers', () => {
-  assert.equal(SPEECH_LEVEL_DB, -52);
-  assert.equal(isSpeechLevel(-51), true);
-  assert.equal(isSpeechLevel(-52), false);
+  assert.equal(SPEECH_LEVEL_DB, -56);
+  assert.equal(isSpeechLevel(-55), true);
+  assert.equal(isSpeechLevel(-56), false);
   assert.equal(isSpeechLevel(-50), true);
 });
 
@@ -106,7 +108,7 @@ test('listen meter blocked recovery threshold', () => {
 
 test('silence timing: endSilence needs MIN_SPEECH_MS + SILENCE_END_MS', () => {
   assert.equal(SILENCE_END_MS, 1500);
-  assert.equal(MIN_SPEECH_MS, 450);
+  assert.equal(MIN_SPEECH_MS, 400);
   const t0 = 1000;
   let state = createConversationMeterState(t0);
   state = {
@@ -122,6 +124,45 @@ test('silence timing: endSilence needs MIN_SPEECH_MS + SILENCE_END_MS', () => {
   assert.equal(ready.endSilence, true);
   assert.ok(ready.speechDurationMs >= MIN_SPEECH_MS);
   assert.ok(ready.silenceDurationMs >= SILENCE_END_MS);
+});
+
+test('quiet voice timeout fires once after 5s with no speech', () => {
+  assert.equal(QUIET_VOICE_TIMEOUT_MS, 5000);
+  const t0 = 1000;
+  const state = createConversationMeterState(t0);
+  const before = tickConversationMeter(state, -60, t0 + QUIET_VOICE_TIMEOUT_MS - 1);
+  assert.equal(before.quietVoiceTimeout, false);
+  const at = tickConversationMeter(state, -60, t0 + QUIET_VOICE_TIMEOUT_MS);
+  assert.equal(at.quietVoiceTimeout, true);
+  const again = tickConversationMeter(at.state, -60, t0 + QUIET_VOICE_TIMEOUT_MS + 1000);
+  assert.equal(again.quietVoiceTimeout, false);
+});
+
+test('second-chance quiet listen when STT empty but meter saw quiet speech', () => {
+  assert.equal(
+    shouldSecondChanceQuietListen({
+      sawSpeech: true,
+      peakMetering: -52,
+      speechDurationMs: MIN_SPEECH_MS,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldSecondChanceQuietListen({
+      sawSpeech: true,
+      peakMetering: -48,
+      speechDurationMs: MIN_SPEECH_MS,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldSecondChanceQuietListen({
+      sawSpeech: false,
+      peakMetering: -52,
+      speechDurationMs: MIN_SPEECH_MS,
+    }),
+    false,
+  );
 });
 
 test('proactive timing constants bounded', () => {

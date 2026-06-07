@@ -66,10 +66,12 @@ import {
   createConversationMeterState,
   isSpeechLevel,
   METERING_INTERVAL_MS,
+  shouldSecondChanceQuietListen,
   tickConversationBargeIn,
   tickConversationMeter,
   type BargeInMeterState,
   type ConversationMeterState,
+  type QuietListenMeterMeta,
 } from '../lib/conversationMode';
 import {
   formatReplyForUi,
@@ -307,6 +309,8 @@ export default function ChatScreen() {
   const micPressRef = useRef(false);
   const voiceUtteranceRef = useRef(0);
   const voiceSendLockRef = useRef(false);
+  /** One quiet-speech second-chance listen per successful user turn. */
+  const quietListenRetryUsedRef = useRef(false);
   const lastVoiceTranscriptRef = useRef('');
   const naturalVoiceEnabledRef = useRef(true);
   const voiceGenderRef = useRef<VoiceGender>('female');
@@ -998,6 +1002,14 @@ export default function ChatScreen() {
           clearProactiveTimer();
         }
 
+        if (tick.quietVoiceTimeout) {
+          voiceLog('quiet_voice_timeout', {
+            listenMs: now - tick.state.listenStartedAt,
+            listenGen,
+            hint: 'Speak closer or louder; check voice log for end_silence',
+          });
+        }
+
         if (tick.inactive) {
           endConversationSession();
           setVoiceInputError('Conversation ended — no speech heard.');
@@ -1027,7 +1039,11 @@ export default function ChatScreen() {
             }
             return;
           }
-          void finalizeConversationListenChunk(active, listenGen);
+          void finalizeConversationListenChunk(active, listenGen, {
+            sawSpeech: tick.state.sawSpeech,
+            peakMetering: tick.state.peakMetering,
+            speechDurationMs: tick.speechDurationMs,
+          });
         }
         } finally {
           conversationMeterTickInFlightRef.current = false;
@@ -1083,6 +1099,8 @@ export default function ChatScreen() {
         silenceSince: null,
         listenStartedAt: now,
         lastSpeechAt: now,
+        peakMetering: null,
+        quietVoiceTimeoutLogged: false,
       };
 
       resetProactiveOnUserSpeech();
@@ -1104,6 +1122,7 @@ export default function ChatScreen() {
   const finalizeConversationListenChunk = async (
     recording: Audio.Recording,
     listenGen: number,
+    meterMeta?: QuietListenMeterMeta,
   ) => {
     stopConversationMetering();
     recordingRef.current = null;
@@ -1134,7 +1153,10 @@ export default function ChatScreen() {
 
     try {
       const uri = await stopRecordingToUri(recording);
-      void processVoiceUtterance(uri, utteranceId, { fromConversation: true });
+      void processVoiceUtterance(uri, utteranceId, {
+        fromConversation: true,
+        meterMeta,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Recording failed';
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
@@ -3144,7 +3166,7 @@ export default function ChatScreen() {
   const processVoiceUtterance = async (
     uri: string,
     utteranceId: number,
-    options?: { fromConversation?: boolean },
+    options?: { fromConversation?: boolean; meterMeta?: QuietListenMeterMeta },
   ) => {
     if (utteranceId !== voiceUtteranceRef.current) return;
     if (voiceSendLockRef.current) return;
@@ -3229,6 +3251,7 @@ export default function ChatScreen() {
       }
       lastVoiceTranscriptRef.current = transcript;
       resetProactiveOnUserSpeech();
+      quietListenRetryUsedRef.current = false;
       await sendMessage(transcript);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Voice input failed';
@@ -3236,7 +3259,25 @@ export default function ChatScreen() {
         logVoiceState('stt_empty', {
           preview: msg.length > 80 ? `${msg.slice(0, 77)}…` : msg,
           phase: voicePhaseRef.current,
+          peakDb: options?.meterMeta?.peakMetering ?? null,
+          speechMs: options?.meterMeta?.speechDurationMs ?? 0,
         });
+        const meta = options?.meterMeta;
+        if (
+          meta &&
+          shouldSecondChanceQuietListen(meta) &&
+          !quietListenRetryUsedRef.current
+        ) {
+          quietListenRetryUsedRef.current = true;
+          voiceLog('quiet_listen_retry', {
+            peakDb: meta.peakMetering,
+            speechMs: meta.speechDurationMs,
+          });
+          setVoiceInputError('Speak a bit closer — listening again…');
+          setVoicePhaseTransition('idle');
+          scheduleConversationListen(100);
+          return;
+        }
       }
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       if (!fromConversation) {

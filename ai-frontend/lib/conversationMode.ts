@@ -8,7 +8,7 @@ import type { VoicePhase } from './conversationState';
 export const SILENCE_END_MS = 1500;
 
 /** Minimum time above speech threshold before silence can trigger send. */
-export const MIN_SPEECH_MS = 450;
+export const MIN_SPEECH_MS = 400;
 
 /** Extra tail captured after silence detected — reduces clipped last syllables. */
 export const RECORDING_TAIL_MS = 180;
@@ -130,10 +130,16 @@ export function shouldRecoverListenPausedStuck(
 
 /**
  * Expo metering is dBFS (negative). Above this ≈ speech; below ≈ silence.
- * Tune per device if needed.
+ * Lower (more negative) picks up quieter speech at arm's length on phone mics;
+ * also raises false triggers from room noise / HVAC — do not go below ~-58 without testing.
  */
-/** Slightly below -50 so quiet speech on phone mic still registers. */
-export const SPEECH_LEVEL_DB = -52;
+export const SPEECH_LEVEL_DB = -56;
+
+/** Log hint when listening this long with no meter speech (quiet_voice_timeout). */
+export const QUIET_VOICE_TIMEOUT_MS = 5000;
+
+/** Peak at or below this during a listen cycle = quiet speech (second-chance STT retry). */
+export const QUIET_SPEECH_PEAK_MAX_DB = -50;
 
 export function isSpeechLevel(metering?: number): boolean {
   if (metering === undefined || metering === null || Number.isNaN(metering)) {
@@ -155,6 +161,9 @@ export type ConversationMeterState = {
   silenceSince: number | null;
   listenStartedAt: number;
   lastSpeechAt: number | null;
+  /** Max dBFS seen this listen cycle (for quiet-speech diagnostics). */
+  peakMetering: number | null;
+  quietVoiceTimeoutLogged: boolean;
 };
 
 export function createConversationMeterState(now = Date.now()): ConversationMeterState {
@@ -164,6 +173,8 @@ export function createConversationMeterState(now = Date.now()): ConversationMete
     silenceSince: null,
     listenStartedAt: now,
     lastSpeechAt: null,
+    peakMetering: null,
+    quietVoiceTimeoutLogged: false,
   };
 }
 
@@ -173,17 +184,43 @@ export type MeterTickResult = {
   endSilence: boolean;
   /** No speech for SESSION_INACTIVITY_MS — end session. */
   inactive: boolean;
+  /** Listening with no sawSpeech for QUIET_VOICE_TIMEOUT_MS — log once. */
+  quietVoiceTimeout: boolean;
   /** Ms of speech when endSilence fired (0 otherwise). */
   speechDurationMs: number;
   /** Ms of trailing silence when endSilence fired (0 otherwise). */
   silenceDurationMs: number;
 };
 
+export type QuietListenMeterMeta = {
+  sawSpeech: boolean;
+  peakMetering: number | null;
+  speechDurationMs: number;
+};
+
+/** Second-chance listen when STT empty but meter saw brief quiet speech. */
+export function shouldSecondChanceQuietListen(meta: QuietListenMeterMeta): boolean {
+  if (!meta.sawSpeech || meta.peakMetering === null) return false;
+  if (meta.speechDurationMs < MIN_SPEECH_MS) return false;
+  return meta.peakMetering <= QUIET_SPEECH_PEAK_MAX_DB;
+}
+
+function nextPeakMetering(
+  peak: number | null,
+  metering: number | undefined,
+): number | null {
+  if (metering === undefined || metering === null || Number.isNaN(metering)) {
+    return peak;
+  }
+  return peak === null ? metering : Math.max(peak, metering);
+}
+
 export function tickConversationMeter(
   state: ConversationMeterState,
   metering: number | undefined,
   now: number,
 ): MeterTickResult {
+  const peakMetering = nextPeakMetering(state.peakMetering, metering);
   const speech = isSpeechLevel(metering);
 
   if (speech) {
@@ -193,12 +230,29 @@ export function tickConversationMeter(
       speechStartedAt: state.speechStartedAt ?? now,
       silenceSince: null,
       lastSpeechAt: now,
+      peakMetering,
     };
-    return { state: next, endSilence: false, inactive: false, speechDurationMs: 0, silenceDurationMs: 0 };
+    return {
+      state: next,
+      endSilence: false,
+      inactive: false,
+      quietVoiceTimeout: false,
+      speechDurationMs: 0,
+      silenceDurationMs: 0,
+    };
   }
 
   const silenceSince = state.silenceSince ?? now;
-  const next: ConversationMeterState = { ...state, silenceSince };
+  const quietVoiceTimeout =
+    !state.sawSpeech &&
+    !state.quietVoiceTimeoutLogged &&
+    now - state.listenStartedAt >= QUIET_VOICE_TIMEOUT_MS;
+  const next: ConversationMeterState = {
+    ...state,
+    silenceSince,
+    peakMetering,
+    quietVoiceTimeoutLogged: state.quietVoiceTimeoutLogged || quietVoiceTimeout,
+  };
   const speechMs =
     state.sawSpeech && state.speechStartedAt != null ? now - state.speechStartedAt : 0;
   const silenceMs = now - silenceSince;
@@ -214,6 +268,7 @@ export function tickConversationMeter(
     state: next,
     endSilence,
     inactive,
+    quietVoiceTimeout,
     speechDurationMs: endSilence ? speechMs : 0,
     silenceDurationMs: endSilence ? silenceMs : 0,
   };
