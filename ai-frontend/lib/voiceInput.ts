@@ -166,7 +166,7 @@ export async function startPushToTalkRecording(): Promise<Audio.Recording> {
     await configureRecordingAudioMode();
     await discardPrewarm();
     const recording = new Audio.Recording();
-    await recording.prepareToRecordAsync(RECORDING_OPTIONS);
+    await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
     await recording.startAsync();
     prewarmRecordingPipeline();
     return recording;

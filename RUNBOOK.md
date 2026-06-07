@@ -145,6 +145,7 @@ If the app stays on **Listening…** but never responds:
    - `end_silence` — meter saw speech and sent a chunk (STT may still fail if too quiet).
    - `quiet_listen_retry` — one automatic re-listen after quiet speech + empty STT.
 4. Current tuning: `SPEECH_LEVEL_DB` **-56**, `MIN_SPEECH_MS` **400**, `MIN_RECORDING_MS` **400** (`lib/conversationMode.ts`, `lib/voiceInput.ts`).
+5. While **Listening…** or holding **Mic** (PTT), a subtle coral wave under the phase label should move with your voice (`components/VoiceInputWave.tsx`).
 
 On load, the app calls **`GET /health`** and shows an orange banner if the backend is unreachable, Azure speech is missing, or **`DEV_MOCK_*`** is on when you expected real AI/voice.
 

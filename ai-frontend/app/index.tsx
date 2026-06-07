@@ -154,6 +154,11 @@ import {
   mergeAbortSignals,
 } from '../lib/voiceSession';
 import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
+import { VoiceInputWave } from '../components/VoiceInputWave';
+import {
+  dbfsToNormalized,
+  VOICE_METER_UI_THROTTLE_MS,
+} from '../lib/voiceMeterLevel';
 import {
   flushVoiceLogNetwork,
   setVoiceLogContext,
@@ -284,6 +289,7 @@ export default function ChatScreen() {
   const [deviceTimezone, setDeviceTimezone] = useState<string | undefined>(() =>
     getDeviceTimezone(),
   );
+  const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
   const voiceEnabledRef = useRef(true);
   const voicePhaseRef = useRef<VoicePhase>('idle');
   const voiceInputModeRef = useRef<VoiceInputMode>('ptt');
@@ -327,6 +333,11 @@ export default function ChatScreen() {
   const phaseOscillationCooldownUntilRef = useRef(0);
   const conversationMeterTickInFlightRef = useRef(false);
   const conversationBargeMeterTickInFlightRef = useRef(false);
+  const voiceMeterUiLastAtRef = useRef(0);
+  const voiceMeterUiPendingRef = useRef<number | null>(null);
+  const voiceMeterUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pttMeterRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pttMeterTickInFlightRef = useRef(false);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const activeAssistantIdRef = useRef<string | null>(null);
@@ -683,6 +694,68 @@ export default function ChatScreen() {
     conversationMeterStateRef.current = null;
   };
 
+  const clearVoiceMeterLevel = () => {
+    if (voiceMeterUiTimerRef.current) {
+      clearTimeout(voiceMeterUiTimerRef.current);
+      voiceMeterUiTimerRef.current = null;
+    }
+    voiceMeterUiPendingRef.current = null;
+    setVoiceMeterLevel(0);
+  };
+
+  const publishVoiceMeterLevel = (metering: number | undefined) => {
+    const level = dbfsToNormalized(metering);
+    const now = Date.now();
+    const elapsed = now - voiceMeterUiLastAtRef.current;
+    if (elapsed >= VOICE_METER_UI_THROTTLE_MS) {
+      voiceMeterUiLastAtRef.current = now;
+      setVoiceMeterLevel(level);
+      return;
+    }
+    voiceMeterUiPendingRef.current = level;
+    if (voiceMeterUiTimerRef.current) return;
+    voiceMeterUiTimerRef.current = setTimeout(() => {
+      voiceMeterUiTimerRef.current = null;
+      if (voiceMeterUiPendingRef.current !== null) {
+        voiceMeterUiLastAtRef.current = Date.now();
+        setVoiceMeterLevel(voiceMeterUiPendingRef.current);
+        voiceMeterUiPendingRef.current = null;
+      }
+    }, VOICE_METER_UI_THROTTLE_MS - elapsed);
+  };
+
+  const stopPttMetering = () => {
+    if (pttMeterRef.current) {
+      clearInterval(pttMeterRef.current);
+      pttMeterRef.current = null;
+    }
+  };
+
+  const beginPttMeter = () => {
+    stopPttMetering();
+    pttMeterRef.current = setInterval(() => {
+      if (pttMeterTickInFlightRef.current) return;
+      pttMeterTickInFlightRef.current = true;
+      void (async () => {
+        try {
+          if (voicePhaseRef.current !== 'recording') return;
+          const recording = recordingRef.current;
+          if (!recording) return;
+          let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+          try {
+            status = await recording.getStatusAsync();
+          } catch {
+            return;
+          }
+          if (!status.isRecording) return;
+          publishVoiceMeterLevel(status.metering);
+        } finally {
+          pttMeterTickInFlightRef.current = false;
+        }
+      })();
+    }, METERING_INTERVAL_MS);
+  };
+
   /** Stop barge-in metering and return the live recorder (caller may hand off to listen). */
   const detachConversationBargeRecording = (): Audio.Recording | null => {
     conversationBargeGenRef.current += 1;
@@ -778,6 +851,7 @@ export default function ChatScreen() {
           const graceUntil = conversationBargeGraceUntilRef.current;
           const tick = tickConversationBargeIn(prev, status.metering, now, graceUntil);
           conversationBargeStateRef.current = tick.state;
+          publishVoiceMeterLevel(status.metering);
 
           if (tick.triggered) {
             conversationBargeCooldownUntilRef.current = Date.now() + BARGE_IN_COOLDOWN_MS;
@@ -997,6 +1071,7 @@ export default function ChatScreen() {
         const prev = conversationMeterStateRef.current ?? createConversationMeterState(now);
         const tick = tickConversationMeter(prev, status.metering, now);
         conversationMeterStateRef.current = tick.state;
+        publishVoiceMeterLevel(status.metering);
 
         if (isSpeechLevel(status.metering)) {
           clearProactiveTimer();
@@ -3323,13 +3398,18 @@ export default function ChatScreen() {
       const recording = await startPushToTalkRecording();
       if (!micPressRef.current || voicePhaseRef.current !== 'recording') {
         await recording.stopAndUnloadAsync();
+        stopPttMetering();
+        clearVoiceMeterLevel();
         setVoicePhaseTransition('idle');
         prewarmVoiceMicIfIdle();
         return;
       }
       recordingRef.current = recording;
       recordingStartedAtRef.current = Date.now();
+      beginPttMeter();
     } catch (err) {
+      stopPttMetering();
+      clearVoiceMeterLevel();
       recordingRef.current = null;
       micPressRef.current = false;
       const msg = err instanceof Error ? err.message : 'Could not start recording';
@@ -3341,6 +3421,8 @@ export default function ChatScreen() {
 
   const onMicPressOut = async () => {
     if (voiceInputModeRef.current === 'conversation') return;
+    stopPttMetering();
+    clearVoiceMeterLevel();
     const wasPressed = micPressRef.current;
     micPressRef.current = false;
 
@@ -3836,6 +3918,19 @@ export default function ChatScreen() {
     }
   };
 
+  useEffect(() => {
+    if (
+      voicePhase !== 'listening' &&
+      voicePhase !== 'recording' &&
+      voicePhase !== 'speaking'
+    ) {
+      clearVoiceMeterLevel();
+      stopPttMetering();
+    } else if (voicePhase !== 'recording') {
+      stopPttMetering();
+    }
+  }, [voicePhase]);
+
   const busy = loading || isStreaming;
   const voiceBusy =
     voicePhase !== 'idle' &&
@@ -3852,6 +3947,15 @@ export default function ChatScreen() {
     companionName,
   });
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
+  const voiceWaveInputVisible =
+    voicePhase === 'listening' || voicePhase === 'recording';
+  const voiceWaveBargeVisible =
+    voicePhase === 'speaking' &&
+    voiceInputMode === 'conversation' &&
+    conversationSession &&
+    voiceMeterLevel > 0.04;
+  const voiceWaveVisible = voiceWaveInputVisible || voiceWaveBargeVisible;
+  const voiceWaveSubtle = voiceWaveBargeVisible && !voiceWaveInputVisible;
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
     conversationSession &&
@@ -3991,6 +4095,13 @@ export default function ChatScreen() {
             />
             <View style={styles.voiceStatusText}>
               <Text style={styles.voiceStatusLabel}>{phaseLabel}</Text>
+              {voiceWaveVisible ? (
+                <VoiceInputWave
+                  level={voiceMeterLevel}
+                  visible={voiceWaveVisible}
+                  subtle={voiceWaveSubtle}
+                />
+              ) : null}
               <Text style={styles.voiceStatusHint}>{phaseHint}</Text>
               <Text style={styles.clockTzHint}>
                 {deviceTimezone
