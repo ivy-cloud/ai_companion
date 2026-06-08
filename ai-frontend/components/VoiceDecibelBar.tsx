@@ -24,9 +24,15 @@ export function VoiceDecibelBar({
   const aboveThreshold =
     dbfs !== null && !Number.isNaN(dbfs) && dbfs > thresholdDb;
 
+  const label = formatDbfsLabel(dbfs);
+
   return (
-    <View style={styles.wrap} accessibilityRole="progressbar" accessibilityValue={{ now: percent, min: 0, max: 100 }}>
-      <Text style={styles.label}>{formatDbfsLabel(dbfs)}</Text>
+    <View
+      style={styles.wrap}
+      accessibilityLabel={`Voice level ${label}`}
+      accessibilityRole="text"
+    >
+      <Text style={styles.label}>{label}</Text>
       <View style={styles.track}>
         <View
           style={[
@@ -46,14 +52,13 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 340,
     marginTop: 8,
-    gap: 4,
   },
   label: {
     fontSize: 12,
     fontWeight: '600',
-    fontVariant: ['tabular-nums'],
     color: '#7a6e72',
     textAlign: 'center',
+    marginBottom: 4,
   },
   track: {
     height: 6,
@@ -77,5 +82,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#b85c4a',
     textAlign: 'center',
+    marginTop: 4,
   },
 });

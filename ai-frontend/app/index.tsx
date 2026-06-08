@@ -888,6 +888,42 @@ export default function ChatScreen() {
     }, VOICE_METER_UI_THROTTLE_MS - elapsed);
   };
 
+  const primeIosSpeaker = async () => {
+    if (Platform.OS !== 'ios') return;
+    await prepareForTtsPlayback();
+    const sound = primeSoundRef.current;
+    if (!sound) return;
+    try {
+      await sound.setVolumeAsync(1.0);
+      await sound.setPositionAsync(0);
+      await sound.playAsync();
+    } catch {
+      // continue
+    }
+  };
+
+  const ensureIosSpeakerPrimed = async (generation: number) => {
+    if (Platform.OS !== 'ios') return;
+    if (iosSpeakerPrimedGenerationRef.current === generation) return;
+    await primeIosSpeaker();
+    iosSpeakerPrimedGenerationRef.current = generation;
+  };
+
+  const markTtsPlaybackFailed = (
+    replyText: string,
+    reason: string,
+    extra?: Record<string, string | number | boolean>,
+  ) => {
+    voiceLog('tts_failed', { reason, ...extra });
+    setVoicePlaybackError(
+      formatVoicePlaybackError(
+        'No audio heard — raise volume, silent switch off, tap above to hear.',
+      ),
+    );
+    const trimmed = replyText.trim();
+    if (trimmed) setTtsTapToHearText(trimmed);
+  };
+
   const stopPttMetering = () => {
     if (pttMeterRef.current) {
       clearInterval(pttMeterRef.current);
@@ -2625,42 +2661,6 @@ export default function ChatScreen() {
     );
     setIsStreaming(false);
     setLoading(false);
-  };
-
-  const primeIosSpeaker = async () => {
-    if (Platform.OS !== 'ios') return;
-    await prepareForTtsPlayback();
-    const sound = primeSoundRef.current;
-    if (!sound) return;
-    try {
-      await sound.setVolumeAsync(1.0);
-      await sound.setPositionAsync(0);
-      await sound.playAsync();
-    } catch {
-      // continue
-    }
-  };
-
-  const ensureIosSpeakerPrimed = async (generation: number) => {
-    if (Platform.OS !== 'ios') return;
-    if (iosSpeakerPrimedGenerationRef.current === generation) return;
-    await primeIosSpeaker();
-    iosSpeakerPrimedGenerationRef.current = generation;
-  };
-
-  const markTtsPlaybackFailed = (
-    replyText: string,
-    reason: string,
-    extra?: Record<string, string | number | boolean>,
-  ) => {
-    voiceLog('tts_failed', { reason, ...extra });
-    setVoicePlaybackError(
-      formatVoicePlaybackError(
-        'No audio heard — raise volume, silent switch off, tap above to hear.',
-      ),
-    );
-    const trimmed = replyText.trim();
-    if (trimmed) setTtsTapToHearText(trimmed);
   };
 
   const replyTrim = (forTest = false): SpeechTrimOptions | false => {
