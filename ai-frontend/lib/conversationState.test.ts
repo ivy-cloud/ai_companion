@@ -175,6 +175,59 @@ test('stale chat in flight clears sooner with short threshold', () => {
   );
 });
 
+test('stale chat in flight after stream_done when finally hung', () => {
+  const now = Date.now();
+  const sendAt = now - THINKING_NO_STREAM_MS - 100;
+  assert.equal(
+    shouldClearStaleChatInFlight(
+      true,
+      { stream_done: sendAt + 1000 },
+      now,
+      sendAt,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldClearStaleChatInFlight(
+      true,
+      { stream_done: sendAt + 1000 },
+      now,
+      sendAt,
+      THINKING_NO_STREAM_MS,
+    ),
+    true,
+  );
+});
+
+test('stream_done within threshold keeps chat in flight', () => {
+  const now = Date.now();
+  const sendAt = now - 5000;
+  assert.equal(
+    shouldClearStaleChatInFlight(
+      true,
+      { stream_done: sendAt + 1000 },
+      now,
+      sendAt,
+    ),
+    false,
+  );
+});
+
+test('sendMessage skip: voice send lock', () => {
+  assert.equal(
+    getSendMessageSkipReason({
+      text: 'hello',
+      isProactive: false,
+      chatInFlight: false,
+      voiceSendLock: true,
+      phase: 'thinking',
+      fromVoice: true,
+      conversationMode: true,
+    }),
+    'voice_send_lock',
+  );
+});
+
 test('thinking recovery when send never started', () => {
   assert.equal(
     shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS, {

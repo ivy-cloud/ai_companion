@@ -93,6 +93,7 @@ export const TURN_NO_RESPONSE_MS = 45_000;
 export type SendMessageSkipReason =
   | 'empty_text'
   | 'chat_in_flight'
+  | 'voice_send_lock'
   | 'recording'
   | 'listening_non_conversation';
 
@@ -104,12 +105,14 @@ export function getSendMessageSkipReason(input: {
   text: string;
   isProactive: boolean;
   chatInFlight: boolean;
+  voiceSendLock?: boolean;
   phase: VoicePhase;
   fromVoice: boolean;
   conversationMode: boolean;
 }): SendMessageSkipReason | null {
   const text = input.text.trim();
   if (!text && !input.isProactive) return 'empty_text';
+  if (input.fromVoice && input.voiceSendLock) return 'voice_send_lock';
   if (input.chatInFlight) return 'chat_in_flight';
   if (input.phase === 'recording') return 'recording';
   if (
@@ -133,7 +136,10 @@ export function shouldClearStaleChatInFlight(
   if (!chatInFlight) return false;
   if (sendStartedAt == null) return true;
   const sinceSend = nowMs - sendStartedAt;
-  if (marks?.stream_done != null) return false;
+  // Stream finished but finally/TTS hung — allow a new send after the threshold.
+  if (marks?.stream_done != null) {
+    return sinceSend >= thresholdMs;
+  }
   if (marks?.stream_start == null && sinceSend >= thresholdMs) return true;
   if (marks?.stream_start != null && sinceSend >= thresholdMs) return true;
   return false;

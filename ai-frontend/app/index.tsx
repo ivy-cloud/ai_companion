@@ -3639,21 +3639,48 @@ export default function ChatScreen() {
           ? Date.now() - timing.marks.send_start
           : null,
         streamStarted: timing?.marks.stream_start != null,
+        streamDone: timing?.marks.stream_done != null,
       });
       chatAbortRef.current?.abort();
       chatAbortRef.current = null;
       chatInFlightRef.current = false;
     }
 
+    // Typed send preempts a stuck or in-flight assistant turn before skip guards.
+    if (!fromVoice && text) {
+      if (voicePhaseRef.current === 'listening') {
+        stopConversationListening();
+      }
+      if (
+        chatInFlightRef.current ||
+        isAssistantActivePhase(voicePhaseRef.current)
+      ) {
+        if (conversationMode) {
+          interruptConversationAssistant();
+        } else {
+          interruptAssistant();
+        }
+      }
+    }
+
     const skipReason = getSendMessageSkipReason({
       text,
       isProactive,
       chatInFlight: chatInFlightRef.current,
+      voiceSendLock: voiceSendLockRef.current,
       phase: voicePhaseRef.current,
       fromVoice,
       conversationMode: Boolean(conversationMode),
     });
     if (skipReason) {
+      voiceLog('send_blocked', {
+        reason: skipReason,
+        textLen: text.length,
+        phase: voicePhaseRef.current,
+        fromVoice,
+        chatInFlight: chatInFlightRef.current,
+        voiceSendLock: voiceSendLockRef.current,
+      });
       voiceLog('send_message_skipped', {
         reason: skipReason,
         textLen: text.length,
@@ -3661,11 +3688,10 @@ export default function ChatScreen() {
         fromVoice,
         chatInFlight: chatInFlightRef.current,
       });
+      if (!fromVoice && skipReason === 'chat_in_flight') {
+        setVoiceInputError('Still working on the last message — tap Send again or tap Mic to interrupt.');
+      }
       return false;
-    }
-
-    if (!fromVoice && voicePhaseRef.current === 'listening') {
-      stopConversationListening();
     }
 
     if (isProactive) {
@@ -3685,14 +3711,6 @@ export default function ChatScreen() {
       clearStreamUiFlush();
       await stopPlayback();
     } else {
-      if (
-        conversationSessionRef.current &&
-        voiceInputModeRef.current === 'conversation'
-      ) {
-        interruptConversationAssistant();
-      } else {
-        interruptAssistant();
-      }
       const rec = recordingRef.current;
       recordingRef.current = null;
       if (rec) void rec.stopAndUnloadAsync().catch(() => {});
@@ -3721,7 +3739,7 @@ export default function ChatScreen() {
     });
     logVoiceSnapshot('send_start');
     chatInFlightRef.current = true;
-    if (fromVoice && text) {
+    if (text && (fromVoice || voiceEnabledRef.current)) {
       lastVoiceSendTextRef.current = text;
       scheduleTurnNoResponseTimer(turn, text);
     }
@@ -3972,6 +3990,13 @@ export default function ChatScreen() {
       }
       const errText =
         error instanceof Error ? error.message : 'Something went wrong';
+      if (
+        errText.toLowerCase().includes('network') ||
+        errText.toLowerCase().includes('reachable') ||
+        errText.toLowerCase().includes('fetch')
+      ) {
+        void refreshBackendHealth();
+      }
       setMessages((prev) =>
         prev.map((item) =>
           item.id === assistantId
@@ -4093,6 +4118,34 @@ export default function ChatScreen() {
     return sendSucceeded;
   };
 
+  const pressSend = (source: 'send_button' | 'keyboard') => {
+    const text = input.trim();
+    voiceLog('send_button_pressed', {
+      source,
+      textLen: text.length,
+      phase: voicePhaseRef.current,
+      chatInFlight: chatInFlightRef.current,
+      voiceSendLock: voiceSendLockRef.current,
+      voiceEnabled: voiceEnabledRef.current,
+      conversationSession: conversationSessionRef.current,
+    });
+    if (!text) {
+      voiceLog('send_blocked', { reason: 'empty_text', source });
+      return;
+    }
+    if (voicePhaseRef.current === 'recording') {
+      voiceLog('send_blocked', { reason: 'recording', source });
+      setVoiceInputError('Finish recording before sending text.');
+      return;
+    }
+    void sendMessage().catch((err) => {
+      voiceLog('send_failed', {
+        source,
+        message: err instanceof Error ? err.message : 'unknown',
+      });
+    });
+  };
+
   useEffect(() => {
     if (
       voicePhase !== 'listening' &&
@@ -4117,6 +4170,7 @@ export default function ChatScreen() {
     voicePhase === 'speaking' ||
     voicePhase === 'interrupting' ||
     voicePhase === 'recording';
+  const sendEnabled = input.trim().length > 0 && voicePhase !== 'recording';
   const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
     proactive: proactiveTurnActive,
     companionName,
@@ -4235,7 +4289,8 @@ export default function ChatScreen() {
       </View>
 
       {voiceEnabled && voiceHeroActive ? (
-        <VoiceHero
+        <View pointerEvents="box-none">
+          <VoiceHero
           companionName={companionName}
           phaseLabel={phaseLabel}
           phaseHint={phaseHint}
@@ -4244,6 +4299,7 @@ export default function ChatScreen() {
           waveSubtle={voiceWaveSubtle}
           ambient={voiceWaveAmbient}
         />
+        </View>
       ) : null}
 
       <FlatList
@@ -4358,21 +4414,21 @@ export default function ChatScreen() {
             placeholderTextColor="#888888"
             multiline
             editable={!inputLocked}
+            returnKeyType="send"
+            blurOnSubmit
+            onSubmitEditing={() => pressSend('keyboard')}
           />
           <TouchableOpacity
             style={[
               styles.sendButton,
+              !sendEnabled && styles.sendDisabled,
               (loading ||
                 voicePhase === 'thinking' ||
                 voicePhase === 'streaming') &&
                 styles.sendDisabled,
             ]}
-            onPress={() => void sendMessage().catch(() => {})}
-            disabled={
-              voicePhase === 'recording' ||
-              (voicePhase === 'listening' && !input.trim()) ||
-              !input.trim()
-            }
+            onPress={() => pressSend('send_button')}
+            disabled={!sendEnabled}
           >
             {loading &&
             voicePhase !== 'thinking' &&

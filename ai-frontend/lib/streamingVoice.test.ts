@@ -1,4 +1,4 @@
-import { appendSpoken, nextSpeakableChunk } from './streamingVoice';
+import { appendSpoken, nextSpeakableChunk } from './streamingVoice.ts';
 
 function test(name: string, fn: () => void) {
   try {
@@ -10,9 +10,11 @@ function test(name: string, fn: () => void) {
   }
 }
 
-test('first chunk at comma clause', () => {
-  const chunk = nextSpeakableChunk('Well, I remember that day', '', false);
-  if (chunk !== 'Well,') throw new Error(`expected Well, got ${chunk}`);
+test('first chunk at comma clause when long enough', () => {
+  const chunk = nextSpeakableChunk('Well I remember that day, and more', '', false);
+  if (chunk !== 'Well I remember that day,') {
+    throw new Error(`expected clause chunk, got ${chunk}`);
+  }
 });
 
 test('full sentence after two words', () => {
