@@ -10,12 +10,20 @@ export {
   ASSISTANT_STUCK_MS,
   SPEAKING_STUCK_MS,
   INTERRUPTING_STUCK_MS,
+  THINKING_NO_STREAM_MS,
+  TURN_NO_RESPONSE_MS,
   blocksRecordingPrewarm,
   canEnterPhase,
   canExitSpeakingPhaseNow,
+  getSendMessageSkipReason,
+  hasAssistantReplyStarted,
   isAssistantActivePhase,
   isSpeakingPhaseBlocked,
+  shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
+  shouldRecoverThinkingNoStream,
+  type SendMessageSkipReason,
+  type VoiceTurnMarks,
 } from './conversationStateGuards';
 
 /**

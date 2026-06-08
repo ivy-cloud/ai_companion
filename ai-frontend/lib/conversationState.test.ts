@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import {
   SPEAKING_STUCK_MS,
+  THINKING_NO_STREAM_MS,
   canEnterPhase,
   canExitSpeakingPhaseNow,
+  getSendMessageSkipReason,
+  hasAssistantReplyStarted,
   isSpeakingPhaseBlocked,
+  shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
+  shouldRecoverThinkingNoStream,
 } from './conversationStateGuards.ts';
 
 function test(name: string, fn: () => void) {
@@ -114,4 +119,80 @@ test('speaking blocked while stream TTS draining', () => {
 
 test('idle can enter listening for conversation session', () => {
   assert.equal(canEnterPhase('idle', 'listening'), true);
+});
+
+test('sendMessage skip: chat in flight', () => {
+  assert.equal(
+    getSendMessageSkipReason({
+      text: 'hello',
+      isProactive: false,
+      chatInFlight: true,
+      phase: 'thinking',
+      fromVoice: true,
+      conversationMode: true,
+    }),
+    'chat_in_flight',
+  );
+});
+
+test('sendMessage skip: conversation listening allowed', () => {
+  assert.equal(
+    getSendMessageSkipReason({
+      text: 'hello',
+      isProactive: false,
+      chatInFlight: false,
+      phase: 'listening',
+      fromVoice: true,
+      conversationMode: true,
+    }),
+    null,
+  );
+});
+
+test('stale chat in flight when no send timing', () => {
+  assert.equal(shouldClearStaleChatInFlight(true, {}, Date.now(), undefined), true);
+});
+
+test('stale chat in flight after thinking timeout without stream', () => {
+  const now = Date.now();
+  const sendAt = now - THINKING_NO_STREAM_MS - 100;
+  assert.equal(
+    shouldClearStaleChatInFlight(true, {}, now, sendAt),
+    true,
+  );
+});
+
+test('thinking recovery when send never started', () => {
+  assert.equal(
+    shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS, {
+      sendStarted: false,
+      streamStarted: false,
+    }),
+    true,
+  );
+});
+
+test('thinking recovery when stream never started', () => {
+  assert.equal(
+    shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS, {
+      sendStarted: true,
+      streamStarted: false,
+    }),
+    true,
+  );
+});
+
+test('thinking no recovery while stream active under threshold', () => {
+  assert.equal(
+    shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS - 1, {
+      sendStarted: true,
+      streamStarted: false,
+    }),
+    false,
+  );
+});
+
+test('assistant reply started on first token', () => {
+  assert.equal(hasAssistantReplyStarted({ first_token: 1 }), true);
+  assert.equal(hasAssistantReplyStarted({ stream_start: 1 }), false);
 });

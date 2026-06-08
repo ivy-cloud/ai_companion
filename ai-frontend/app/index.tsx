@@ -133,12 +133,18 @@ import {
   ASSISTANT_STUCK_MS,
   SPEAKING_STUCK_MS,
   INTERRUPTING_STUCK_MS,
+  THINKING_NO_STREAM_MS,
+  TURN_NO_RESPONSE_MS,
   blocksRecordingPrewarm,
   canExitSpeakingPhaseNow,
+  getSendMessageSkipReason,
+  hasAssistantReplyStarted,
   isAssistantActivePhase,
   isSpeakingPhaseBlocked,
   logVoiceState,
+  shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
+  shouldRecoverThinkingNoStream,
   transitionVoicePhase,
   type VoicePhase,
 } from '../lib/conversationState';
@@ -375,6 +381,7 @@ export default function ChatScreen() {
   const proactiveTurnActiveRef = useRef(false);
   const [proactiveTurnActive, setProactiveTurnActive] = useState(false);
   const proactiveBeatsRef = useRef<string[]>([]);
+  const turnNoResponseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshBackendHealth = async (): Promise<boolean> => {
     const result = await fetchHealthPreflight(API_BASE);
@@ -1965,6 +1972,74 @@ export default function ChatScreen() {
     setIsStreaming(false);
   };
 
+  const clearTurnNoResponseTimer = () => {
+    if (turnNoResponseTimerRef.current) {
+      clearTimeout(turnNoResponseTimerRef.current);
+      turnNoResponseTimerRef.current = null;
+    }
+  };
+
+  const scheduleTurnNoResponseTimer = (turn: number) => {
+    clearTurnNoResponseTimer();
+    turnNoResponseTimerRef.current = setTimeout(() => {
+      turnNoResponseTimerRef.current = null;
+      if (!isActiveVoiceTurn(turn)) return;
+      const timing = voiceTurnTimingRef.current;
+      if (!timing || timing.turn !== turn) return;
+      if (hasAssistantReplyStarted(timing.marks)) return;
+      const sinceSend = Date.now() - (timing.marks.send_start ?? timing.t0);
+      voiceLog('turn_no_response', {
+        turn,
+        sinceSendMs: sinceSend,
+        phase: voicePhaseRef.current,
+        chatInFlight: chatInFlightRef.current,
+        streamStarted: timing.marks.stream_start != null,
+      });
+      recoverThinkingStuck('turn_no_response', sinceSend);
+    }, TURN_NO_RESPONSE_MS);
+  };
+
+  const recoverThinkingStuck = (reason: string, stuckMs: number) => {
+    clearTurnNoResponseTimer();
+    voiceLog('thinking_stuck_recovery', {
+      reason,
+      stuckMs,
+      phase: voicePhaseRef.current,
+      chatInFlight: chatInFlightRef.current,
+      voiceSendLock: voiceSendLockRef.current,
+    });
+    setVoiceInputError('No response — check backend connection and try again.');
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    chatInFlightRef.current = false;
+    voiceSendLockRef.current = false;
+    ensureUiUnlocked();
+    const assistantId = activeAssistantIdRef.current;
+    if (assistantId) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                streaming: false,
+                text: message.text.trim() || 'No response — try again.',
+              }
+            : message,
+        ),
+      );
+      activeAssistantIdRef.current = null;
+    }
+    const keepConversation =
+      conversationSessionRef.current &&
+      voiceInputModeRef.current === 'conversation';
+    if (keepConversation) {
+      setVoicePhaseTransition('idle', { force: true, reason });
+      scheduleConversationListen(200);
+    } else {
+      releaseVoiceUi(reason);
+    }
+  };
+
   const releaseVoiceUi = (reason = 'release') => {
     cancelActiveStreamTtsDrain();
     bumpSpeakGeneration(voiceSessionRef.current, reason);
@@ -3103,6 +3178,7 @@ export default function ChatScreen() {
       if (voiceTurnSummaryTimerRef.current) {
         clearTimeout(voiceTurnSummaryTimerRef.current);
       }
+      clearTurnNoResponseTimer();
     };
   }, []);
 
@@ -3216,6 +3292,28 @@ export default function ChatScreen() {
         return;
       }
 
+      if (phase === 'thinking') {
+        const timing = voiceTurnTimingRef.current;
+        const currentTurn = voiceSessionRef.current.turn;
+        const turnTiming = timing?.turn === currentTurn ? timing : null;
+        const streamStarted = turnTiming?.marks.stream_start != null;
+        const sendStarted = turnTiming?.marks.send_start != null;
+        if (
+          shouldRecoverThinkingNoStream(phase, stuckMs, {
+            sendStarted,
+            streamStarted,
+          })
+        ) {
+          const now = Date.now();
+          if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
+            return;
+          }
+          lastWatchdogRecoveryAtRef.current = now;
+          recoverThinkingStuck('watchdog_thinking_no_stream', stuckMs);
+        }
+        return;
+      }
+
       if (!isAssistantActivePhase(phase)) return;
       if (chatInFlightRef.current || speakInFlightRef.current) return;
       if (streamTtsDrainingRef.current || streamTtsQueueRef.current.length > 0) return;
@@ -3243,8 +3341,14 @@ export default function ChatScreen() {
     utteranceId: number,
     options?: { fromConversation?: boolean; meterMeta?: QuietListenMeterMeta },
   ) => {
-    if (utteranceId !== voiceUtteranceRef.current) return;
-    if (voiceSendLockRef.current) return;
+    if (utteranceId !== voiceUtteranceRef.current) {
+      voiceLog('voice_send_skipped', { reason: 'stale_utterance', utteranceId });
+      return;
+    }
+    if (voiceSendLockRef.current) {
+      voiceLog('voice_send_skipped', { reason: 'voice_send_lock', utteranceId });
+      return;
+    }
 
     voiceSendLockRef.current = true;
     const fromConversation =
@@ -3258,6 +3362,10 @@ export default function ChatScreen() {
           transcript.length > 60 ? `${transcript.slice(0, 57)}…` : transcript,
       });
       if (utteranceId !== voiceUtteranceRef.current) {
+        voiceLog('voice_send_skipped', {
+          reason: 'stale_utterance_after_stt',
+          utteranceId,
+        });
         if (fromConversation) {
           scheduleConversationListen(200);
         }
@@ -3267,6 +3375,11 @@ export default function ChatScreen() {
         voicePhaseRef.current !== 'thinking' &&
         voicePhaseRef.current !== 'streaming'
       ) {
+        voiceLog('voice_send_skipped', {
+          reason: 'wrong_phase_after_stt',
+          phase: voicePhaseRef.current,
+          fromConversation,
+        });
         if (fromConversation) {
           scheduleConversationListen(200);
         }
@@ -3327,7 +3440,22 @@ export default function ChatScreen() {
       lastVoiceTranscriptRef.current = transcript;
       resetProactiveOnUserSpeech();
       quietListenRetryUsedRef.current = false;
-      await sendMessage(transcript);
+      const sent = await sendMessage(transcript);
+      if (!sent) {
+        voiceLog('send_after_stt_skipped', {
+          phase: voicePhaseRef.current,
+          chatInFlight: chatInFlightRef.current,
+          fromConversation,
+        });
+        setVoiceInputError('Could not send — try again.');
+        if (fromConversation) {
+          setVoicePhaseTransition('idle', { reason: 'send_skipped_after_stt' });
+          scheduleConversationListen(200);
+        } else {
+          setVoicePhaseTransition('idle', { reason: 'send_skipped_after_stt' });
+          prewarmVoiceMicIfIdle();
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Voice input failed';
       if (fromConversation && isEmptySttError(err)) {
@@ -3488,12 +3616,53 @@ export default function ChatScreen() {
       threadBeat?: string;
       skipUserBubble?: boolean;
     },
-  ) => {
+  ): Promise<boolean> => {
     const isProactive = sendOptions?.proactive === true;
     const text = (messageText ?? input).trim();
-    if ((!text && !isProactive) || chatInFlightRef.current) return;
-
     const fromVoice = messageText !== undefined || isProactive;
+    const conversationMode =
+      conversationSessionRef.current &&
+      voiceInputModeRef.current === 'conversation';
+
+    const timing = voiceTurnTimingRef.current;
+    if (
+      shouldClearStaleChatInFlight(
+        chatInFlightRef.current,
+        timing?.marks,
+        Date.now(),
+        timing?.marks.send_start,
+      )
+    ) {
+      voiceLog('send_message_stale_chat_cleared', {
+        phase: voicePhaseRef.current,
+        sinceSendMs: timing?.marks.send_start
+          ? Date.now() - timing.marks.send_start
+          : null,
+        streamStarted: timing?.marks.stream_start != null,
+      });
+      chatAbortRef.current?.abort();
+      chatAbortRef.current = null;
+      chatInFlightRef.current = false;
+    }
+
+    const skipReason = getSendMessageSkipReason({
+      text,
+      isProactive,
+      chatInFlight: chatInFlightRef.current,
+      phase: voicePhaseRef.current,
+      fromVoice,
+      conversationMode: Boolean(conversationMode),
+    });
+    if (skipReason) {
+      voiceLog('send_message_skipped', {
+        reason: skipReason,
+        textLen: text.length,
+        phase: voicePhaseRef.current,
+        fromVoice,
+        chatInFlight: chatInFlightRef.current,
+      });
+      return false;
+    }
 
     if (!fromVoice && voicePhaseRef.current === 'listening') {
       stopConversationListening();
@@ -3501,17 +3670,6 @@ export default function ChatScreen() {
 
     if (isProactive) {
       clearProactiveTimer();
-    }
-
-    if (voicePhaseRef.current === 'recording') {
-      return;
-    }
-    if (
-      voicePhaseRef.current === 'listening' &&
-      fromVoice &&
-      voiceInputModeRef.current !== 'conversation'
-    ) {
-      return;
     }
 
     if (fromVoice) {
@@ -3563,6 +3721,9 @@ export default function ChatScreen() {
     });
     logVoiceSnapshot('send_start');
     chatInFlightRef.current = true;
+    if (fromVoice && text) {
+      scheduleTurnNoResponseTimer(turn);
+    }
 
     if (voiceEnabledRef.current) {
       const phase = voicePhaseRef.current;
@@ -3619,6 +3780,7 @@ export default function ChatScreen() {
 
     let streamFinished = false;
     let replyForTts = '';
+    let sendSucceeded = true;
 
     try {
       await streamChatMessage(
@@ -3630,6 +3792,7 @@ export default function ChatScreen() {
             if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return;
             if (!isActiveVoiceTurn(turn)) return;
             markVoiceTiming(voiceTurnTimingRef.current, 'stream_start');
+            clearTurnNoResponseTimer();
             rhythmMetaRef.current = meta?.rhythm ?? null;
             if (meta?.rhythm?.proactive_beats?.length) {
               proactiveBeatsRef.current = meta.rhythm.proactive_beats;
@@ -3657,6 +3820,7 @@ export default function ChatScreen() {
             if (!isActiveStreamHandler(voiceSessionRef.current, streamHandlerGen)) return;
             if (!isActiveVoiceTurn(turn)) return;
             markVoiceTiming(voiceTurnTimingRef.current, 'first_token');
+            clearTurnNoResponseTimer();
             streamVoiceBufferRef.current += chunk;
             streamTtsRawRef.current += chunk;
             appendAssistantChunk(chunk);
@@ -3694,6 +3858,7 @@ export default function ChatScreen() {
             streamFinished = true;
             streamTtsDoneRef.current = true;
             markVoiceTiming(voiceTurnTimingRef.current, 'stream_done');
+            clearTurnNoResponseTimer();
             const rawReply = (reply || streamTtsRawRef.current || streamVoiceBufferRef.current).trim();
             voiceLog('stream_on_done', {
               rawLen: rawReply.length,
@@ -3787,6 +3952,8 @@ export default function ChatScreen() {
         }
       }
     } catch (error) {
+      sendSucceeded = false;
+      clearTurnNoResponseTimer();
       if (isAbortError(error)) {
         logVoiceState('stream_abort', { turn });
         finalizeInterruptedTurn(assistantId);
@@ -3800,7 +3967,7 @@ export default function ChatScreen() {
           setVoicePhaseTransition('idle', { force: true, reason: 'stream_abort' });
           scheduleConversationListen(120);
         }
-        return;
+        return false;
       }
       const errText =
         error instanceof Error ? error.message : 'Something went wrong';
@@ -3820,11 +3987,13 @@ export default function ChatScreen() {
       } else {
         releaseVoiceUi();
       }
+      return false;
     } finally {
       if (!isActiveVoiceTurn(turn)) {
         logVoiceState('send_message_stale_finally', { turn });
         chatInFlightRef.current = false;
         voiceSendLockRef.current = false;
+        clearTurnNoResponseTimer();
         if (chatAbortRef.current === abortController) {
           chatAbortRef.current = null;
         }
@@ -3836,7 +4005,7 @@ export default function ChatScreen() {
         ) {
           retryConversationListen();
         }
-        return;
+        return false;
       }
       void fetchCompanionFromHealth().then((health) => {
         if (health.name) setCompanionName(health.name);
@@ -3844,6 +4013,10 @@ export default function ChatScreen() {
       });
       clearStreamUiFlush();
       chatInFlightRef.current = false;
+      voiceSendLockRef.current = false;
+      if (streamFinished || hasAssistantReplyStarted(voiceTurnTimingRef.current?.marks)) {
+        clearTurnNoResponseTimer();
+      }
       if (chatAbortRef.current === abortController) {
         chatAbortRef.current = null;
       }
@@ -3916,6 +4089,7 @@ export default function ChatScreen() {
         setProactiveTurnActive(false);
       }
     }
+    return sendSucceeded;
   };
 
   useEffect(() => {
