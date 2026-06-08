@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { VoiceDecibelBar } from './VoiceDecibelBar';
 import { VoiceInputWave } from './VoiceInputWave';
 
 type VoiceHeroProps = {
@@ -6,6 +7,10 @@ type VoiceHeroProps = {
   phaseLabel: string;
   phaseHint: string;
   level: number;
+  /** Raw dBFS for decibel bar (null when meter inactive). */
+  meterDbfs?: number | null;
+  meterVisible?: boolean;
+  speakLouderHint?: boolean;
   waveVisible: boolean;
   waveSubtle?: boolean;
   ambient?: boolean;
@@ -19,26 +24,38 @@ export function VoiceHero({
   phaseLabel,
   phaseHint,
   level,
+  meterDbfs = null,
+  meterVisible = false,
+  speakLouderHint = false,
   waveVisible,
   waveSubtle = false,
   ambient = false,
   compact = false,
 }: VoiceHeroProps) {
+  const decibelHint = speakLouderHint ? 'Speak louder' : null;
+
   if (compact) {
     return (
       <View style={styles.compactHero} accessibilityRole="summary">
         <Text style={styles.compactPhaseLabel} numberOfLines={1}>
           {phaseLabel}
         </Text>
-        {(waveVisible || ambient) && (
-          <VoiceInputWave
-            level={level}
-            visible
-            subtle={waveSubtle}
-            variant="compact"
-            ambient={ambient}
+        <View style={styles.compactMeterCol}>
+          {(waveVisible || ambient) && (
+            <VoiceInputWave
+              level={level}
+              visible
+              subtle={waveSubtle}
+              variant="compact"
+              ambient={ambient}
+            />
+          )}
+          <VoiceDecibelBar
+            dbfs={meterDbfs}
+            visible={meterVisible}
+            hint={decibelHint}
           />
-        )}
+        </View>
       </View>
     );
   }
@@ -53,6 +70,11 @@ export function VoiceHero({
         subtle={waveSubtle}
         variant="hero"
         ambient={ambient}
+      />
+      <VoiceDecibelBar
+        dbfs={meterDbfs}
+        visible={meterVisible}
+        hint={decibelHint}
       />
       <Text style={styles.phaseHint}>{phaseHint}</Text>
     </View>
@@ -87,6 +109,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#4a3f42',
+  },
+  compactMeterCol: {
+    flexShrink: 1,
+    alignItems: 'flex-end',
+    maxWidth: '55%',
   },
   companionName: {
     fontSize: 13,

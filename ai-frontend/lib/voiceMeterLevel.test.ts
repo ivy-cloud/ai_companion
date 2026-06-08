@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   barHeightsFromLevel,
+  dbfsToBarPercent,
   dbfsToNormalized,
+  formatDbfsLabel,
   METER_DBFS_MAX,
   METER_DBFS_MIN,
 } from './voiceMeterLevel.ts';
@@ -37,6 +39,17 @@ test('dbfs: monotonic in speech range', () => {
 test('dbfs: clamps out of range', () => {
   assert.equal(dbfsToNormalized(-200), dbfsToNormalized(METER_DBFS_MIN));
   assert.equal(dbfsToNormalized(5), dbfsToNormalized(METER_DBFS_MAX));
+});
+
+test('bar percent: linear -160 to 0 maps 0 to 100', () => {
+  assert.equal(dbfsToBarPercent(-160), 0);
+  assert.equal(dbfsToBarPercent(0), 100);
+  assert.equal(dbfsToBarPercent(-80), 50);
+});
+
+test('formatDbfsLabel', () => {
+  assert.equal(formatDbfsLabel(-52.4), '-52 dB');
+  assert.equal(formatDbfsLabel(null), '— dB');
 });
 
 test('bar heights: count and bounds', () => {

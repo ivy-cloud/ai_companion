@@ -191,6 +191,8 @@ const VOICE_HERO_KEYBOARD_HIDE_MS = 300;
 const VOICE_HERO_IDLE_HOLD_MS = 500;
 const VOICE_WAVE_BARGE_SHOW_LEVEL = 0.05;
 const VOICE_WAVE_BARGE_HIDE_LEVEL = 0.03;
+/** Show "Speak louder" after dBFS stays below speech threshold this long. */
+const SPEAK_LOUDER_HINT_MS = 3000;
 
 type SpeakPart = {
   text: string;
@@ -307,6 +309,8 @@ export default function ChatScreen() {
   const [sendBlockBanner, setSendBlockBanner] = useState<string | null>(null);
   const [skillHints, setSkillHints] = useState<string[]>([]);
   const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
+  const [voiceMeterDbfs, setVoiceMeterDbfs] = useState<number | null>(null);
+  const [speakLouderHint, setSpeakLouderHint] = useState(false);
   const voiceEnabledRef = useRef(voiceEnabled);
   const voicePhaseRef = useRef<VoicePhase>('idle');
   const voiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
@@ -354,6 +358,8 @@ export default function ChatScreen() {
   const voiceMeterUiLastAtRef = useRef(0);
   const voiceMeterUiPendingRef = useRef<number | null>(null);
   const voiceMeterUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceMeterDbfsPendingRef = useRef<number | null>(null);
+  const lowDbSinceRef = useRef<number | null>(null);
   const typingTextDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceHeroHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceHeroSessionHeldRef = useRef(false);
@@ -819,26 +825,65 @@ export default function ChatScreen() {
       voiceMeterUiTimerRef.current = null;
     }
     voiceMeterUiPendingRef.current = null;
+    voiceMeterDbfsPendingRef.current = null;
+    lowDbSinceRef.current = null;
+    setSpeakLouderHint(false);
     setVoiceMeterLevel(0);
+    setVoiceMeterDbfs(null);
+  };
+
+  const updateSpeakLouderHint = (metering: number | undefined, now: number) => {
+    const phase = voicePhaseRef.current;
+    if (phase !== 'listening' && phase !== 'recording') {
+      if (lowDbSinceRef.current !== null) {
+        lowDbSinceRef.current = null;
+        setSpeakLouderHint(false);
+      }
+      return;
+    }
+    if (metering === undefined || metering === null || Number.isNaN(metering)) {
+      return;
+    }
+    if (isSpeechLevel(metering)) {
+      lowDbSinceRef.current = null;
+      setSpeakLouderHint(false);
+      return;
+    }
+    if (lowDbSinceRef.current === null) {
+      lowDbSinceRef.current = now;
+      return;
+    }
+    if (now - lowDbSinceRef.current >= SPEAK_LOUDER_HINT_MS) {
+      setSpeakLouderHint(true);
+    }
   };
 
   const publishVoiceMeterLevel = (metering: number | undefined) => {
     const level = dbfsToNormalized(metering);
+    const dbfs =
+      metering === undefined || metering === null || Number.isNaN(metering)
+        ? null
+        : metering;
     const now = Date.now();
+    updateSpeakLouderHint(metering, now);
     const elapsed = now - voiceMeterUiLastAtRef.current;
     if (elapsed >= VOICE_METER_UI_THROTTLE_MS) {
       voiceMeterUiLastAtRef.current = now;
       setVoiceMeterLevel(level);
+      setVoiceMeterDbfs(dbfs);
       return;
     }
     voiceMeterUiPendingRef.current = level;
+    voiceMeterDbfsPendingRef.current = dbfs;
     if (voiceMeterUiTimerRef.current) return;
     voiceMeterUiTimerRef.current = setTimeout(() => {
       voiceMeterUiTimerRef.current = null;
       if (voiceMeterUiPendingRef.current !== null) {
         voiceMeterUiLastAtRef.current = Date.now();
         setVoiceMeterLevel(voiceMeterUiPendingRef.current);
+        setVoiceMeterDbfs(voiceMeterDbfsPendingRef.current);
         voiceMeterUiPendingRef.current = null;
+        voiceMeterDbfsPendingRef.current = null;
       }
     }, VOICE_METER_UI_THROTTLE_MS - elapsed);
   };
@@ -1335,7 +1380,12 @@ export default function ChatScreen() {
     }
 
     const utteranceId = ++voiceUtteranceRef.current;
-    if (!setVoicePhaseTransition('thinking', { reason: 'stt_done' })) {
+    voiceLog('stt_start', {
+      listenGen,
+      utteranceId,
+      sawSpeech: meterMeta?.peakMetering != null || meterMeta?.speechDurationMs != null,
+    });
+    if (!setVoicePhaseTransition('thinking', { reason: 'end_silence_stt' })) {
       try {
         await recording.stopAndUnloadAsync();
       } catch {
@@ -3639,6 +3689,10 @@ export default function ChatScreen() {
     const fromConversation =
       options?.fromConversation === true && conversationSessionRef.current;
     try {
+      voiceLog('stt_transcribe_start', {
+        utteranceId,
+        fromConversation,
+      });
       const transcript = await transcribeRecording(uri, API_BASE);
       voiceLog('stt_result', {
         fromConversation,
@@ -3730,12 +3784,16 @@ export default function ChatScreen() {
       lastVoiceTranscriptRef.current = transcript;
       resetProactiveOnUserSpeech();
       quietListenRetryUsedRef.current = false;
+      voiceSendLockRef.current = false;
       const sent = await sendMessage(transcript);
       if (!sent) {
         voiceLog('send_after_stt_skipped', {
           phase: voicePhaseRef.current,
           chatInFlight: chatInFlightRef.current,
           fromConversation,
+          transcriptLen: transcript.length,
+          preview:
+            transcript.length > 60 ? `${transcript.slice(0, 57)}…` : transcript,
         });
         setVoiceInputError('Could not send — try again.');
         if (fromConversation) {
@@ -4585,6 +4643,9 @@ export default function ChatScreen() {
     phaseLabel,
     phaseHint: voiceStatusHint,
     level: voiceMeterLevel,
+    meterDbfs: voiceMeterDbfs,
+    meterVisible: voiceWaveInputVisible,
+    speakLouderHint,
     waveVisible: voiceWaveVisible,
     waveSubtle: voiceWaveSubtle,
     ambient: voiceWaveAmbient,

@@ -11,6 +11,25 @@ const BAR_COUNT = 28;
 export const VOICE_WAVE_HERO_HEIGHT_PX = 96;
 
 /**
+ * Linear map dBFS (-160…0) to 0…100 for level bar width.
+ */
+export function dbfsToBarPercent(metering?: number | null): number {
+  if (metering === undefined || metering === null || Number.isNaN(metering)) {
+    return 0;
+  }
+  const clamped = Math.min(METER_DBFS_MAX, Math.max(METER_DBFS_MIN, metering));
+  return ((clamped - METER_DBFS_MIN) / (METER_DBFS_MAX - METER_DBFS_MIN)) * 100;
+}
+
+/** Display label for raw dBFS metering, e.g. "-52 dB". */
+export function formatDbfsLabel(metering?: number | null): string {
+  if (metering === undefined || metering === null || Number.isNaN(metering)) {
+    return '— dB';
+  }
+  return `${Math.round(metering)} dB`;
+}
+
+/**
  * Map dBFS (-160…0) to 0…1 for UI. Slight curve so quiet speech still reads.
  */
 export function dbfsToNormalized(metering?: number | null): number {
