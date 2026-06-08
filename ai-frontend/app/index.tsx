@@ -1450,10 +1450,7 @@ export default function ChatScreen() {
         return;
       }
       logVoiceState('listen_without_recording', { phase: 'listening', msInPhase });
-      setVoicePhaseTransition('idle', {
-        force: true,
-        reason: 'listen_without_recording',
-      });
+      // Keep listening phase — startConversationListening resumes without recorder.
     }
     void (async () => {
       await clearStaleTtsListenBlockers();
