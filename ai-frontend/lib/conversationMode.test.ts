@@ -65,9 +65,9 @@ test('phase0: listen timing constants stay bounded', () => {
 });
 
 test('speech level: quiet speech above threshold registers', () => {
-  assert.equal(SPEECH_LEVEL_DB, -56);
-  assert.equal(isSpeechLevel(-55), true);
-  assert.equal(isSpeechLevel(-56), false);
+  assert.equal(SPEECH_LEVEL_DB, -60);
+  assert.equal(isSpeechLevel(-59), true);
+  assert.equal(isSpeechLevel(-60), false);
   assert.equal(isSpeechLevel(-50), true);
 });
 
@@ -107,8 +107,8 @@ test('listen meter blocked recovery threshold', () => {
 });
 
 test('silence timing: endSilence needs MIN_SPEECH_MS + SILENCE_END_MS', () => {
-  assert.equal(SILENCE_END_MS, 1500);
-  assert.equal(MIN_SPEECH_MS, 400);
+  assert.equal(SILENCE_END_MS, 1000);
+  assert.equal(MIN_SPEECH_MS, 350);
   const t0 = 1000;
   let state = createConversationMeterState(t0);
   state = {

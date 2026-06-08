@@ -5,10 +5,10 @@ import type { VoicePhase } from './conversationState';
  */
 
 /** Silence after speech before auto-send (ms). Tunable — longer reduces cut-off mid-thought. */
-export const SILENCE_END_MS = 1500;
+export const SILENCE_END_MS = 1000;
 
 /** Minimum time above speech threshold before silence can trigger send. */
-export const MIN_SPEECH_MS = 400;
+export const MIN_SPEECH_MS = 350;
 
 /** Extra tail captured after silence detected — reduces clipped last syllables. */
 export const RECORDING_TAIL_MS = 180;
@@ -131,9 +131,9 @@ export function shouldRecoverListenPausedStuck(
 /**
  * Expo metering is dBFS (negative). Above this ≈ speech; below ≈ silence.
  * Lower (more negative) picks up quieter speech at arm's length on phone mics;
- * also raises false triggers from room noise / HVAC — do not go below ~-58 without testing.
+ * also raises false triggers from room noise / HVAC — do not go below ~-62 without testing.
  */
-export const SPEECH_LEVEL_DB = -56;
+export const SPEECH_LEVEL_DB = -60;
 
 /** Log hint when listening this long with no meter speech (quiet_voice_timeout). */
 export const QUIET_VOICE_TIMEOUT_MS = 5000;

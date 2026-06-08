@@ -181,7 +181,7 @@ export async function stopRecordingToUri(recording: Audio.Recording): Promise<st
 }
 
 /** Ignore accidental tap-and-release; keep aligned with conversation MIN_SPEECH_MS. */
-export const MIN_RECORDING_MS = 400;
+export const MIN_RECORDING_MS = 350;
 
 async function transcribeRecordingOnce(uri: string, apiBase: string): Promise<string> {
   const form = new FormData();

@@ -46,7 +46,7 @@ export function voicePhaseHint(
 ): string {
   switch (phase) {
     case 'listening':
-      return 'Speak naturally — pauses auto-send';
+      return 'Speak naturally · pause ~1s when done';
     case 'recording':
       return 'Hold mic and speak…';
     case 'thinking':
