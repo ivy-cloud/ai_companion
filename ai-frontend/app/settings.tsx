@@ -124,6 +124,16 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <Text style={styles.sectionTitle}>Companion</Text>
+        <View style={styles.card}>
+          <Text style={styles.companionName}>
+            {healthLoading ? '…' : health?.companionName ?? 'Companion'}
+          </Text>
+          <Text style={styles.cardHint}>
+            Say &quot;call you …&quot; in chat to rename — e.g. &quot;call you Jessica&quot;
+          </Text>
+        </View>
+
         <Text style={styles.sectionTitle}>Voice</Text>
         <SettingRow label="Enable voice" hint="Turn off for text-only chat.">
           <Switch
@@ -145,6 +155,32 @@ export default function SettingsScreen() {
             trackColor={{ false: '#ddd5d0', true: '#c97b84' }}
             thumbColor="#ffffff"
           />
+        </SettingRow>
+        <SettingRow
+          label="Playback volume"
+          hint="In-app boost on top of iPhone side buttons. Silent switch can stay on — voice still plays."
+          disabled={!settings.voiceEnabled}
+        >
+          <View style={styles.chipRow}>
+            <ModeChip
+              label="80%"
+              active={settings.playbackVolume === 0.8}
+              disabled={!settings.voiceEnabled}
+              onPress={() => patchAppSettings({ playbackVolume: 0.8 })}
+            />
+            <ModeChip
+              label="90%"
+              active={settings.playbackVolume === 0.9}
+              disabled={!settings.voiceEnabled}
+              onPress={() => patchAppSettings({ playbackVolume: 0.9 })}
+            />
+            <ModeChip
+              label="100%"
+              active={settings.playbackVolume === 1.0}
+              disabled={!settings.voiceEnabled}
+              onPress={() => patchAppSettings({ playbackVolume: 1.0 })}
+            />
+          </View>
         </SettingRow>
         <SettingRow
           label="Voice tone"
@@ -207,9 +243,6 @@ export default function SettingsScreen() {
                   {health.reachable ? health.status : 'unreachable'}
                 </Text>
               </Text>
-              {health.companionName ? (
-                <Text style={styles.cardLine}>Companion: {health.companionName}</Text>
-              ) : null}
               {health.skillHints.length > 0 ? (
                 <Text style={styles.cardHint}>{health.skillHints.join(' · ')}</Text>
               ) : null}
@@ -353,6 +386,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardLine: { fontSize: 14, color: '#4a3f42', lineHeight: 20 },
+  companionName: { fontSize: 22, fontWeight: '700', color: '#4a3f42' },
   cardHint: { fontSize: 12, color: '#7a6e72', lineHeight: 17 },
   cardWarn: { fontSize: 13, color: '#b45309', lineHeight: 18 },
   cardMono: {

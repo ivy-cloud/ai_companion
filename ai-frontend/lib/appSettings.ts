@@ -8,13 +8,24 @@ export type AppSettings = {
   naturalVoiceEnabled: boolean;
   voiceGender: VoiceGender;
   voiceInputMode: VoiceInputMode;
+  /** In-app TTS gain (0.8–1.0); device volume buttons control system level. */
+  playbackVolume: number;
 };
+
+export const PLAYBACK_VOLUME_MIN = 0.8;
+export const PLAYBACK_VOLUME_MAX = 1.0;
+
+export function clampPlaybackVolume(value: number): number {
+  if (!Number.isFinite(value)) return PLAYBACK_VOLUME_MAX;
+  return Math.min(PLAYBACK_VOLUME_MAX, Math.max(PLAYBACK_VOLUME_MIN, value));
+}
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   voiceEnabled: true,
   naturalVoiceEnabled: true,
   voiceGender: 'female',
   voiceInputMode: 'ptt',
+  playbackVolume: PLAYBACK_VOLUME_MAX,
 };
 
 let settings: AppSettings = { ...DEFAULT_APP_SETTINGS };
@@ -29,7 +40,11 @@ export function getAppSettings(): AppSettings {
 }
 
 export function patchAppSettings(partial: Partial<AppSettings>): void {
-  settings = { ...settings, ...partial };
+  const next = { ...settings, ...partial };
+  if (partial.playbackVolume !== undefined) {
+    next.playbackVolume = clampPlaybackVolume(partial.playbackVolume);
+  }
+  settings = next;
   emit();
 }
 

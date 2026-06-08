@@ -25,6 +25,8 @@ test('exports default settings shape', () => {
   assert.equal(typeof settings.naturalVoiceEnabled, 'boolean');
   assert.ok(settings.voiceGender === 'female' || settings.voiceGender === 'male');
   assert.ok(settings.voiceInputMode === 'ptt' || settings.voiceInputMode === 'conversation');
+  assert.equal(typeof settings.playbackVolume, 'number');
+  assert.ok(settings.playbackVolume >= 0.8 && settings.playbackVolume <= 1.0);
 });
 
 test('patchAppSettings merges partial updates', () => {

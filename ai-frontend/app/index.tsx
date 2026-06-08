@@ -162,7 +162,7 @@ import {
   isActiveTurn,
   mergeAbortSignals,
 } from '../lib/voiceSession';
-import { useAppSettings } from '../lib/appSettings';
+import { clampPlaybackVolume, useAppSettings } from '../lib/appSettings';
 import { registerConversationReset } from '../lib/conversationReset';
 import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
 import { VoiceHero } from '../components/VoiceHero';
@@ -266,18 +266,6 @@ async function fetchAzureVoiceLabel(gender: VoiceGender): Promise<string> {
   }
 }
 
-function formatVoiceStatusLine(voiceName: string): string {
-  if (
-    voiceName.startsWith("Can't reach") ||
-    voiceName.startsWith('Backend ') ||
-    voiceName.includes('Speech key') ||
-    voiceName.includes('Loading')
-  ) {
-    return voiceName;
-  }
-  return `Azure voice: ${voiceName}`;
-}
-
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
@@ -287,7 +275,7 @@ type ChatMessage = {
 };
 
 export default function ChatScreen() {
-  const { voiceEnabled, naturalVoiceEnabled, voiceGender, voiceInputMode } =
+  const { voiceEnabled, naturalVoiceEnabled, voiceGender, voiceInputMode, playbackVolume } =
     useAppSettings();
   const [input, setInput] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
@@ -397,7 +385,7 @@ export default function ChatScreen() {
   const voiceTurnSummaryPendingRef = useRef(false);
   const voiceTurnSummaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamTtsPrefetchRef = useRef<Promise<string | null> | null>(null);
-  const iosSpeakerPrimedGenerationRef = useRef(-1);
+  const playbackVolumeRef = useRef(playbackVolume);
   /** speakGeneration that completed at least one natural play_settle this turn. */
   const ttsPlaySettledGenRef = useRef(-1);
   const ttsRetryUsedTurnRef = useRef(-1);
@@ -414,6 +402,7 @@ export default function ChatScreen() {
   naturalVoiceEnabledRef.current = naturalVoiceEnabled;
   voiceGenderRef.current = voiceGender;
   voiceInputModeRef.current = voiceInputMode;
+  playbackVolumeRef.current = clampPlaybackVolume(playbackVolume);
   conversationSessionRef.current = conversationSession;
 
   const refreshBackendHealth = async (): Promise<boolean> => {
@@ -481,7 +470,7 @@ export default function ChatScreen() {
 
         const { sound } = await Audio.Sound.createAsync(SILENT_SOUND, {
           shouldPlay: false,
-          volume: 1.0,
+          volume: clampPlaybackVolume(playbackVolumeRef.current),
         });
         if (!mounted) {
           await sound.unloadAsync();
@@ -895,20 +884,24 @@ export default function ChatScreen() {
     await prepareForTtsPlayback();
     const sound = primeSoundRef.current;
     if (!sound) return;
+    const vol = playbackVolumeRef.current;
     try {
-      await sound.setVolumeAsync(1.0);
+      await sound.setVolumeAsync(vol);
       await sound.setPositionAsync(0);
       await sound.playAsync();
+      // Brief play forces AVAudioSession onto the loudspeaker (not earpiece).
+      await new Promise((resolve) => setTimeout(resolve, 45));
+      await sound.pauseAsync();
+      await sound.setPositionAsync(0);
     } catch {
-      // continue
+      // continue — TTS may still play
     }
   };
 
-  const ensureIosSpeakerPrimed = async (generation: number) => {
+  /** Prime loudspeaker before every clip — PlayAndRecord/mic otherwise routes to earpiece. */
+  const ensureIosSpeakerPrimed = async () => {
     if (Platform.OS !== 'ios') return;
-    if (iosSpeakerPrimedGenerationRef.current === generation) return;
     await primeIosSpeaker();
-    iosSpeakerPrimedGenerationRef.current = generation;
   };
 
   const markTtsPlaybackFailed = (
@@ -1118,20 +1111,6 @@ export default function ChatScreen() {
       setVoicePhaseTransition('idle', { force: true, reason });
       if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
     }
-  };
-
-  const endConversationSessionManually = () => {
-    if (!conversationSessionRef.current) return;
-    logVoiceState('conversation_session_ended', { manual: true });
-    void (async () => {
-      const goodbye = await fetchSessionGoodbyeLine();
-      endConversationSession('user_end_conversation');
-      setVoiceInputError(null);
-      if (goodbye && voiceEnabledRef.current) {
-        await speakFarewell(goodbye);
-      }
-      prewarmVoiceMicIfIdle();
-    })();
   };
 
   const clearProactiveTimer = () => {
@@ -3030,14 +3009,17 @@ export default function ChatScreen() {
     options?: { betweenClips?: boolean },
   ): Promise<void> => {
     let sound: Audio.Sound | null = null;
+    const vol = playbackVolumeRef.current;
+
+    await ensureIosSpeakerPrimed();
     if (!options?.betweenClips) {
-      await ensureIosSpeakerPrimed(generation);
       await clearStaleTtsListenBlockers();
       if (recordingRef.current || conversationBargeRecordingRef.current) {
         await releaseAllActiveRecorders();
       }
-      await prepareForTtsPlayback();
     }
+    await prepareForTtsPlayback();
+
     try {
 
       const created = await Audio.Sound.createAsync(
@@ -3045,7 +3027,7 @@ export default function ChatScreen() {
         {
           shouldPlay: false,
           isLooping: false,
-          volume: 1.0,
+          volume: vol,
           isMuted: false,
           rate: 1.0,
           shouldCorrectPitch: true,
@@ -3066,7 +3048,8 @@ export default function ChatScreen() {
       activeSoundRef.current = sound;
       logVoiceState('tts_play_start', { generation });
       logVoiceSnapshot('play_start', { generation });
-      await sound.setVolumeAsync(1.0);
+      await prepareForTtsPlayback();
+      await sound.setVolumeAsync(vol);
 
       let settled = false;
       let naturalFinish = false;
@@ -3181,7 +3164,7 @@ export default function ChatScreen() {
     speakInFlightRef.current = true;
 
     try {
-      await ensureIosSpeakerPrimed(generation);
+      await ensureIosSpeakerPrimed();
 
       let nextPathPromise: Promise<string | null> | null = prepareTtsClip(
         parts[0].text,
@@ -4774,83 +4757,15 @@ export default function ChatScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
-      <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View style={styles.headerTitles}>
-            <Text style={styles.title}>{companionName}</Text>
-            <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
-          </View>
-          <Link href="/settings" asChild>
-            <Pressable
-              style={({ pressed }) => [styles.settingsButton, pressed && styles.settingsButtonPressed]}
-              accessibilityLabel="Open settings"
-            >
-              <Text style={styles.settingsIcon}>⚙</Text>
-            </Pressable>
-          </Link>
-        </View>
-        {skillHints.length > 0 ? (
-          <Text style={styles.skillHintsLine}>{skillHints.join(' · ')}</Text>
-        ) : null}
-        {backendHealthBanner ? (
-          <Text style={styles.healthBanner}>{backendHealthBanner}</Text>
-        ) : null}
-        {sendBlockBanner ? (
+      <View style={styles.topBar}>
+        <Link href="/settings" asChild>
           <Pressable
-            onPress={() => resetConversationState('banner_tap_reset')}
-            style={({ pressed }) => [
-              styles.sendBlockBanner,
-              pressed && styles.sendBlockBannerPressed,
-            ]}
-            accessibilityLabel="Send blocked — tap to reset conversation"
+            style={({ pressed }) => [styles.settingsButton, pressed && styles.settingsButtonPressed]}
+            accessibilityLabel="Open settings"
           >
-            <Text style={styles.sendBlockBannerText}>{sendBlockBanner}</Text>
-            <Text style={styles.sendBlockBannerHint}>Tap to reset conversation</Text>
+            <Text style={styles.settingsIcon}>⚙</Text>
           </Pressable>
-        ) : null}
-        {inputLockReason === 'recording' ? (
-          <Text style={styles.sendBlockBannerText}>
-            Text input paused while recording — release Mic to type
-          </Text>
-        ) : null}
-        {conversationSession && voiceInputMode === 'conversation' ? (
-          <Pressable
-            onPress={endConversationSessionManually}
-            style={({ pressed }) => [
-              styles.endConversationButton,
-              pressed && styles.endConversationButtonPressed,
-            ]}
-            accessibilityLabel="End conversation"
-          >
-            <Text style={styles.endConversationLabel}>End conversation</Text>
-          </Pressable>
-        ) : null}
-        {voiceEnabled && !showVoiceHero ? (
-          <TouchableOpacity onPress={handleVoiceStatusTap}>
-            <Text style={styles.voiceHint}>
-              {ttsTapToHearText
-                ? 'No audio heard · Tap to hear'
-                : voicePlaybackError
-                  ? `${voicePlaybackError} · tap to hear`
-                  : conversationCanInterrupt
-                    ? voicePhase === 'speaking'
-                      ? 'Speaking… tap Mic to interrupt'
-                      : 'Thinking… tap Mic to interrupt, then speak'
-                    : voicePhase === 'speaking'
-                      ? 'Speaking… tap to stop'
-                      : isStreaming ||
-                          voicePhase === 'thinking' ||
-                          voicePhase === 'streaming'
-                        ? 'Working… tap to stop'
-                        : voiceInputMode === 'conversation'
-                          ? `${formatVoiceStatusLine(voiceName)} · Tap Mic to start conversation`
-                          : `${formatVoiceStatusLine(voiceName)} · Tap to test · Hold Mic below to talk`}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-        {voiceInputError ? (
-          <Text style={styles.voiceError}>Voice: {voiceInputError}</Text>
-        ) : null}
+        </Link>
       </View>
 
       <KeyboardAvoidingView
@@ -4905,9 +4820,7 @@ export default function ChatScreen() {
               </Text>
             </View>
           )}
-          ListEmptyComponent={
-            <Text style={styles.empty}>Say hello to {companionName}.</Text>
-          }
+          ListEmptyComponent={<Text style={styles.empty}>Say hello.</Text>}
         />
 
         <View style={styles.inputRow}>
@@ -5038,21 +4951,13 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#faf7f5' },
   chatArea: { flex: 1 },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#ead9d4',
-    backgroundColor: '#faf7f5',
-  },
-  headerTopRow: {
+  topBar: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  headerTitles: { flex: 1 },
   settingsButton: {
     width: 40,
     height: 40,
@@ -5065,73 +4970,7 @@ const styles = StyleSheet.create({
   },
   settingsButtonPressed: { backgroundColor: '#f3ebe8' },
   settingsIcon: { fontSize: 20, color: '#9a8ab0' },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#4a3f42',
-    marginBottom: 4,
-  },
-  nameHint: {
-    fontSize: 12,
-    color: '#666666',
-    marginBottom: 8,
-  },
-  skillHintsLine: {
-    fontSize: 11,
-    color: '#888888',
-    fontStyle: 'italic',
-    marginBottom: 6,
-  },
-  healthBanner: {
-    fontSize: 12,
-    color: '#b45309',
-    marginBottom: 8,
-    lineHeight: 16,
-  },
-  sendBlockBanner: {
-    backgroundColor: '#fecaca',
-    borderWidth: 1,
-    borderColor: '#dc2626',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  sendBlockBannerPressed: {
-    backgroundColor: '#fca5a5',
-  },
-  sendBlockBannerText: {
-    fontSize: 12,
-    color: '#991b1b',
-    fontWeight: '600',
-    lineHeight: 16,
-  },
-  sendBlockBannerHint: {
-    fontSize: 11,
-    color: '#b91c1c',
-    marginTop: 4,
-  },
-  endConversationButton: {
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#eeeeee',
-    borderWidth: 1,
-    borderColor: '#cccccc',
-  },
-  endConversationButtonPressed: {
-    backgroundColor: '#e0e0e0',
-  },
-  endConversationLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-  },
-  voiceHint: { fontSize: 12, color: '#7a6e72', marginTop: 6 },
   voiceHeroPressed: { opacity: 0.92 },
-  voiceError: { fontSize: 12, color: '#c62828', marginTop: 4 },
   micButton: {
     width: 48,
     height: 48,

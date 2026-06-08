@@ -132,12 +132,22 @@ _NEUTRAL_PITCH = frozenset(
 )
 
 
-def _wrap_prosody(rate: str, pitch: str, escaped_text: str) -> str:
+def _wrap_prosody(
+    rate: str,
+    pitch: str,
+    escaped_text: str,
+    *,
+    volume: Optional[str] = None,
+) -> str:
     """Azure rejects pitch='0st' (FailedPrecondition) — omit pitch when neutral."""
+    attrs = [f'rate="{rate}"']
     p = pitch.strip().lower()
-    if p in _NEUTRAL_PITCH:
-        return f'<prosody rate="{rate}">{escaped_text}</prosody>'
-    return f'<prosody rate="{rate}" pitch="{pitch}">{escaped_text}</prosody>'
+    if p not in _NEUTRAL_PITCH:
+        attrs.append(f'pitch="{pitch}"')
+    if volume:
+        attrs.append(f'volume="{volume}"')
+    attr_str = " ".join(attrs)
+    return f"<prosody {attr_str}>{escaped_text}</prosody>"
 
 
 def _build_ssml(
@@ -148,12 +158,13 @@ def _build_ssml(
     *,
     use_express: bool,
     express_style: str,
+    volume: Optional[str] = None,
 ) -> str:
     locale = _locale_from_voice(voice)
     v_attr = html.escape(voice, quote=True)
     loc_attr = html.escape(locale, quote=True)
     style_attr = html.escape(express_style, quote=True)
-    prosody = _wrap_prosody(rate, pitch, escaped_text)
+    prosody = _wrap_prosody(rate, pitch, escaped_text, volume=volume)
 
     if use_express:
         inner = f'<mstts:express-as style="{style_attr}">{prosody}</mstts:express-as>'
@@ -287,23 +298,46 @@ def _normalize_prosody_rate(raw: str, default: str) -> str:
     return default
 
 
-def _prosody_for_style(style: str, delivery: VoiceDelivery) -> tuple[str, str]:
-    """SSML prosody rate + pitch from preset or env."""
+def _normalize_prosody_volume(raw: str, default: str) -> str:
+    """Azure SSML prosody volume: loud/x-loud, default, or relative +15% / +3.0dB."""
+    value = (raw or default).strip()
+    if not value or value.lower() in {"default", "medium", "neutral"}:
+        return ""
+    labels = {"silent", "x-soft", "soft", "medium", "loud", "x-loud"}
+    if value.lower() in labels:
+        return value.lower()
+    if re.match(r"^[+-]?\d+(\.\d+)?%$", value):
+        return value
+    if re.match(r"^[+-]?\d+(\.\d+)?dB$", value, re.I):
+        return value
+    return default if default and default.lower() not in {"default", "medium", "neutral"} else ""
+
+
+def _prosody_for_style(style: str, delivery: VoiceDelivery) -> tuple[str, str, str]:
+    """SSML prosody rate + pitch + optional volume from preset or env."""
     if style == "filler":
         rate = _normalize_prosody_rate(
             os.environ.get("AZURE_SPEECH_RATE_FILLER", ""),
             "1.0",
         )
         pitch = os.environ.get("AZURE_SPEECH_PITCH_FILLER", "+0.1st").strip() or "+0.1st"
+        volume = _normalize_prosody_volume(
+            os.environ.get("AZURE_SPEECH_VOLUME_FILLER", ""),
+            os.environ.get("AZURE_SPEECH_VOLUME", "+12%"),
+        )
     else:
         rate = _normalize_prosody_rate(
             os.environ.get("AZURE_SPEECH_RATE_MAIN", ""),
             delivery.rate_main,
         )
         pitch = delivery.pitch_main.strip() or "-0.5st"
+        volume = _normalize_prosody_volume(
+            os.environ.get("AZURE_SPEECH_VOLUME_MAIN", ""),
+            os.environ.get("AZURE_SPEECH_VOLUME", "+12%"),
+        )
     if not re.match(r"^[+-]?\d+(\.\d+)?st$", pitch):
         pitch = "+0.1st" if style == "filler" else "-0.5st"
-    return rate, pitch
+    return rate, pitch, volume
 
 
 def synthesize_speech(
@@ -334,7 +368,7 @@ def synthesize_speech(
         cleaned = cleaned[:MAX_TTS_CHARS]
 
     delivery = _delivery(voice_gender)
-    rate, pitch = _prosody_for_style(style, delivery)
+    rate, pitch, volume = _prosody_for_style(style, delivery)
 
     voice = delivery.voice
     hint_norm = (emotion_hint or "").strip().lower() or None
@@ -351,7 +385,13 @@ def synthesize_speech(
         use_express = False
     escaped = _escape_and_break_sentences(cleaned)
     ssml = _build_ssml(
-        voice, rate, pitch, escaped, use_express=use_express, express_style=express_name
+        voice,
+        rate,
+        pitch,
+        escaped,
+        use_express=use_express,
+        express_style=express_name,
+        volume=volume or None,
     )
 
     key = _speech_key()

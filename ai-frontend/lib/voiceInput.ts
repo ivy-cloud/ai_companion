@@ -19,6 +19,13 @@ const PLAYBACK_AUDIO_MODE = {
   playThroughEarpieceAndroid: false,
 } as const;
 
+/** Keep session on speaker while a clip plays; no ducking. */
+const TTS_PLAYBACK_AUDIO_MODE = {
+  ...PLAYBACK_AUDIO_MODE,
+  staysActiveInBackground: true,
+  shouldDuckAndroid: false,
+} as const;
+
 /** 16 kHz mono WAV — works well with Azure Speech REST. */
 export const RECORDING_OPTIONS: Audio.RecordingOptions = {
   isMeteringEnabled: false,
@@ -76,13 +83,18 @@ export async function configurePlaybackAudioMode() {
   await Audio.setAudioModeAsync(PLAYBACK_AUDIO_MODE);
 }
 
+/** Speaker-oriented mode for active TTS — keeps session alive, no mic/earpiece routing. */
+export async function configureTtsPlaybackAudioMode() {
+  await Audio.setAudioModeAsync(TTS_PLAYBACK_AUDIO_MODE);
+}
+
 /**
  * Release mic/recorder session and switch to speaker-oriented playback before TTS.
  * Prewarm and PlayAndRecord (barge-in) otherwise route iOS audio to the earpiece.
  */
 export async function prepareForTtsPlayback(): Promise<void> {
   await discardPrewarm();
-  await configurePlaybackAudioMode();
+  await configureTtsPlaybackAudioMode();
 }
 
 export async function configureRecordingAudioMode() {
