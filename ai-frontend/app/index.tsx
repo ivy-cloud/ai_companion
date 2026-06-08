@@ -27,6 +27,7 @@ import {
   prepareForTtsPlayback,
   prewarmRecordingPipeline,
   isSubstantiveTranscript,
+  turnNoResponseTimeoutMs,
   isEmptySttError,
   isLikelyAssistantEchoTranscript,
   MIN_RECORDING_MS,
@@ -290,9 +291,9 @@ export default function ChatScreen() {
   );
   const [skillHints, setSkillHints] = useState<string[]>([]);
   const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
-  const voiceEnabledRef = useRef(true);
+  const voiceEnabledRef = useRef(voiceEnabled);
   const voicePhaseRef = useRef<VoicePhase>('idle');
-  const voiceInputModeRef = useRef<VoiceInputMode>('ptt');
+  const voiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
   const conversationSessionRef = useRef(false);
   const conversationMeterRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const conversationMeterStateRef = useRef<ConversationMeterState | null>(null);
@@ -318,8 +319,9 @@ export default function ChatScreen() {
   /** One quiet-speech second-chance listen per successful user turn. */
   const quietListenRetryUsedRef = useRef(false);
   const lastVoiceTranscriptRef = useRef('');
-  const naturalVoiceEnabledRef = useRef(true);
-  const voiceGenderRef = useRef<VoiceGender>('female');
+  const naturalVoiceEnabledRef = useRef(naturalVoiceEnabled);
+  const voiceGenderRef = useRef<VoiceGender>(voiceGender);
+  const lastVoiceSendTextRef = useRef('');
   const ttsExpressStyleRef = useRef<string | null>(null);
   const ttsEmotionHintRef = useRef<string | null>(null);
   const primeSoundRef = useRef<Audio.Sound | null>(null);
@@ -379,6 +381,12 @@ export default function ChatScreen() {
   const proactiveBeatsRef = useRef<string[]>([]);
   const turnNoResponseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Sync settings refs every render — useEffect is too late for mic handlers after settings navigation.
+  voiceEnabledRef.current = voiceEnabled;
+  naturalVoiceEnabledRef.current = naturalVoiceEnabled;
+  voiceGenderRef.current = voiceGender;
+  voiceInputModeRef.current = voiceInputMode;
+
   const refreshBackendHealth = async (): Promise<boolean> => {
     const result = await fetchHealthPreflight(API_BASE);
     const banner = formatHealthBanner(result);
@@ -387,7 +395,6 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
-    voiceEnabledRef.current = voiceEnabled;
     if (prevVoiceEnabledRef.current === voiceEnabled) return;
     prevVoiceEnabledRef.current = voiceEnabled;
     if (!voiceEnabled) {
@@ -397,14 +404,6 @@ export default function ChatScreen() {
       prewarmVoiceMicIfIdle();
     }
   }, [voiceEnabled]);
-
-  useEffect(() => {
-    naturalVoiceEnabledRef.current = naturalVoiceEnabled;
-  }, [naturalVoiceEnabled]);
-
-  useEffect(() => {
-    voiceGenderRef.current = voiceGender;
-  }, [voiceGender]);
 
   useEffect(() => {
     let mounted = true;
@@ -421,7 +420,6 @@ export default function ChatScreen() {
   }, [voicePhase]);
 
   useEffect(() => {
-    voiceInputModeRef.current = voiceInputMode;
     if (
       prevVoiceInputModeRef.current !== voiceInputMode &&
       voiceInputMode === 'ptt'
@@ -1970,8 +1968,12 @@ export default function ChatScreen() {
     }
   };
 
-  const scheduleTurnNoResponseTimer = (turn: number) => {
+  const scheduleTurnNoResponseTimer = (turn: number, utteranceText: string) => {
     clearTurnNoResponseTimer();
+    const timeoutMs = turnNoResponseTimeoutMs(utteranceText, TURN_NO_RESPONSE_MS);
+    const shortUtterance = timeoutMs < TURN_NO_RESPONSE_MS;
+    const preview =
+      utteranceText.length > 48 ? `${utteranceText.slice(0, 45)}…` : utteranceText;
     turnNoResponseTimerRef.current = setTimeout(() => {
       turnNoResponseTimerRef.current = null;
       if (!isActiveVoiceTurn(turn)) return;
@@ -1979,15 +1981,22 @@ export default function ChatScreen() {
       if (!timing || timing.turn !== turn) return;
       if (hasAssistantReplyStarted(timing.marks)) return;
       const sinceSend = Date.now() - (timing.marks.send_start ?? timing.t0);
-      voiceLog('turn_no_response', {
+      const logEvent = shortUtterance
+        ? 'short_utterance_no_response'
+        : 'turn_no_response';
+      voiceLog(logEvent, {
         turn,
         sinceSendMs: sinceSend,
+        timeoutMs,
         phase: voicePhaseRef.current,
         chatInFlight: chatInFlightRef.current,
+        voiceSendLock: voiceSendLockRef.current,
         streamStarted: timing.marks.stream_start != null,
+        textLen: utteranceText.trim().length,
+        preview,
       });
-      recoverThinkingStuck('turn_no_response', sinceSend);
-    }, TURN_NO_RESPONSE_MS);
+      recoverThinkingStuck(logEvent, sinceSend);
+    }, timeoutMs);
   };
 
   const recoverThinkingStuck = (reason: string, stuckMs: number) => {
@@ -3278,11 +3287,20 @@ export default function ChatScreen() {
         const turnTiming = timing?.turn === currentTurn ? timing : null;
         const streamStarted = turnTiming?.marks.stream_start != null;
         const sendStarted = turnTiming?.marks.send_start != null;
+        const thinkingThresholdMs = turnNoResponseTimeoutMs(
+          lastVoiceSendTextRef.current,
+          THINKING_NO_STREAM_MS,
+        );
         if (
-          shouldRecoverThinkingNoStream(phase, stuckMs, {
-            sendStarted,
-            streamStarted,
-          })
+          shouldRecoverThinkingNoStream(
+            phase,
+            stuckMs,
+            {
+              sendStarted,
+              streamStarted,
+            },
+            thinkingThresholdMs,
+          )
         ) {
           const now = Date.now();
           if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
@@ -3355,8 +3373,13 @@ export default function ChatScreen() {
           phase: voicePhaseRef.current,
           fromConversation,
         });
+        setVoiceInputError('Could not send — try again.');
         if (fromConversation) {
+          setVoicePhaseTransition('idle', { reason: 'wrong_phase_after_stt' });
           scheduleConversationListen(200);
+        } else {
+          setVoicePhaseTransition('idle', { reason: 'wrong_phase_after_stt' });
+          prewarmVoiceMicIfIdle();
         }
         return;
       }
@@ -3600,12 +3623,14 @@ export default function ChatScreen() {
       voiceInputModeRef.current === 'conversation';
 
     const timing = voiceTurnTimingRef.current;
+    const staleChatThresholdMs = turnNoResponseTimeoutMs(text, THINKING_NO_STREAM_MS);
     if (
       shouldClearStaleChatInFlight(
         chatInFlightRef.current,
         timing?.marks,
         Date.now(),
         timing?.marks.send_start,
+        staleChatThresholdMs,
       )
     ) {
       voiceLog('send_message_stale_chat_cleared', {
@@ -3697,7 +3722,8 @@ export default function ChatScreen() {
     logVoiceSnapshot('send_start');
     chatInFlightRef.current = true;
     if (fromVoice && text) {
-      scheduleTurnNoResponseTimer(turn);
+      lastVoiceSendTextRef.current = text;
+      scheduleTurnNoResponseTimer(turn, text);
     }
 
     if (voiceEnabledRef.current) {

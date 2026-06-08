@@ -162,6 +162,19 @@ test('stale chat in flight after thinking timeout without stream', () => {
   );
 });
 
+test('stale chat in flight clears sooner with short threshold', () => {
+  const now = Date.now();
+  const sendAt = now - 20_500;
+  assert.equal(
+    shouldClearStaleChatInFlight(true, {}, now, sendAt, 20_000),
+    true,
+  );
+  assert.equal(
+    shouldClearStaleChatInFlight(true, {}, now, sendAt, THINKING_NO_STREAM_MS),
+    false,
+  );
+});
+
 test('thinking recovery when send never started', () => {
   assert.equal(
     shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS, {

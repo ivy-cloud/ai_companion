@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import {
   isEmptySttError,
+  isHelloSizedUtterance,
   isLikelyAssistantEchoTranscript,
   isSubstantiveTranscript,
+  SHORT_UTTERANCE_NO_RESPONSE_MS,
+  turnNoResponseTimeoutMs,
 } from './voiceTranscript.ts';
 
 function test(name: string, fn: () => void) {
@@ -23,7 +26,20 @@ test('isEmptySttError detects no-speech failures', () => {
 
 test('isSubstantiveTranscript accepts short valid words', () => {
   assert.equal(isSubstantiveTranscript('why'), true);
+  assert.equal(isSubstantiveTranscript('hello'), true);
   assert.equal(isSubstantiveTranscript('um'), false);
+});
+
+test('isHelloSizedUtterance matches greetings', () => {
+  assert.equal(isHelloSizedUtterance('hello'), true);
+  assert.equal(isHelloSizedUtterance('Hello!'), true);
+  assert.equal(isHelloSizedUtterance('tell me more'), false);
+});
+
+test('turnNoResponseTimeoutMs is 20s for hello-sized text', () => {
+  assert.equal(turnNoResponseTimeoutMs('hello'), SHORT_UTTERANCE_NO_RESPONSE_MS);
+  assert.equal(turnNoResponseTimeoutMs('hello', 45_000), SHORT_UTTERANCE_NO_RESPONSE_MS);
+  assert.equal(turnNoResponseTimeoutMs('explain my sleep in detail'), 45_000);
 });
 
 test('echo: skipped when playback is not active', () => {

@@ -51,6 +51,25 @@ export function isEmptySttError(err: unknown): boolean {
   return msg.includes('no speech detected');
 }
 
+/** Faster no-response diagnostic for greetings and other one-word turns. */
+export const SHORT_UTTERANCE_NO_RESPONSE_MS = 20_000;
+
+/** Greeting-sized voice input (e.g. "hello", "hi", short follow-ups). */
+export function isHelloSizedUtterance(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, '');
+  if (!normalized) return false;
+  if (SHORT_VALID_UTTERANCES.has(normalized)) return true;
+  const words = normalized.split(/\s+/).filter(Boolean);
+  return words.length <= 2 && normalized.length <= 12;
+}
+
+export function turnNoResponseTimeoutMs(
+  text: string,
+  fullMs = 45_000,
+): number {
+  return isHelloSizedUtterance(text) ? SHORT_UTTERANCE_NO_RESPONSE_MS : fullMs;
+}
+
 export function isSubstantiveTranscript(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, '');
   if (!normalized) return false;
