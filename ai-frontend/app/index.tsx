@@ -4820,7 +4820,9 @@ export default function ChatScreen() {
               </Text>
             </View>
           )}
-          ListEmptyComponent={<Text style={styles.empty}>Say hello.</Text>}
+          ListEmptyComponent={
+            <Text style={styles.empty}>Say hello to {companionName}.</Text>
+          }
         />
 
         <View style={styles.inputRow}>
