@@ -2,7 +2,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -509,19 +509,24 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, () => {
-      setKeyboardVisible(true);
-      scrollToEnd(true);
-    });
-    const hideSub = Keyboard.addListener(hideEvent, () => {
-      setKeyboardVisible(false);
-    });
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
+    try {
+      const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+      const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+      const showSub = Keyboard.addListener(showEvent, () => {
+        setKeyboardVisible(true);
+        scrollToEnd(true);
+      });
+      const hideSub = Keyboard.addListener(hideEvent, () => {
+        setKeyboardVisible(false);
+      });
+      return () => {
+        showSub.remove();
+        hideSub.remove();
+      };
+    } catch (err) {
+      console.warn('[keyboard] listener setup failed', err);
+      return undefined;
+    }
   }, []);
 
   useEffect(() => {
@@ -4498,28 +4503,16 @@ export default function ChatScreen() {
     voicePhase !== 'streaming' &&
     voicePhase !== 'interrupting';
   const voiceWaveAmbient = showVoiceHero && !voiceWaveVisible;
-  const voiceHeroProps = useMemo(
-    () => ({
-      companionName,
-      phaseLabel,
-      phaseHint,
-      level: voiceMeterLevel,
-      waveVisible: voiceWaveVisible,
-      waveSubtle: voiceWaveSubtle,
-      ambient: voiceWaveAmbient,
-      compact: voiceHeroCompact,
-    }),
-    [
-      companionName,
-      phaseLabel,
-      phaseHint,
-      voiceMeterLevel,
-      voiceWaveVisible,
-      voiceWaveSubtle,
-      voiceWaveAmbient,
-      voiceHeroCompact,
-    ],
-  );
+  const voiceHeroProps = {
+    companionName,
+    phaseLabel,
+    phaseHint,
+    level: voiceMeterLevel,
+    waveVisible: voiceWaveVisible,
+    waveSubtle: voiceWaveSubtle,
+    ambient: voiceWaveAmbient,
+    compact: voiceHeroCompact,
+  };
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
     conversationSession &&
