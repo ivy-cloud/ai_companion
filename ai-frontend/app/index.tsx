@@ -1,6 +1,6 @@
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useRouter } from 'expo-router';
+import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -272,7 +272,6 @@ type ChatMessage = {
 };
 
 export default function ChatScreen() {
-  const router = useRouter();
   const { voiceEnabled, naturalVoiceEnabled, voiceGender, voiceInputMode } =
     useAppSettings();
   const [input, setInput] = useState('');
@@ -4132,13 +4131,14 @@ export default function ChatScreen() {
             <Text style={styles.title}>{companionName}</Text>
             <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
           </View>
-          <Pressable
-            onPress={() => router.push('/settings')}
-            style={({ pressed }) => [styles.settingsButton, pressed && styles.settingsButtonPressed]}
-            accessibilityLabel="Open settings"
-          >
-            <Text style={styles.settingsIcon}>⚙</Text>
-          </Pressable>
+          <Link href="/settings" asChild>
+            <Pressable
+              style={({ pressed }) => [styles.settingsButton, pressed && styles.settingsButtonPressed]}
+              accessibilityLabel="Open settings"
+            >
+              <Text style={styles.settingsIcon}>⚙</Text>
+            </Pressable>
+          </Link>
         </View>
         {skillHints.length > 0 ? (
           <Text style={styles.skillHintsLine}>{skillHints.join(' · ')}</Text>

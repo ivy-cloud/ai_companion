@@ -77,7 +77,12 @@ export default function SettingsScreen() {
   const router = useRouter();
   const settings = useAppSettings();
   const wearables = getWearablesAudioSource();
-  const timezone = getDeviceTimezone();
+  let timezone: string | undefined;
+  try {
+    timezone = getDeviceTimezone();
+  } catch {
+    timezone = undefined;
+  }
   const [health, setHealth] = useState<HealthDetails | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
 
@@ -117,7 +122,7 @@ export default function SettingsScreen() {
         <Text style={styles.title}>Settings</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text style={styles.sectionTitle}>Voice</Text>
         <SettingRow label="Enable voice" hint="Turn off for text-only chat.">
           <Switch
@@ -215,7 +220,14 @@ export default function SettingsScreen() {
               {health.hint ? <Text style={styles.cardWarn}>{health.hint}</Text> : null}
               <Text style={styles.cardMono}>{API_BASE}/health</Text>
             </>
-          ) : null}
+          ) : (
+            <>
+              <Text style={styles.cardWarn}>
+                {`Can't reach backend (${API_BASE}) — start server & same Wi‑Fi`}
+              </Text>
+              <Text style={styles.cardMono}>{API_BASE}/health</Text>
+            </>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>Device</Text>
@@ -267,6 +279,7 @@ const styles = StyleSheet.create({
   backButtonPressed: { opacity: 0.6 },
   backLabel: { fontSize: 16, color: '#c97b84', fontWeight: '600' },
   title: { fontSize: 22, fontWeight: '700', color: '#4a3f42' },
+  scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 32, gap: 4 },
   sectionTitle: {
     fontSize: 13,
