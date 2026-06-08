@@ -2020,13 +2020,11 @@ export default function ChatScreen() {
         turn,
       )
     ) {
-      voiceLog('tts_failed', {
-        reason: 'no_play_after_retry',
+      markTtsPlaybackFailed(reply, 'no_play_after_retry', {
         turn,
         generation,
         replyLen: reply.trim().length,
       });
-      setTtsTapToHearText(reply.trim());
     } else if (playSettledForGeneration(ttsPlaySettledGenRef.current, generation)) {
       setTtsTapToHearText(null);
     }
@@ -2037,6 +2035,9 @@ export default function ChatScreen() {
     const line = prepareTextForSpeech(raw);
     if (!line) {
       voiceLog('tts_skip', { reason: 'empty_single_clip', rawLen: raw.length });
+      if (raw.length > 0 && isActiveSpeakGeneration(generation)) {
+        markTtsPlaybackFailed(raw, 'empty_single_clip', { rawLen: raw.length });
+      }
       return;
     }
     await clearStaleTtsListenBlockers();
@@ -2342,8 +2343,21 @@ export default function ChatScreen() {
         const path = await prefetch;
         prefetch = null;
         if (!path) {
+          if (isActiveSpeakGeneration(generation)) {
+            markTtsPlaybackFailed(
+              lastAssistantTtsTextRef.current || streamTtsRawRef.current,
+              'prepare_null',
+              {
+                turn,
+                generation,
+                activeGen: voiceSessionRef.current.speakGeneration,
+              },
+            );
+            streamTtsQueueRef.current = [];
+            return;
+          }
           voiceLog('tts_skip', {
-            reason: 'prepare_null',
+            reason: 'prepare_null_stale',
             turn,
             generation,
             activeGen: voiceSessionRef.current.speakGeneration,
@@ -2575,6 +2589,28 @@ export default function ChatScreen() {
     } catch {
       // continue
     }
+  };
+
+  const ensureIosSpeakerPrimed = async (generation: number) => {
+    if (Platform.OS !== 'ios') return;
+    if (iosSpeakerPrimedGenerationRef.current === generation) return;
+    await primeIosSpeaker();
+    iosSpeakerPrimedGenerationRef.current = generation;
+  };
+
+  const markTtsPlaybackFailed = (
+    replyText: string,
+    reason: string,
+    extra?: Record<string, string | number | boolean>,
+  ) => {
+    voiceLog('tts_failed', { reason, ...extra });
+    setVoicePlaybackError(
+      formatVoicePlaybackError(
+        'No audio heard — raise volume, silent switch off, tap above to hear.',
+      ),
+    );
+    const trimmed = replyText.trim();
+    if (trimmed) setTtsTapToHearText(trimmed);
   };
 
   const replyTrim = (forTest = false): SpeechTrimOptions | false => {
@@ -2885,6 +2921,7 @@ export default function ChatScreen() {
   ): Promise<void> => {
     let sound: Audio.Sound | null = null;
     if (!options?.betweenClips) {
+      await ensureIosSpeakerPrimed(generation);
       await clearStaleTtsListenBlockers();
       if (recordingRef.current || conversationBargeRecordingRef.current) {
         await releaseAllActiveRecorders();
@@ -3034,10 +3071,7 @@ export default function ChatScreen() {
     speakInFlightRef.current = true;
 
     try {
-      if (iosSpeakerPrimedGenerationRef.current !== generation) {
-        await primeIosSpeaker();
-        iosSpeakerPrimedGenerationRef.current = generation;
-      }
+      await ensureIosSpeakerPrimed(generation);
 
       let nextPathPromise: Promise<string | null> | null = prepareTtsClip(
         parts[0].text,
@@ -3059,8 +3093,7 @@ export default function ChatScreen() {
         }
         if (!path) {
           if (!isActiveSpeakGeneration(generation)) return true;
-          voiceLog('tts_skip', {
-            reason: 'speak_parts_prepare_null',
+          markTtsPlaybackFailed(parts.map((p) => p.text).join(' '), 'speak_parts_prepare_null', {
             generation,
             partIndex: index,
           });
@@ -3170,6 +3203,11 @@ export default function ChatScreen() {
 
       if (parts.length === 0) {
         voiceLog('tts_skip', { reason: 'no_speak_parts', replyLen: trimmedReply.length });
+        if (trimmedReply.length > 0) {
+          markTtsPlaybackFailed(trimmedReply, 'no_speak_parts', {
+            replyLen: trimmedReply.length,
+          });
+        }
         if (!conversationSessionRef.current || voiceInputModeRef.current !== 'conversation') {
           setVoicePhaseTransition('idle');
           if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
@@ -4232,15 +4270,23 @@ export default function ChatScreen() {
           : undefined,
       );
 
-      if (voiceEnabledRef.current && replyForTts.trim()) {
+      const ttsReply =
+        replyForTts.trim() ||
+        streamTtsRawRef.current.trim() ||
+        streamVoiceBufferRef.current.trim();
+      if (voiceEnabledRef.current && ttsReply) {
         if (isActiveVoiceTurn(turn)) {
-          await runTtsForReply(replyForTts, turn);
+          await runTtsForReply(ttsReply, turn);
         } else {
           voiceLog('tts_skip', {
             reason: 'stale_turn_after_stream',
             turn,
             activeTurn: voiceSessionRef.current.turn,
-            replyLen: replyForTts.trim().length,
+            replyLen: ttsReply.length,
+          });
+          markTtsPlaybackFailed(ttsReply, 'stale_turn_after_stream', {
+            turn,
+            activeTurn: voiceSessionRef.current.turn,
           });
           if (
             conversationSessionRef.current &&
@@ -4503,20 +4549,47 @@ export default function ChatScreen() {
     voicePhase !== 'streaming' &&
     voicePhase !== 'interrupting';
   const voiceWaveAmbient = showVoiceHero && !voiceWaveVisible;
+  const conversationCanInterrupt =
+    voiceInputMode === 'conversation' &&
+    conversationSession &&
+    isAssistantActivePhase(voicePhase);
+  const voiceStatusHint = ttsTapToHearText
+    ? 'No audio heard · Tap to hear'
+    : voicePlaybackError
+      ? `${voicePlaybackError} · tap to hear`
+      : phaseHint;
+  const handleVoiceStatusTap = () => {
+    if (ttsTapToHearText?.trim()) {
+      const replay = ttsTapToHearText;
+      setTtsTapToHearText(null);
+      setVoicePlaybackError(null);
+      void speakReply(replay).catch(() => {
+        releaseVoiceUi();
+      });
+      return;
+    }
+    if (voicePhase !== 'idle' || isStreaming || busy) {
+      if (conversationCanInterrupt) {
+        interruptConversationAssistant();
+      } else {
+        interruptAssistant();
+      }
+      return;
+    }
+    void speakReply('Hello. Voice is working.', { forTest: true }).catch(() => {
+      releaseVoiceUi();
+    });
+  };
   const voiceHeroProps = {
     companionName,
     phaseLabel,
-    phaseHint,
+    phaseHint: voiceStatusHint,
     level: voiceMeterLevel,
     waveVisible: voiceWaveVisible,
     waveSubtle: voiceWaveSubtle,
     ambient: voiceWaveAmbient,
     compact: voiceHeroCompact,
   };
-  const conversationCanInterrupt =
-    voiceInputMode === 'conversation' &&
-    conversationSession &&
-    isAssistantActivePhase(voicePhase);
   const micShowSpinner =
     voicePhase === 'thinking' ||
     voicePhase === 'streaming' ||
@@ -4583,34 +4656,12 @@ export default function ChatScreen() {
           </Pressable>
         ) : null}
         {voiceEnabled && !showVoiceHero ? (
-          <TouchableOpacity
-            onPress={() => {
-              if (ttsTapToHearText?.trim()) {
-                const replay = ttsTapToHearText;
-                setTtsTapToHearText(null);
-                void speakReply(replay).catch(() => {
-                  releaseVoiceUi();
-                });
-                return;
-              }
-              if (voicePhase !== 'idle' || isStreaming || busy) {
-                if (conversationCanInterrupt) {
-                  interruptConversationAssistant();
-                } else {
-                  interruptAssistant();
-                }
-                return;
-              }
-              void speakReply('Hello. Voice is working.', { forTest: true }).catch(() => {
-                releaseVoiceUi();
-              });
-            }}
-          >
+          <TouchableOpacity onPress={handleVoiceStatusTap}>
             <Text style={styles.voiceHint}>
               {ttsTapToHearText
                 ? 'No audio heard · Tap to hear'
                 : voicePlaybackError
-                  ? `${voicePlaybackError} · tap to reset`
+                  ? `${voicePlaybackError} · tap to hear`
                   : conversationCanInterrupt
                     ? voicePhase === 'speaking'
                       ? 'Speaking… tap Mic to interrupt'
@@ -4638,9 +4689,20 @@ export default function ChatScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         {showVoiceHero ? (
-          <View pointerEvents="box-none">
+          <Pressable
+            onPress={handleVoiceStatusTap}
+            style={({ pressed }) => [pressed && styles.voiceHeroPressed]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              ttsTapToHearText
+                ? 'No audio heard. Tap to hear the reply.'
+                : voicePlaybackError
+                  ? `${voicePlaybackError}. Tap to hear or interrupt.`
+                  : 'Voice status. Tap to test or interrupt.'
+            }
+          >
             <VoiceHero {...voiceHeroProps} />
-          </View>
+          </Pressable>
         ) : null}
 
         <FlatList
@@ -4898,6 +4960,7 @@ const styles = StyleSheet.create({
     color: '#333333',
   },
   voiceHint: { fontSize: 12, color: '#7a6e72', marginTop: 6 },
+  voiceHeroPressed: { opacity: 0.92 },
   voiceError: { fontSize: 12, color: '#c62828', marginTop: 4 },
   micButton: {
     width: 48,
