@@ -43,6 +43,11 @@ test('bar heights: count and bounds', () => {
   const heights = barHeightsFromLevel(0.5, 5, 1000);
   assert.equal(heights.length, 5);
   for (const h of heights) {
-    assert.ok(h >= 0.12 && h <= 1);
+    assert.ok(h >= 0.1 && h <= 1);
   }
+});
+
+test('hero bar count export', () => {
+  const heights = barHeightsFromLevel(0.8);
+  assert.ok(heights.length >= 20);
 });

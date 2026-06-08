@@ -1,16 +1,15 @@
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  AppState,
   FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -110,7 +109,6 @@ import {
 } from '../lib/ttsTurnGuard';
 import {
   getDeviceTimezone,
-  refreshDeviceTimezoneCache,
 } from '../lib/deviceTimezone';
 import {
   computeListenLatencyGaps,
@@ -159,8 +157,9 @@ import {
   isActiveTurn,
   mergeAbortSignals,
 } from '../lib/voiceSession';
+import { useAppSettings } from '../lib/appSettings';
 import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
-import { VoiceInputWave } from '../components/VoiceInputWave';
+import { VoiceHero } from '../components/VoiceHero';
 import {
   dbfsToNormalized,
   VOICE_METER_UI_THROTTLE_MS,
@@ -273,17 +272,16 @@ type ChatMessage = {
 };
 
 export default function ChatScreen() {
+  const router = useRouter();
+  const { voiceEnabled, naturalVoiceEnabled, voiceGender, voiceInputMode } =
+    useAppSettings();
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [naturalVoiceEnabled, setNaturalVoiceEnabled] = useState(true);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
-  const [voiceInputMode, setVoiceInputMode] = useState<VoiceInputMode>('ptt');
   const [conversationSession, setConversationSession] = useState(false);
   const [companionName, setCompanionName] = useState('…');
-  const [voiceGender, setVoiceGender] = useState<VoiceGender>('female');
   const [voiceName, setVoiceName] = useState('Loading voice…');
   const [voicePlaybackError, setVoicePlaybackError] = useState<string | null>(null);
   const [ttsTapToHearText, setTtsTapToHearText] = useState<string | null>(null);
@@ -292,9 +290,6 @@ export default function ChatScreen() {
     null,
   );
   const [skillHints, setSkillHints] = useState<string[]>([]);
-  const [deviceTimezone, setDeviceTimezone] = useState<string | undefined>(() =>
-    getDeviceTimezone(),
-  );
   const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
   const voiceEnabledRef = useRef(true);
   const voicePhaseRef = useRef<VoicePhase>('idle');
@@ -342,6 +337,8 @@ export default function ChatScreen() {
   const voiceMeterUiLastAtRef = useRef(0);
   const voiceMeterUiPendingRef = useRef<number | null>(null);
   const voiceMeterUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevVoiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
+  const prevVoiceEnabledRef = useRef(voiceEnabled);
   const pttMeterRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pttMeterTickInFlightRef = useRef(false);
   const ttsAbortRef = useRef<AbortController | null>(null);
@@ -392,6 +389,14 @@ export default function ChatScreen() {
 
   useEffect(() => {
     voiceEnabledRef.current = voiceEnabled;
+    if (prevVoiceEnabledRef.current === voiceEnabled) return;
+    prevVoiceEnabledRef.current = voiceEnabled;
+    if (!voiceEnabled) {
+      void stopPlayback().catch(() => {});
+      interruptAssistant();
+    } else {
+      prewarmVoiceMicIfIdle();
+    }
   }, [voiceEnabled]);
 
   useEffect(() => {
@@ -418,6 +423,13 @@ export default function ChatScreen() {
 
   useEffect(() => {
     voiceInputModeRef.current = voiceInputMode;
+    if (
+      prevVoiceInputModeRef.current !== voiceInputMode &&
+      voiceInputMode === 'ptt'
+    ) {
+      endConversationSession();
+    }
+    prevVoiceInputModeRef.current = voiceInputMode;
   }, [voiceInputMode]);
 
   useEffect(() => {
@@ -427,18 +439,6 @@ export default function ChatScreen() {
   useEffect(() => {
     if (voiceEnabled) prewarmVoiceMicIfIdle();
   }, [voiceEnabled]);
-
-  useEffect(() => {
-    const syncTimezone = () => setDeviceTimezone(getDeviceTimezone());
-    syncTimezone();
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        refreshDeviceTimezoneCache();
-        syncTimezone();
-      }
-    });
-    return () => sub.remove();
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1663,14 +1663,6 @@ export default function ChatScreen() {
     }
 
     void startConversationSession();
-  };
-
-  const onVoiceInputModeChange = (mode: VoiceInputMode) => {
-    setVoiceInputMode(mode);
-    voiceInputModeRef.current = mode;
-    if (mode === 'ptt') {
-      endConversationSession();
-    }
   };
 
   const clearStreamUiFlush = () => {
@@ -3156,17 +3148,6 @@ export default function ChatScreen() {
     }
   };
 
-  const onVoiceToggle = (enabled: boolean) => {
-    setVoiceEnabled(enabled);
-    voiceEnabledRef.current = enabled;
-    if (!enabled) {
-      void stopPlayback().catch(() => {});
-      interruptAssistant();
-    } else {
-      prewarmVoiceMicIfIdle();
-    }
-  };
-
   useEffect(() => {
     return () => {
       clearConversationListenResumeTimer();
@@ -3330,11 +3311,6 @@ export default function ChatScreen() {
 
     return () => clearInterval(intervalId);
   }, []);
-
-  const onNaturalVoiceToggle = (enabled: boolean) => {
-    setNaturalVoiceEnabled(enabled);
-    naturalVoiceEnabledRef.current = enabled;
-  };
 
   const processVoiceUtterance = async (
     uri: string,
@@ -4130,6 +4106,11 @@ export default function ChatScreen() {
     voiceMeterLevel > 0.04;
   const voiceWaveVisible = voiceWaveInputVisible || voiceWaveBargeVisible;
   const voiceWaveSubtle = voiceWaveBargeVisible && !voiceWaveInputVisible;
+  const voiceHeroActive =
+    voiceEnabled &&
+    (voicePhase !== 'idle' ||
+      (conversationSession && voiceInputMode === 'conversation'));
+  const voiceWaveAmbient = voiceHeroActive && !voiceWaveVisible;
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
     conversationSession &&
@@ -4146,8 +4127,19 @@ export default function ChatScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar style="dark" />
       <View style={styles.header}>
-        <Text style={styles.title}>{companionName}</Text>
-        <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTitles}>
+            <Text style={styles.title}>{companionName}</Text>
+            <Text style={styles.nameHint}>Say &quot;call you …&quot; to rename her</Text>
+          </View>
+          <Pressable
+            onPress={() => router.push('/settings')}
+            style={({ pressed }) => [styles.settingsButton, pressed && styles.settingsButtonPressed]}
+            accessibilityLabel="Open settings"
+          >
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </Pressable>
+        </View>
         {skillHints.length > 0 ? (
           <Text style={styles.skillHintsLine}>{skillHints.join(' · ')}</Text>
         ) : null}
@@ -4166,126 +4158,7 @@ export default function ChatScreen() {
             <Text style={styles.endConversationLabel}>End conversation</Text>
           </Pressable>
         ) : null}
-        <View style={styles.voiceRow}>
-          <Text style={styles.voiceLabel}>Enable voice</Text>
-          <Switch
-            value={voiceEnabled}
-            onValueChange={onVoiceToggle}
-            trackColor={{ false: '#cccccc', true: '#007aff' }}
-            thumbColor="#ffffff"
-          />
-        </View>
-        <View style={[styles.voiceRow, !voiceEnabled && styles.voiceRowDisabled]}>
-          <Text style={[styles.voiceLabel, !voiceEnabled && styles.voiceLabelDisabled]}>
-            Voice tone
-          </Text>
-          <View style={styles.voiceToneRow}>
-            <Text
-              style={[
-                styles.voiceToneChip,
-                voiceGender === 'female' && styles.voiceToneChipActive,
-                !voiceEnabled && styles.voiceToneChipDisabled,
-              ]}
-              onPress={() => voiceEnabled && setVoiceGender('female')}
-            >
-              Female
-            </Text>
-            <Text
-              style={[
-                styles.voiceToneChip,
-                voiceGender === 'male' && styles.voiceToneChipActive,
-                !voiceEnabled && styles.voiceToneChipDisabled,
-              ]}
-              onPress={() => voiceEnabled && setVoiceGender('male')}
-            >
-              Male
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.voiceRow, !voiceEnabled && styles.voiceRowDisabled]}>
-          <Text style={[styles.voiceLabel, !voiceEnabled && styles.voiceLabelDisabled]}>
-            Mic mode
-          </Text>
-          <View style={styles.voiceToneRow}>
-            <Text
-              style={[
-                styles.voiceToneChip,
-                voiceInputMode === 'ptt' && styles.voiceToneChipActive,
-                !voiceEnabled && styles.voiceToneChipDisabled,
-              ]}
-              onPress={() => voiceEnabled && onVoiceInputModeChange('ptt')}
-            >
-              Push-to-talk
-            </Text>
-            <Text
-              style={[
-                styles.voiceToneChip,
-                voiceInputMode === 'conversation' && styles.voiceToneChipActive,
-                !voiceEnabled && styles.voiceToneChipDisabled,
-              ]}
-              onPress={() => voiceEnabled && onVoiceInputModeChange('conversation')}
-            >
-              Conversation
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.voiceRow, !voiceEnabled && styles.voiceRowDisabled]}>
-          <Text style={[styles.voiceLabel, !voiceEnabled && styles.voiceLabelDisabled]}>
-            Shorter replies (2 sentences max)
-          </Text>
-          <Switch
-            value={naturalVoiceEnabled}
-            onValueChange={onNaturalVoiceToggle}
-            disabled={!voiceEnabled}
-            trackColor={{ false: '#cccccc', true: '#007aff' }}
-            thumbColor="#ffffff"
-          />
-        </View>
-        {voiceEnabled ? (
-          <Pressable
-            onPress={() => {
-              if (conversationCanInterrupt) {
-                interruptConversationAssistant();
-              }
-            }}
-            disabled={!conversationCanInterrupt}
-            style={({ pressed }) => [
-              styles.voiceStatusBar,
-              conversationCanInterrupt && pressed && styles.voiceStatusBarPressable,
-            ]}
-          >
-            <View
-              style={[
-                styles.voiceStatusDot,
-                (voicePhase === 'recording' || voicePhase === 'listening') &&
-                  styles.voiceStatusDotRecording,
-                (voicePhase === 'thinking' || voicePhase === 'streaming') &&
-                  (isStreaming
-                    ? styles.voiceStatusDotGenerating
-                    : styles.voiceStatusDotProcessing),
-                voicePhase === 'speaking' && styles.voiceStatusDotSpeaking,
-                voicePhase === 'interrupting' && styles.voiceStatusDotProcessing,
-              ]}
-            />
-            <View style={styles.voiceStatusText}>
-              <Text style={styles.voiceStatusLabel}>{phaseLabel}</Text>
-              {voiceWaveVisible ? (
-                <VoiceInputWave
-                  level={voiceMeterLevel}
-                  visible={voiceWaveVisible}
-                  subtle={voiceWaveSubtle}
-                />
-              ) : null}
-              <Text style={styles.voiceStatusHint}>{phaseHint}</Text>
-              <Text style={styles.clockTzHint}>
-                {deviceTimezone
-                  ? `Your clock: ${deviceTimezone}`
-                  : 'Clock zone not detected — restart app; server fallback may be wrong'}
-              </Text>
-            </View>
-          </Pressable>
-        ) : null}
-        {voiceEnabled ? (
+        {voiceEnabled && !voiceHeroActive ? (
           <TouchableOpacity
             onPress={() => {
               if (ttsTapToHearText?.trim()) {
@@ -4313,20 +4186,20 @@ export default function ChatScreen() {
               {ttsTapToHearText
                 ? 'No audio heard · Tap to hear'
                 : voicePlaybackError
-                ? `${voicePlaybackError} · tap to reset`
-                : conversationCanInterrupt
-                  ? voicePhase === 'speaking'
-                    ? 'Speaking… tap Mic to interrupt'
-                    : 'Thinking… tap Mic to interrupt, then speak'
-                  : voicePhase === 'speaking'
-                    ? 'Speaking… tap to stop'
-                    : isStreaming ||
-                      voicePhase === 'thinking' ||
-                      voicePhase === 'streaming'
-                      ? 'Working… tap to stop'
-                      : voiceInputMode === 'conversation'
-                        ? `${formatVoiceStatusLine(voiceName)} · Tap Mic to start conversation`
-                        : `${formatVoiceStatusLine(voiceName)} · Tap to test · Hold Mic below to talk`}
+                  ? `${voicePlaybackError} · tap to reset`
+                  : conversationCanInterrupt
+                    ? voicePhase === 'speaking'
+                      ? 'Speaking… tap Mic to interrupt'
+                      : 'Thinking… tap Mic to interrupt, then speak'
+                    : voicePhase === 'speaking'
+                      ? 'Speaking… tap to stop'
+                      : isStreaming ||
+                          voicePhase === 'thinking' ||
+                          voicePhase === 'streaming'
+                        ? 'Working… tap to stop'
+                        : voiceInputMode === 'conversation'
+                          ? `${formatVoiceStatusLine(voiceName)} · Tap Mic to start conversation`
+                          : `${formatVoiceStatusLine(voiceName)} · Tap to test · Hold Mic below to talk`}
             </Text>
           </TouchableOpacity>
         ) : null}
@@ -4334,6 +4207,18 @@ export default function ChatScreen() {
           <Text style={styles.voiceError}>Voice: {voiceInputError}</Text>
         ) : null}
       </View>
+
+      {voiceEnabled && voiceHeroActive ? (
+        <VoiceHero
+          companionName={companionName}
+          phaseLabel={phaseLabel}
+          phaseHint={phaseHint}
+          level={voiceMeterLevel}
+          waveVisible={voiceWaveVisible}
+          waveSubtle={voiceWaveSubtle}
+          ambient={voiceWaveAmbient}
+        />
+      ) : null}
 
       <FlatList
         ref={listRef}
@@ -4478,19 +4363,38 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  container: { flex: 1, backgroundColor: '#faf7f5' },
   header: {
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#dddddd',
-    backgroundColor: '#f5f5f5',
+    borderBottomColor: '#ead9d4',
+    backgroundColor: '#faf7f5',
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerTitles: { flex: 1 },
+  settingsButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#ead9d4',
+  },
+  settingsButtonPressed: { backgroundColor: '#f3ebe8' },
+  settingsIcon: { fontSize: 20, color: '#9a8ab0' },
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#000000',
+    color: '#4a3f42',
     marginBottom: 4,
   },
   nameHint: {
@@ -4528,74 +4432,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
   },
-  voiceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  voiceRowDisabled: {
-    opacity: 0.45,
-  },
-  voiceLabel: { fontSize: 16, color: '#000000' },
-  voiceLabelDisabled: { color: '#888888' },
-  voiceToneRow: { flexDirection: 'row', gap: 8 },
-  voiceToneChip: {
-    fontSize: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#e8e8e8',
-    color: '#333333',
-  },
-  voiceToneChipActive: { backgroundColor: '#007aff', color: '#ffffff', fontWeight: '600' },
-  voiceToneChipDisabled: { opacity: 0.45 },
-  voiceHint: { fontSize: 12, color: '#666666', marginTop: 6 },
-  voiceStatusBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#dddddd',
-  },
-  voiceStatusBarPressable: {
-    backgroundColor: '#f0f7ff',
-    borderColor: '#007aff',
-  },
-  voiceStatusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#9e9e9e',
-    marginRight: 10,
-  },
-  voiceStatusDotRecording: { backgroundColor: '#d32f2f' },
-  voiceStatusDotProcessing: { backgroundColor: '#f57c00' },
-  voiceStatusDotGenerating: { backgroundColor: '#7b1fa2' },
-  voiceStatusDotSpeaking: { backgroundColor: '#007aff' },
-  voiceStatusText: { flex: 1 },
-  voiceStatusLabel: { fontSize: 14, fontWeight: '600', color: '#000000' },
-  voiceStatusHint: { fontSize: 12, color: '#666666', marginTop: 2 },
-  clockTzHint: { fontSize: 11, color: '#888888', marginTop: 4 },
+  voiceHint: { fontSize: 12, color: '#7a6e72', marginTop: 6 },
   voiceError: { fontSize: 12, color: '#c62828', marginTop: 4 },
   micButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
     borderWidth: 2,
-    borderColor: '#007aff',
+    borderColor: '#c97b84',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ffffff',
   },
   micButtonActive: {
-    backgroundColor: '#e3f2fd',
-    borderColor: '#0056b3',
+    backgroundColor: '#f8ecee',
+    borderColor: '#a8616a',
   },
   micButtonDisabled: {
     opacity: 0.45,
@@ -4603,7 +4454,7 @@ const styles = StyleSheet.create({
   micLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#007aff',
+    color: '#c97b84',
   },
   list: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingBottom: 8 },
