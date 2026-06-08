@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { VoiceDecibelBar } from './VoiceDecibelBar';
 import { VoiceInputWave } from './VoiceInputWave';
 
@@ -11,6 +11,8 @@ type VoiceHeroProps = {
   meterDbfs?: number | null;
   meterVisible?: boolean;
   speakLouderHint?: boolean;
+  doneSpeakingVisible?: boolean;
+  onDoneSpeaking?: () => void;
   waveVisible: boolean;
   waveSubtle?: boolean;
   ambient?: boolean;
@@ -27,6 +29,8 @@ export function VoiceHero({
   meterDbfs = null,
   meterVisible = false,
   speakLouderHint = false,
+  doneSpeakingVisible = false,
+  onDoneSpeaking,
   waveVisible,
   waveSubtle = false,
   ambient = false,
@@ -55,6 +59,19 @@ export function VoiceHero({
             visible={meterVisible}
             hint={decibelHint}
           />
+          {doneSpeakingVisible && onDoneSpeaking ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.doneSpeakingButton,
+                pressed && styles.doneSpeakingPressed,
+              ]}
+              onPress={onDoneSpeaking}
+              accessibilityRole="button"
+              accessibilityLabel="Done speaking"
+            >
+              <Text style={styles.doneSpeakingLabel}>Done speaking</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     );
@@ -76,6 +93,19 @@ export function VoiceHero({
         visible={meterVisible}
         hint={decibelHint}
       />
+      {doneSpeakingVisible && onDoneSpeaking ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.doneSpeakingButton,
+            pressed && styles.doneSpeakingPressed,
+          ]}
+          onPress={onDoneSpeaking}
+          accessibilityRole="button"
+          accessibilityLabel="Done speaking"
+        >
+          <Text style={styles.doneSpeakingLabel}>Done speaking</Text>
+        </Pressable>
+      ) : null}
       <Text style={styles.phaseHint}>{phaseHint}</Text>
     </View>
   );
@@ -137,5 +167,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     paddingHorizontal: 8,
+  },
+  doneSpeakingButton: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#4a3f42',
+  },
+  doneSpeakingPressed: {
+    opacity: 0.85,
+  },
+  doneSpeakingLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#faf7f5',
   },
 });

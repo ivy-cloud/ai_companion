@@ -18,6 +18,8 @@ import {
   shouldSecondChanceQuietListen,
   canResumeConversationListen,
   createConversationMeterState,
+  isMeterSpeech,
+  isSilenceForEndDetection,
   isSpeechLevel,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
@@ -69,6 +71,38 @@ test('speech level: quiet speech above threshold registers', () => {
   assert.equal(isSpeechLevel(-59), true);
   assert.equal(isSpeechLevel(-60), false);
   assert.equal(isSpeechLevel(-50), true);
+});
+
+test('meter speech: quieter levels still count as sawSpeech', () => {
+  assert.equal(isMeterSpeech(-65), true);
+  assert.equal(isMeterSpeech(-73), true);
+  assert.equal(isMeterSpeech(-75), false);
+});
+
+test('endSilence fires for quiet speech visible on dB bar (-72 peak)', () => {
+  const t0 = 1000;
+  let state = createConversationMeterState(t0);
+  state = tickConversationMeter(state, -72, t0 + 100).state;
+  assert.equal(state.sawSpeech, true);
+  state = tickConversationMeter(state, -76, t0 + MIN_SPEECH_MS).state;
+  const ready = tickConversationMeter(state, -76, t0 + MIN_SPEECH_MS + SILENCE_END_MS);
+  assert.equal(ready.endSilence, true);
+});
+
+test('silence for end: drop from peak counts as trailing silence', () => {
+  assert.equal(isSilenceForEndDetection(-55, -48), true);
+  assert.equal(isSilenceForEndDetection(-48, -48), false);
+  assert.equal(isSilenceForEndDetection(-70, -48), true);
+});
+
+test('endSilence fires when room noise stays above speech threshold after user stops', () => {
+  const t0 = 1000;
+  let state = createConversationMeterState(t0);
+  state = tickConversationMeter(state, -48, t0 + 100).state;
+  assert.equal(state.sawSpeech, true);
+  state = tickConversationMeter(state, -55, t0 + MIN_SPEECH_MS).state;
+  const ready = tickConversationMeter(state, -55, t0 + MIN_SPEECH_MS + SILENCE_END_MS);
+  assert.equal(ready.endSilence, true);
 });
 
 test('listen open grace: no force-idle while mic is still opening', () => {

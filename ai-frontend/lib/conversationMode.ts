@@ -135,6 +135,21 @@ export function shouldRecoverListenPausedStuck(
  */
 export const SPEECH_LEVEL_DB = -60;
 
+/**
+ * Quieter than {@link SPEECH_LEVEL_DB} but still visible on the dB bar — counts as sawSpeech
+ * so end_silence can fire after the user stops (fixes bar-moving-but-never-responds).
+ */
+export const METER_SPEECH_LEVEL_DB = -74;
+
+/**
+ * After speech, treat metering at or below (peak − this) as trailing silence even when
+ * still above {@link SPEECH_LEVEL_DB} (room noise / HVAC was blocking end_silence).
+ */
+export const SILENCE_DROP_FROM_PEAK_DB = 6;
+
+/** Force end-of-utterance after this much speech even without a clean silence gap. */
+export const MAX_UTTERANCE_MS = 14_000;
+
 /** Log hint when listening this long with no meter speech (quiet_voice_timeout). */
 export const QUIET_VOICE_TIMEOUT_MS = 5000;
 
@@ -146,6 +161,33 @@ export function isSpeechLevel(metering?: number): boolean {
     return false;
   }
   return metering > SPEECH_LEVEL_DB;
+}
+
+/** True when metering should mark sawSpeech (includes quiet speech visible on dB bar). */
+export function isMeterSpeech(metering?: number): boolean {
+  if (metering === undefined || metering === null || Number.isNaN(metering)) {
+    return false;
+  }
+  return metering > METER_SPEECH_LEVEL_DB;
+}
+
+/**
+ * True when user has likely stopped speaking — absolute silence or level dropped from peak.
+ */
+export function isSilenceForEndDetection(
+  metering: number | undefined,
+  peakMetering: number | null,
+): boolean {
+  if (!isMeterSpeech(metering)) {
+    return true;
+  }
+  if (!isSpeechLevel(metering)) {
+    return true;
+  }
+  if (peakMetering === null) {
+    return false;
+  }
+  return metering! <= peakMetering - SILENCE_DROP_FROM_PEAK_DB;
 }
 
 export function isBargeInSpeechLevel(metering?: number): boolean {
@@ -221,56 +263,76 @@ export function tickConversationMeter(
   now: number,
 ): MeterTickResult {
   const peakMetering = nextPeakMetering(state.peakMetering, metering);
-  const speech = isSpeechLevel(metering);
+  const meterSpeech = isMeterSpeech(metering);
+  const peakHeard =
+    peakMetering !== null && peakMetering > METER_SPEECH_LEVEL_DB;
+  const heardSpeech = meterSpeech || peakHeard || state.sawSpeech;
+  const stillSpeaking =
+    meterSpeech && !isSilenceForEndDetection(metering, peakMetering);
 
-  if (speech) {
+  if (stillSpeaking) {
+    const speechStartedAt = state.speechStartedAt ?? now;
     const next: ConversationMeterState = {
       ...state,
       sawSpeech: true,
-      speechStartedAt: state.speechStartedAt ?? now,
+      speechStartedAt,
       silenceSince: null,
       lastSpeechAt: now,
       peakMetering,
     };
+    const speechMs = now - speechStartedAt;
+    const forceEnd = speechMs >= MAX_UTTERANCE_MS;
     return {
       state: next,
-      endSilence: false,
+      endSilence: forceEnd,
       inactive: false,
       quietVoiceTimeout: false,
-      speechDurationMs: 0,
+      speechDurationMs: forceEnd ? speechMs : 0,
       silenceDurationMs: 0,
     };
   }
 
   const silenceSince = state.silenceSince ?? now;
+  const heardRealSpeech =
+    state.sawSpeech &&
+    state.peakMetering !== null &&
+    state.peakMetering > SPEECH_LEVEL_DB;
   const quietVoiceTimeout =
-    !state.sawSpeech &&
+    !heardRealSpeech &&
     !state.quietVoiceTimeoutLogged &&
     now - state.listenStartedAt >= QUIET_VOICE_TIMEOUT_MS;
   const next: ConversationMeterState = {
     ...state,
+    sawSpeech: heardSpeech,
+    speechStartedAt:
+      state.speechStartedAt ?? (heardSpeech ? now : null),
     silenceSince,
     peakMetering,
     quietVoiceTimeoutLogged: state.quietVoiceTimeoutLogged || quietVoiceTimeout,
+    lastSpeechAt: meterSpeech ? now : state.lastSpeechAt,
   };
   const speechMs =
-    state.sawSpeech && state.speechStartedAt != null ? now - state.speechStartedAt : 0;
+    next.sawSpeech && next.speechStartedAt != null
+      ? now - next.speechStartedAt
+      : 0;
   const silenceMs = now - silenceSince;
   const endSilence =
-    state.sawSpeech &&
+    next.sawSpeech &&
     speechMs >= MIN_SPEECH_MS &&
     silenceMs >= SILENCE_END_MS;
+  const forceEnd = speechMs >= MAX_UTTERANCE_MS;
+  const fired = endSilence || forceEnd;
 
   const anchor = state.lastSpeechAt ?? state.listenStartedAt;
   const inactive = now - anchor >= SESSION_INACTIVITY_MS;
 
   return {
     state: next,
-    endSilence,
+    endSilence: fired,
     inactive,
     quietVoiceTimeout,
-    speechDurationMs: endSilence ? speechMs : 0,
-    silenceDurationMs: endSilence ? silenceMs : 0,
+    speechDurationMs: fired ? speechMs : 0,
+    silenceDurationMs: fired ? silenceMs : 0,
   };
 }
 

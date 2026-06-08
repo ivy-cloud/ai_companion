@@ -66,6 +66,7 @@ import {
   createBargeInMeterState,
   createConversationMeterState,
   isSpeechLevel,
+  MIN_SPEECH_MS,
   METERING_INTERVAL_MS,
   shouldSecondChanceQuietListen,
   tickConversationBargeIn,
@@ -311,6 +312,7 @@ export default function ChatScreen() {
   const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
   const [voiceMeterDbfs, setVoiceMeterDbfs] = useState<number | null>(null);
   const [speakLouderHint, setSpeakLouderHint] = useState(false);
+  const [listenChunkSending, setListenChunkSending] = useState(false);
   const voiceEnabledRef = useRef(voiceEnabled);
   const voicePhaseRef = useRef<VoicePhase>('idle');
   const voiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
@@ -1200,6 +1202,74 @@ export default function ChatScreen() {
     lastProactiveAtRef.current = 0;
   };
 
+  const commitConversationListenChunk = async (
+    reason: 'end_silence' | 'done_speaking',
+    listenGen: number,
+    meterMeta: QuietListenMeterMeta & { silenceMs?: number },
+  ) => {
+    if (listenGen !== conversationListenGenRef.current) return;
+    if (voicePhaseRef.current !== 'listening' || !recordingRef.current) return;
+
+    if (reason === 'done_speaking' && !meterMeta.sawSpeech) {
+      setVoiceInputError('Didn’t hear speech — speak and tap Done, or pause ~1s.');
+      return;
+    }
+
+    voiceLog(reason === 'end_silence' ? 'end_silence' : 'done_speaking', {
+      speechMs: meterMeta.speechDurationMs,
+      silenceMs: meterMeta.silenceMs ?? 0,
+      listenGen,
+      sawSpeech: meterMeta.sawSpeech,
+      peakDb: meterMeta.peakMetering,
+    });
+    setListenChunkSending(true);
+    clearProactiveTimer();
+    stopConversationMetering();
+    const active = recordingRef.current;
+    recordingRef.current = null;
+    if (!active) {
+      setListenChunkSending(false);
+      return;
+    }
+    if (RECORDING_TAIL_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, RECORDING_TAIL_MS));
+    }
+    if (listenGen !== conversationListenGenRef.current) {
+      try {
+        await active.stopAndUnloadAsync();
+      } catch {
+        // ignore
+      }
+      setListenChunkSending(false);
+      return;
+    }
+    void finalizeConversationListenChunk(active, listenGen, {
+      sawSpeech: meterMeta.sawSpeech,
+      peakMetering: meterMeta.peakMetering,
+      speechDurationMs: meterMeta.speechDurationMs,
+    });
+  };
+
+  const finishConversationListenManually = () => {
+    if (voicePhaseRef.current !== 'listening' || !recordingRef.current) return;
+    const meter = conversationMeterStateRef.current;
+    const now = Date.now();
+    const speechMs =
+      meter?.sawSpeech && meter.speechStartedAt != null
+        ? now - meter.speechStartedAt
+        : 0;
+    void commitConversationListenChunk(
+      'done_speaking',
+      conversationListenGenRef.current,
+      {
+        sawSpeech: meter?.sawSpeech === true,
+        peakMetering: meter?.peakMetering ?? null,
+        speechDurationMs: speechMs,
+        silenceMs: 0,
+      },
+    );
+  };
+
   const beginConversationListenMeter = (listenGen: number) => {
     stopConversationMetering();
     conversationMeterRef.current = setInterval(() => {
@@ -1293,31 +1363,11 @@ export default function ChatScreen() {
         }
 
         if (tick.endSilence) {
-          voiceLog('end_silence', {
-            speechMs: tick.speechDurationMs,
-            silenceMs: tick.silenceDurationMs,
-            listenGen,
-          });
-          clearProactiveTimer();
-          stopConversationMetering();
-          const active = recordingRef.current;
-          recordingRef.current = null;
-          if (!active) return;
-          if (RECORDING_TAIL_MS > 0) {
-            await new Promise((resolve) => setTimeout(resolve, RECORDING_TAIL_MS));
-          }
-          if (listenGen !== conversationListenGenRef.current) {
-            try {
-              await active.stopAndUnloadAsync();
-            } catch {
-              // ignore
-            }
-            return;
-          }
-          void finalizeConversationListenChunk(active, listenGen, {
+          await commitConversationListenChunk('end_silence', listenGen, {
             sawSpeech: tick.state.sawSpeech,
             peakMetering: tick.state.peakMetering,
             speechDurationMs: tick.speechDurationMs,
+            silenceMs: tick.silenceDurationMs,
           });
         }
         } finally {
@@ -1407,6 +1457,7 @@ export default function ChatScreen() {
       listenGen !== conversationListenGenRef.current ||
       !conversationSessionRef.current
     ) {
+      setListenChunkSending(false);
       try {
         await recording.stopAndUnloadAsync();
       } catch {
@@ -1422,6 +1473,7 @@ export default function ChatScreen() {
       sawSpeech: meterMeta?.peakMetering != null || meterMeta?.speechDurationMs != null,
     });
     if (!setVoicePhaseTransition('thinking', { reason: 'end_silence_stt' })) {
+      setListenChunkSending(false);
       try {
         await recording.stopAndUnloadAsync();
       } catch {
@@ -1438,6 +1490,7 @@ export default function ChatScreen() {
         meterMeta,
       });
     } catch (err) {
+      setListenChunkSending(false);
       const msg = err instanceof Error ? err.message : 'Recording failed';
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       if (conversationSessionRef.current) {
@@ -1681,7 +1734,13 @@ export default function ChatScreen() {
       }
 
       setVoiceInputError(null);
-      voiceUtteranceRef.current += 1;
+      if (
+        !voiceSendLockRef.current &&
+        voicePhaseRef.current !== 'thinking' &&
+        voicePhaseRef.current !== 'streaming'
+      ) {
+        voiceUtteranceRef.current += 1;
+      }
 
       const permitted = await ensureMicrophonePermission();
       if (!permitted) {
@@ -4563,10 +4622,13 @@ export default function ChatScreen() {
   const inputLockReason = getInputLockReason(voicePhase);
   const inputLocked = inputLockReason === 'recording';
   const sendEnabled = input.trim().length > 0 && voicePhase !== 'recording';
-  const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
-    proactive: proactiveTurnActive,
-    companionName,
-  });
+  const phaseLabel =
+    listenChunkSending && voicePhase === 'listening'
+      ? 'Sending…'
+      : voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
+          proactive: proactiveTurnActive,
+          companionName,
+        });
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
   const voiceWaveInputVisible =
     voicePhase === 'listening' || voicePhase === 'recording';
@@ -4646,6 +4708,11 @@ export default function ChatScreen() {
     meterDbfs: voiceMeterDbfs,
     meterVisible: voiceWaveInputVisible,
     speakLouderHint,
+    doneSpeakingVisible:
+      voicePhase === 'listening' &&
+      voiceInputMode === 'conversation' &&
+      conversationSession,
+    onDoneSpeaking: finishConversationListenManually,
     waveVisible: voiceWaveVisible,
     waveSubtle: voiceWaveSubtle,
     ambient: voiceWaveAmbient,
