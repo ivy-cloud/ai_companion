@@ -7,9 +7,14 @@ import profile
 from context import (
     build_context_appendix,
     companion_math_reply,
+    companion_time_reply,
+    format_today_anchor,
     is_simple_math_question,
+    is_this_year_age_question,
+    is_time_question,
     needs_clock_context,
     needs_friend_notes_context,
+    resolve_clock,
 )
 from personality import build_turn_hints
 from companion import (
@@ -49,9 +54,31 @@ class DirectReplyTests(unittest.TestCase):
 
     def test_math_context_omits_clock_and_notes(self):
         appendix = build_context_appendix(include_clock=False, include_notes=False)
+        self.assertIn("## Calendar", appendix)
+        self.assertIn("calendar year", appendix)
         self.assertNotIn("## Right now", appendix)
         self.assertNotIn("Saved friend notes", appendix)
         self.assertIn("Do **not** mention the current time", appendix)
+
+    def test_casual_chat_always_includes_today_anchor(self):
+        appendix = build_context_appendix(include_clock=False, include_notes=True)
+        self.assertIn("## Calendar", appendix)
+        self.assertIn("calendar year", appendix)
+
+    def test_what_year_is_it_canned(self):
+        clock = resolve_clock("America/Los_Angeles")
+        self.assertTrue(is_time_question("What year is it?"))
+        reply = companion_time_reply("What year is it?", clock)
+        self.assertIsNotNone(reply)
+        year = int(format_today_anchor(clock).split("calendar year ")[1].rstrip(")."))
+        self.assertIn(spoken_year(year), reply.lower())
+
+    def test_how_old_is_this_year_canned(self):
+        clock = resolve_clock("UTC")
+        self.assertTrue(is_this_year_age_question("How old is this year?"))
+        reply = companion_time_reply("How old is this year?", clock)
+        self.assertIsNotNone(reply)
+        self.assertIn("months in", reply.lower())
 
     def test_time_question_keeps_clock(self):
         self.assertTrue(needs_clock_context("What time is it?"))

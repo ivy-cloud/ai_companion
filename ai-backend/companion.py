@@ -528,7 +528,7 @@ def _default_companion_age() -> int:
     return 28
 
 
-def get_companion_birth_year() -> int:
+def get_companion_birth_year(clock=None) -> int:
     """Birth year from env or current calendar year minus companion age."""
     raw = os.environ.get("COMPANION_BIRTH_YEAR", "").strip()
     if raw:
@@ -540,7 +540,8 @@ def get_companion_birth_year() -> int:
             pass
     from context import format_local_now_parts, resolve_clock
 
-    current_year = int(format_local_now_parts(resolve_clock())["year"])
+    resolved = clock if clock is not None else resolve_clock()
+    current_year = int(format_local_now_parts(resolved)["year"])
     return current_year - get_companion_age()
 
 
@@ -791,7 +792,7 @@ def format_name_for_prompt() -> str:
     return format_companion_persona_for_prompt()
 
 
-def format_companion_persona_for_prompt() -> str:
+def format_companion_persona_for_prompt(clock=None) -> str:
     record = get_companion_name_record()
     age = get_companion_age()
     name_lines = (
@@ -799,7 +800,7 @@ def format_companion_persona_for_prompt() -> str:
         f"- Do **not** say your name every turn — only when they ask.\n"
         f"- If they ask to rename **you**: say \"call you <name>\" — never their name."
     )
-    birth_year = get_companion_birth_year()
+    birth_year = get_companion_birth_year(clock)
     age_lines = (
         f"- Your age is **{age}**; you were born in **{birth_year}** "
         f"(from age + current year — do not invent another year).\n"

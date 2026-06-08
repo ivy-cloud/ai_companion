@@ -13,6 +13,7 @@ from human_speech import (
     HUMAN_SPEECH_RULES,
     short_date_reply,
     short_day_reply,
+    short_this_year_age_reply,
     short_time_reply,
     short_year_reply,
 )
@@ -79,7 +80,17 @@ def format_local_now_parts(clock: Optional[ResolvedClock] = None) -> Dict[str, s
         "month": now.strftime("%B"),
         "day": str(day),
         "year": str(now.year),
+        "month_num": str(now.month),
     }
+
+
+def format_today_anchor(clock: Optional[ResolvedClock] = None) -> str:
+    """Compact calendar facts for every turn — so the model knows today's year."""
+    p = format_local_now_parts(clock)
+    return (
+        f"Today is {p['weekday']}, {p['month']} {p['day']}, {p['year']} "
+        f"(calendar year {p['year']})."
+    )
 
 
 def format_clock_context_for_model(clock: Optional[ResolvedClock] = None) -> str:
@@ -189,12 +200,25 @@ def needs_friend_notes_context(message: str) -> bool:
     )
 
 
+_THIS_YEAR_AGE = re.compile(
+    r"\bhow\s+old\s+(?:is\s+)?(?:this|the)\s+year\b",
+    re.I,
+)
+
+
+def is_this_year_age_question(message: str) -> bool:
+    return bool(_THIS_YEAR_AGE.search(message.strip()))
+
+
 def is_time_question(message: str) -> bool:
     """Clock questions — answered from companion local time, never web search."""
     text = message.strip()
     if not text:
         return False
     lower = text.lower().rstrip("?").strip()
+
+    if is_this_year_age_question(text):
+        return True
 
     # Past / event time — not "what time is it now"
     if re.search(
@@ -299,7 +323,16 @@ def companion_time_reply(
 
     p = format_local_now_parts(clock)
     h, m = int(p["hour_24"]), int(p["minute"])
-    intent = _time_intent(message.lower())
+    lower = message.lower()
+
+    if is_this_year_age_question(message):
+        return short_this_year_age_reply(
+            p,
+            month_num=int(p["month_num"]),
+            day=int(p["day"]),
+        )
+
+    intent = _time_intent(lower)
 
     if intent == "year":
         return short_year_reply(p)
@@ -321,12 +354,13 @@ def build_context_appendix(
     include_clock: bool = True,
     include_notes: bool = True,
 ) -> str:
-    parts: list[str] = []
+    parts: list[str] = [f"## Calendar\n{format_today_anchor(clock)}"]
     if include_clock:
         parts.append(format_clock_context_for_model(clock))
     parts.extend(
         [
-            "## You (companion persona)\n" f"{companion.format_companion_persona_for_prompt()}",
+            "## You (companion persona)\n"
+            f"{companion.format_companion_persona_for_prompt(clock=clock)}",
             HUMAN_SPEECH_RULES,
         ]
     )

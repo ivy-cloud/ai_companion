@@ -190,6 +190,14 @@ def short_year_reply(parts: Dict[str, str]) -> str:
     return f"{opener} {spoken}."
 
 
+def short_this_year_age_reply(parts: Dict[str, str], *, month_num: int, day: int) -> str:
+    """How far into the calendar year we are — e.g. June 8 → five months in."""
+    months_in = max(1, month_num - 1 + (1 if day >= 15 else 0))
+    if months_in <= 1:
+        return f"Just started — we're in {parts['month']}."
+    return f"{cardinal_word(months_in)} months in — we're in {parts['month']}."
+
+
 def trim_for_voice(text: str) -> str:
     cleaned = text.strip()
     if not cleaned:
