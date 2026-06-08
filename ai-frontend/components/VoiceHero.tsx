@@ -9,6 +9,7 @@ type VoiceHeroProps = {
   waveVisible: boolean;
   waveSubtle?: boolean;
   ambient?: boolean;
+  compact?: boolean;
   onInterrupt?: () => void;
   interruptEnabled?: boolean;
 };
@@ -21,7 +22,27 @@ export function VoiceHero({
   waveVisible,
   waveSubtle = false,
   ambient = false,
+  compact = false,
 }: VoiceHeroProps) {
+  if (compact) {
+    return (
+      <View style={styles.compactHero} accessibilityRole="summary">
+        <Text style={styles.compactPhaseLabel} numberOfLines={1}>
+          {phaseLabel}
+        </Text>
+        {(waveVisible || ambient) && (
+          <VoiceInputWave
+            level={level}
+            visible
+            subtle={waveSubtle}
+            variant="compact"
+            ambient={ambient}
+          />
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.hero} accessibilityRole="summary">
       <Text style={styles.companionName}>{companionName}</Text>
@@ -48,6 +69,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#faf7f5',
     borderBottomWidth: 1,
     borderBottomColor: '#ead9d4',
+  },
+  compactHero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minHeight: 44,
+    backgroundColor: '#faf7f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ead9d4',
+  },
+  compactPhaseLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4a3f42',
   },
   companionName: {
     fontSize: 13,

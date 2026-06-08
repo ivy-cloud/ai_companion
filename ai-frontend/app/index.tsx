@@ -2,10 +2,11 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -184,6 +185,13 @@ const TTS_FETCH_TIMEOUT_MS = 30_000;
 
 const SILENT_SOUND = require('../assets/silent.wav');
 
+/** Delay hiding voice hero when keyboard/focus opens (avoids iOS keyboard flicker). */
+const VOICE_HERO_KEYBOARD_HIDE_MS = 300;
+/** Keep hero visible through brief idle gaps between listen cycles. */
+const VOICE_HERO_IDLE_HOLD_MS = 500;
+const VOICE_WAVE_BARGE_SHOW_LEVEL = 0.05;
+const VOICE_WAVE_BARGE_HIDE_LEVEL = 0.03;
+
 type SpeakPart = {
   text: string;
 };
@@ -279,6 +287,10 @@ export default function ChatScreen() {
   const { voiceEnabled, naturalVoiceEnabled, voiceGender, voiceInputMode } =
     useAppSettings();
   const [input, setInput] = useState('');
+  const [inputFocused, setInputFocused] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [typingTextOnly, setTypingTextOnly] = useState(false);
+  const [voiceHeroSessionHeld, setVoiceHeroSessionHeld] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -342,6 +354,10 @@ export default function ChatScreen() {
   const voiceMeterUiLastAtRef = useRef(0);
   const voiceMeterUiPendingRef = useRef<number | null>(null);
   const voiceMeterUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingTextDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceHeroHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceHeroSessionHeldRef = useRef(false);
+  const voiceWaveBargeHeldRef = useRef(false);
   const prevVoiceInputModeRef = useRef<VoiceInputMode>(voiceInputMode);
   const prevVoiceEnabledRef = useRef(voiceEnabled);
   const pttMeterRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -385,11 +401,12 @@ export default function ChatScreen() {
   const proactiveBeatsRef = useRef<string[]>([]);
   const turnNoResponseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync settings refs every render — useEffect is too late for mic handlers after settings navigation.
+  // Sync settings + session refs every render — useEffect is too late after settings navigation.
   voiceEnabledRef.current = voiceEnabled;
   naturalVoiceEnabledRef.current = naturalVoiceEnabled;
   voiceGenderRef.current = voiceGender;
   voiceInputModeRef.current = voiceInputMode;
+  conversationSessionRef.current = conversationSession;
 
   const refreshBackendHealth = async (): Promise<boolean> => {
     const result = await fetchHealthPreflight(API_BASE);
@@ -432,10 +449,6 @@ export default function ChatScreen() {
     }
     prevVoiceInputModeRef.current = voiceInputMode;
   }, [voiceInputMode]);
-
-  useEffect(() => {
-    conversationSessionRef.current = conversationSession;
-  }, [conversationSession]);
 
   useEffect(() => {
     if (voiceEnabled) prewarmVoiceMicIfIdle();
@@ -494,6 +507,99 @@ export default function ChatScreen() {
       listRef.current?.scrollToEnd({ animated });
     });
   };
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      scrollToEnd(true);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const rawTyping = inputFocused || keyboardVisible;
+    if (rawTyping) {
+      if (!typingTextDebounceRef.current) {
+        typingTextDebounceRef.current = setTimeout(() => {
+          setTypingTextOnly(true);
+          typingTextDebounceRef.current = null;
+        }, VOICE_HERO_KEYBOARD_HIDE_MS);
+      }
+      return;
+    }
+    if (typingTextDebounceRef.current) {
+      clearTimeout(typingTextDebounceRef.current);
+      typingTextDebounceRef.current = null;
+    }
+    setTypingTextOnly(false);
+  }, [inputFocused, keyboardVisible]);
+
+  useEffect(
+    () => () => {
+      if (typingTextDebounceRef.current) {
+        clearTimeout(typingTextDebounceRef.current);
+        typingTextDebounceRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const voiceSessionActive =
+    conversationSession && voiceInputMode === 'conversation';
+
+  useEffect(() => {
+    if (voiceHeroHoldTimerRef.current) {
+      clearTimeout(voiceHeroHoldTimerRef.current);
+      voiceHeroHoldTimerRef.current = null;
+    }
+    if (!voiceSessionActive) {
+      voiceHeroSessionHeldRef.current = false;
+      setVoiceHeroSessionHeld(false);
+      return;
+    }
+    voiceHeroSessionHeldRef.current = true;
+    setVoiceHeroSessionHeld(true);
+  }, [conversationSession, voiceInputMode, voiceSessionActive]);
+
+  useEffect(() => {
+    if (!voiceSessionActive) return;
+    const voiceActive =
+      voicePhase === 'listening' ||
+      voicePhase === 'recording' ||
+      voicePhase === 'speaking' ||
+      voicePhase === 'thinking' ||
+      voicePhase === 'streaming' ||
+      voicePhase === 'interrupting';
+    if (voiceActive) {
+      if (voiceHeroHoldTimerRef.current) {
+        clearTimeout(voiceHeroHoldTimerRef.current);
+        voiceHeroHoldTimerRef.current = null;
+      }
+      voiceHeroSessionHeldRef.current = true;
+      setVoiceHeroSessionHeld(true);
+      return;
+    }
+    if (voicePhase !== 'idle' || !voiceHeroSessionHeldRef.current) return;
+    voiceHeroHoldTimerRef.current = setTimeout(() => {
+      voiceHeroHoldTimerRef.current = null;
+      voiceHeroSessionHeldRef.current = false;
+      setVoiceHeroSessionHeld(false);
+    }, VOICE_HERO_IDLE_HOLD_MS);
+    return () => {
+      if (voiceHeroHoldTimerRef.current) {
+        clearTimeout(voiceHeroHoldTimerRef.current);
+        voiceHeroHoldTimerRef.current = null;
+      }
+    };
+  }, [voiceSessionActive, voicePhase]);
 
   const isActiveVoiceTurn = (turn: number) => isActiveTurn(voiceSessionRef.current, turn);
 
@@ -1469,6 +1575,12 @@ export default function ChatScreen() {
         !options?.resumeAfterInterrupt &&
         (chatInFlightRef.current || voiceSendLockRef.current)
       ) {
+        voiceLog('listen_start_blocked', {
+          reason: chatInFlightRef.current ? 'chat_in_flight' : 'voice_send_lock',
+          phase: voicePhaseRef.current,
+          resumeAfterInterrupt: options?.resumeAfterInterrupt === true,
+        });
+        retryConversationListen();
         return;
       }
 
@@ -1596,7 +1708,12 @@ export default function ChatScreen() {
       );
       return;
     }
-    if (conversationSessionRef.current) return;
+    if (conversationSessionRef.current) {
+      if (voicePhaseRef.current === 'idle') {
+        ensureConversationListening('session_already_active');
+      }
+      return;
+    }
 
     if (voicePhaseRef.current !== 'idle') {
       interruptAssistant({ keepConversationSession: true });
@@ -1638,9 +1755,23 @@ export default function ChatScreen() {
 
   const onConversationMicPress = () => {
     if (!voiceEnabledRef.current) {
+      voiceLog('mic_tap_blocked', {
+        reason: 'voice_disabled',
+        mode: voiceInputModeRef.current,
+        phase: voicePhaseRef.current,
+        conversationSession: conversationSessionRef.current,
+      });
       setVoiceInputError('Turn on voice to use the mic.');
       return;
     }
+
+    voiceLog('mic_tap', {
+      mode: 'conversation',
+      phase: voicePhaseRef.current,
+      conversationSession: conversationSessionRef.current,
+      chatInFlight: chatInFlightRef.current,
+      voiceSendLock: voiceSendLockRef.current,
+    });
 
     if (isAssistantActivePhase(voicePhaseRef.current)) {
       interruptConversationAssistant({ resumeListening: true });
@@ -1654,7 +1785,7 @@ export default function ChatScreen() {
         return;
       }
       if (voicePhaseRef.current === 'idle') {
-        ensureConversationListening();
+        ensureConversationListening('mic_tap_listen');
         return;
       }
       endConversationSession();
@@ -1664,6 +1795,22 @@ export default function ChatScreen() {
     }
 
     void startConversationSession();
+  };
+
+  const logMicTapBlocked = (
+    reason: string,
+    extra?: Record<string, string | number | boolean | null | undefined>,
+  ) => {
+    voiceLog('mic_tap_blocked', {
+      reason,
+      mode: voiceInputModeRef.current,
+      phase: voicePhaseRef.current,
+      conversationSession: conversationSessionRef.current,
+      chatInFlight: chatInFlightRef.current,
+      voiceSendLock: voiceSendLockRef.current,
+      micPress: micPressRef.current,
+      ...extra,
+    });
   };
 
   const clearStreamUiFlush = () => {
@@ -3600,11 +3747,21 @@ export default function ChatScreen() {
 
   const onMicPressIn = async () => {
     if (voiceInputModeRef.current === 'conversation') return;
-    if (micPressRef.current) return;
+    if (micPressRef.current) {
+      logMicTapBlocked('ptt_already_pressed');
+      return;
+    }
     if (!voiceEnabledRef.current) {
+      logMicTapBlocked('voice_disabled', { gesture: 'press_in' });
       setVoiceInputError('Turn on voice to use the mic.');
       return;
     }
+
+    voiceLog('mic_tap', {
+      mode: 'ptt',
+      gesture: 'press_in',
+      phase: voicePhaseRef.current,
+    });
 
     micPressRef.current = true;
     setVoiceInputError(null);
@@ -3828,6 +3985,20 @@ export default function ChatScreen() {
       resetStreamTts();
       clearStreamUiFlush();
       await stopPlayback();
+    } else if (voiceEnabledRef.current && text) {
+      bumpTurn(voiceSessionRef.current, 'typed_message');
+      bumpSpeakGeneration(voiceSessionRef.current, 'typed_message');
+      bumpStreamHandlers(voiceSessionRef.current, 'typed_message');
+      abortTtsFetches('typed_message');
+      cancelActiveStreamTtsDrain();
+      streamVoiceBufferRef.current = '';
+      pendingStreamTextRef.current = '';
+      resetStreamTts();
+      clearStreamUiFlush();
+      await stopPlayback();
+      const rec = recordingRef.current;
+      recordingRef.current = null;
+      if (rec) void rec.stopAndUnloadAsync().catch(() => {});
     } else {
       const rec = recordingRef.current;
       recordingRef.current = null;
@@ -4283,9 +4454,6 @@ export default function ChatScreen() {
   }, [voicePhase]);
 
   const busy = loading || isStreaming;
-  const voiceBusy =
-    voicePhase !== 'idle' &&
-    !(voicePhase === 'listening' && voiceInputMode === 'conversation');
   const inputLockReason = getInputLockReason(voicePhase);
   const inputLocked = inputLockReason === 'recording';
   const sendEnabled = input.trim().length > 0 && voicePhase !== 'recording';
@@ -4296,18 +4464,65 @@ export default function ChatScreen() {
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
   const voiceWaveInputVisible =
     voicePhase === 'listening' || voicePhase === 'recording';
-  const voiceWaveBargeVisible =
+  if (
     voicePhase === 'speaking' &&
-    voiceInputMode === 'conversation' &&
-    conversationSession &&
-    voiceMeterLevel > 0.04;
+    voiceSessionActive
+  ) {
+    if (voiceMeterLevel > VOICE_WAVE_BARGE_SHOW_LEVEL) {
+      voiceWaveBargeHeldRef.current = true;
+    } else if (voiceMeterLevel < VOICE_WAVE_BARGE_HIDE_LEVEL) {
+      voiceWaveBargeHeldRef.current = false;
+    }
+  } else {
+    voiceWaveBargeHeldRef.current = false;
+  }
+  const voiceWaveBargeVisible =
+    voicePhase === 'speaking' && voiceSessionActive && voiceWaveBargeHeldRef.current;
   const voiceWaveVisible = voiceWaveInputVisible || voiceWaveBargeVisible;
   const voiceWaveSubtle = voiceWaveBargeVisible && !voiceWaveInputVisible;
-  const voiceHeroActive =
+  const voiceHeroVoiceActive =
+    voicePhase === 'listening' ||
+    voicePhase === 'recording' ||
+    voicePhase === 'speaking' ||
+    voicePhase === 'thinking' ||
+    voicePhase === 'streaming' ||
+    voicePhase === 'interrupting';
+  const showVoiceHero =
     voiceEnabled &&
-    (voicePhase !== 'idle' ||
-      (conversationSession && voiceInputMode === 'conversation'));
-  const voiceWaveAmbient = voiceHeroActive && !voiceWaveVisible;
+    (voiceWaveInputVisible ||
+      (voiceSessionActive && (!typingTextOnly || voiceHeroSessionHeld)) ||
+      (!typingTextOnly && voiceHeroVoiceActive && !voiceSessionActive));
+  const voiceHeroCompact =
+    showVoiceHero &&
+    !voiceSessionActive &&
+    !voiceWaveInputVisible &&
+    voicePhase !== 'speaking' &&
+    voicePhase !== 'thinking' &&
+    voicePhase !== 'streaming' &&
+    voicePhase !== 'interrupting';
+  const voiceWaveAmbient = showVoiceHero && !voiceWaveVisible;
+  const voiceHeroProps = useMemo(
+    () => ({
+      companionName,
+      phaseLabel,
+      phaseHint,
+      level: voiceMeterLevel,
+      waveVisible: voiceWaveVisible,
+      waveSubtle: voiceWaveSubtle,
+      ambient: voiceWaveAmbient,
+      compact: voiceHeroCompact,
+    }),
+    [
+      companionName,
+      phaseLabel,
+      phaseHint,
+      voiceMeterLevel,
+      voiceWaveVisible,
+      voiceWaveSubtle,
+      voiceWaveAmbient,
+      voiceHeroCompact,
+    ],
+  );
   const conversationCanInterrupt =
     voiceInputMode === 'conversation' &&
     conversationSession &&
@@ -4315,13 +4530,16 @@ export default function ChatScreen() {
   const micShowSpinner =
     voicePhase === 'thinking' ||
     voicePhase === 'streaming' ||
-    (busy && voicePhase !== 'recording' && voicePhase !== 'listening');
+    (busy &&
+      voicePhase !== 'idle' &&
+      voicePhase !== 'recording' &&
+      voicePhase !== 'listening');
   const micConversationActive =
     voiceInputMode === 'conversation' &&
     (conversationSession || voicePhase === 'listening');
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="dark" />
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
@@ -4374,7 +4592,7 @@ export default function ChatScreen() {
             <Text style={styles.endConversationLabel}>End conversation</Text>
           </Pressable>
         ) : null}
-        {voiceEnabled && !voiceHeroActive ? (
+        {voiceEnabled && !showVoiceHero ? (
           <TouchableOpacity
             onPress={() => {
               if (ttsTapToHearText?.trim()) {
@@ -4424,56 +4642,52 @@ export default function ChatScreen() {
         ) : null}
       </View>
 
-      {voiceEnabled && voiceHeroActive ? (
-        <View pointerEvents="box-none">
-          <VoiceHero
-          companionName={companionName}
-          phaseLabel={phaseLabel}
-          phaseHint={phaseHint}
-          level={voiceMeterLevel}
-          waveVisible={voiceWaveVisible}
-          waveSubtle={voiceWaveSubtle}
-          ambient={voiceWaveAmbient}
-        />
-        </View>
-      ) : null}
+      <KeyboardAvoidingView
+        style={styles.chatArea}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        {showVoiceHero ? (
+          <View pointerEvents="box-none">
+            <VoiceHero {...voiceHeroProps} />
+          </View>
+        ) : null}
 
-      <FlatList
-        ref={listRef}
-        style={styles.list}
-        data={messages}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        onContentSizeChange={() => scrollToEnd(false)}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.bubble,
-              item.role === 'user' ? styles.userBubble : styles.assistantBubble,
-              item.streaming ? styles.streamingBubble : null,
-            ]}
-          >
-            <Text
+        <FlatList
+          ref={listRef}
+          style={styles.list}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          onContentSizeChange={() => scrollToEnd(false)}
+          onLayout={() => scrollToEnd(false)}
+          renderItem={({ item }) => (
+            <View
               style={[
-                styles.bubbleText,
-                item.role === 'user' ? styles.userText : styles.assistantText,
+                styles.bubble,
+                item.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                item.streaming ? styles.streamingBubble : null,
               ]}
             >
-              {item.role === 'assistant' && item.singing ? '♪ ' : ''}
-              {item.streaming && !item.text ? '…' : item.text}
-              {item.streaming && item.text ? ' ▋' : ''}
-            </Text>
-          </View>
-        )}
-        ListEmptyComponent={
-          <Text style={styles.empty}>Say hello to {companionName}.</Text>
-        }
-      />
+              <Text
+                style={[
+                  styles.bubbleText,
+                  item.role === 'user' ? styles.userText : styles.assistantText,
+                ]}
+              >
+                {item.role === 'assistant' && item.singing ? '♪ ' : ''}
+                {item.streaming && !item.text ? '…' : item.text}
+                {item.streaming && item.text ? ' ▋' : ''}
+              </Text>
+            </View>
+          )}
+          ListEmptyComponent={
+            <Text style={styles.empty}>Say hello to {companionName}.</Text>
+          }
+        />
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
-      >
         <View style={styles.inputRow}>
           <Pressable
             style={({ pressed }) => [
@@ -4486,7 +4700,11 @@ export default function ChatScreen() {
               !voiceEnabled && styles.micButtonDisabled,
             ]}
             onPressIn={() => {
-              if (!voiceEnabled || voiceInputMode === 'conversation') return;
+              if (!voiceEnabled) {
+                logMicTapBlocked('voice_disabled', { gesture: 'press_in' });
+                return;
+              }
+              if (voiceInputMode === 'conversation') return;
               void onMicPressIn().catch(() => {});
             }}
             onPressOut={() => {
@@ -4494,10 +4712,19 @@ export default function ChatScreen() {
               void onMicPressOut().catch(() => {});
             }}
             onPress={() => {
-              if (voiceInputMode !== 'conversation') return;
-              onConversationMicPress();
+              if (!voiceEnabled) {
+                logMicTapBlocked('voice_disabled', { gesture: 'press' });
+                setVoiceInputError('Turn on voice to use the mic.');
+                return;
+              }
+              if (voiceInputMode === 'conversation') {
+                onConversationMicPress();
+                return;
+              }
+              logMicTapBlocked('ptt_use_hold', { gesture: 'press' });
             }}
             disabled={!voiceEnabled}
+            accessibilityState={{ disabled: !voiceEnabled }}
           >
             {micShowSpinner ? (
               <ActivityIndicator color="#007aff" size="small" />
@@ -4527,10 +4754,13 @@ export default function ChatScreen() {
               if (sendBlockBanner) setSendBlockBanner(null);
             }}
             onFocus={() => {
+              setInputFocused(true);
+              scrollToEnd(true);
               if (voicePhaseRef.current === 'listening') {
                 stopConversationListening();
               }
             }}
+            onBlur={() => setInputFocused(false)}
             placeholder={
               voicePhase === 'listening'
                 ? 'Listening…'
@@ -4585,6 +4815,7 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#faf7f5' },
+  chatArea: { flex: 1 },
   header: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -4701,7 +4932,7 @@ const styles = StyleSheet.create({
     color: '#c97b84',
   },
   list: { flex: 1 },
-  listContent: { paddingHorizontal: 16, paddingBottom: 8 },
+  listContent: { flexGrow: 1, paddingHorizontal: 16, paddingBottom: 8 },
   empty: {
     color: '#666666',
     textAlign: 'center',
