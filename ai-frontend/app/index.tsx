@@ -1734,6 +1734,7 @@ export default function ChatScreen() {
       }
 
       setVoiceInputError(null);
+      setListenChunkSending(false);
       if (
         !voiceSendLockRef.current &&
         voicePhaseRef.current !== 'thinking' &&
@@ -3610,6 +3611,28 @@ export default function ChatScreen() {
         }
         void clearStaleTtsListenBlockers().then(() => {
           const blocked = isTtsBlockingConversationListen();
+          const meter = conversationMeterStateRef.current;
+          const rec = recordingRef.current;
+          const sawSpeech = meter?.sawSpeech === true;
+          if (rec && sawSpeech && !blocked) {
+            lastWatchdogRecoveryAtRef.current = Date.now();
+            const speechMs =
+              meter?.speechStartedAt != null
+                ? Date.now() - meter.speechStartedAt
+                : MIN_SPEECH_MS;
+            voiceLog('watchdog_force_end_silence', {
+              stuckMs,
+              peakDb: meter?.peakMetering ?? null,
+              speechMs,
+            });
+            void commitConversationListenChunk('end_silence', conversationListenGenRef.current, {
+              sawSpeech: true,
+              peakMetering: meter?.peakMetering ?? null,
+              speechDurationMs: speechMs,
+              silenceMs: 0,
+            });
+            return;
+          }
           if (noRecording || blocked) {
             lastWatchdogRecoveryAtRef.current = Date.now();
             logVoiceState('watchdog_listening_stuck', {
@@ -3736,10 +3759,12 @@ export default function ChatScreen() {
     options?: { fromConversation?: boolean; meterMeta?: QuietListenMeterMeta },
   ) => {
     if (utteranceId !== voiceUtteranceRef.current) {
+      setListenChunkSending(false);
       voiceLog('voice_send_skipped', { reason: 'stale_utterance', utteranceId });
       return;
     }
     if (voiceSendLockRef.current) {
+      setListenChunkSending(false);
       voiceLog('voice_send_skipped', { reason: 'voice_send_lock', utteranceId });
       return;
     }
@@ -3760,6 +3785,7 @@ export default function ChatScreen() {
           transcript.length > 60 ? `${transcript.slice(0, 57)}…` : transcript,
       });
       if (utteranceId !== voiceUtteranceRef.current) {
+        setListenChunkSending(false);
         voiceLog('voice_send_skipped', {
           reason: 'stale_utterance_after_stt',
           utteranceId,
@@ -3773,6 +3799,7 @@ export default function ChatScreen() {
         voicePhaseRef.current !== 'thinking' &&
         voicePhaseRef.current !== 'streaming'
       ) {
+        setListenChunkSending(false);
         voiceLog('voice_send_skipped', {
           reason: 'wrong_phase_after_stt',
           phase: voicePhaseRef.current,
@@ -3798,6 +3825,7 @@ export default function ChatScreen() {
             transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
           activeSound: true,
         });
+        setListenChunkSending(false);
         retryConversationListen();
         return;
       }
@@ -3808,6 +3836,7 @@ export default function ChatScreen() {
             transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
           activeSound: Boolean(activeSoundRef.current),
         });
+        setListenChunkSending(false);
         setVoiceInputError('That was my voice — say yours again.');
         setVoicePhaseTransition('idle', { reason: 'echo_suppressed' });
         retryConversationListen(300);
@@ -3819,6 +3848,7 @@ export default function ChatScreen() {
             transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
           len: transcript.length,
         });
+        setListenChunkSending(false);
         if (fromConversation) {
           setVoiceInputError('Didn’t catch that — try again.');
           setVoicePhaseTransition('idle');
@@ -3833,6 +3863,7 @@ export default function ChatScreen() {
         return;
       }
       if (transcript === lastVoiceTranscriptRef.current) {
+        setListenChunkSending(false);
         if (fromConversation) {
           setVoiceInputError('Same as last message — say something new.');
           setVoicePhaseTransition('idle');
@@ -3844,6 +3875,7 @@ export default function ChatScreen() {
       resetProactiveOnUserSpeech();
       quietListenRetryUsedRef.current = false;
       voiceSendLockRef.current = false;
+      setListenChunkSending(false);
       const sent = await sendMessage(transcript);
       if (!sent) {
         voiceLog('send_after_stt_skipped', {
@@ -3864,6 +3896,7 @@ export default function ChatScreen() {
         }
       }
     } catch (err) {
+      setListenChunkSending(false);
       const msg = err instanceof Error ? err.message : 'Voice input failed';
       if (fromConversation && isEmptySttError(err)) {
         logVoiceState('stt_empty', {
@@ -3888,6 +3921,15 @@ export default function ChatScreen() {
           scheduleConversationListen(100);
           return;
         }
+        setVoiceInputError('No speech detected — speak louder and try again.');
+        if (fromConversation) {
+          setVoicePhaseTransition('idle');
+          scheduleConversationListen(200);
+        } else {
+          setVoicePhaseTransition('idle');
+          prewarmVoiceMicIfIdle();
+        }
+        return;
       }
       setVoiceInputError(msg.length > 140 ? `${msg.slice(0, 137)}…` : msg);
       if (!fromConversation) {
@@ -3899,6 +3941,7 @@ export default function ChatScreen() {
       }
     } finally {
       voiceSendLockRef.current = false;
+      setListenChunkSending(false);
     }
   };
 
@@ -4622,13 +4665,12 @@ export default function ChatScreen() {
   const inputLockReason = getInputLockReason(voicePhase);
   const inputLocked = inputLockReason === 'recording';
   const sendEnabled = input.trim().length > 0 && voicePhase !== 'recording';
-  const phaseLabel =
-    listenChunkSending && voicePhase === 'listening'
-      ? 'Sending…'
-      : voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
-          proactive: proactiveTurnActive,
-          companionName,
-        });
+  const phaseLabel = listenChunkSending
+    ? 'Sending…'
+    : voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
+        proactive: proactiveTurnActive,
+        companionName,
+      });
   const phaseHint = voicePhaseHint(voicePhase, isStreaming, conversationSession);
   const voiceWaveInputVisible =
     voicePhase === 'listening' || voicePhase === 'recording';
