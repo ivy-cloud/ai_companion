@@ -18,6 +18,7 @@ import {
   type VoiceGender,
   type VoiceInputMode,
 } from '../lib/appSettings';
+import { requestConversationReset } from '../lib/conversationReset';
 import { getDeviceTimezone } from '../lib/deviceTimezone';
 import { fetchHealthDetails, type HealthDetails } from '../lib/healthInfo';
 import { getWearablesAudioSource } from '../lib/wearablesAdapter';
@@ -189,6 +190,13 @@ export default function SettingsScreen() {
 
         <Text style={styles.sectionTitle}>Backend</Text>
         <View style={styles.card}>
+          <Text style={styles.cardLine}>
+            API base: <Text style={styles.cardMonoInline}>{API_BASE}</Text>
+          </Text>
+          <Text style={styles.cardHint}>
+            Set EXPO_PUBLIC_API_BASE in ai-frontend/.env (written by ./start.sh). Restart Expo
+            after changing it.
+          </Text>
           {healthLoading ? (
             <ActivityIndicator color="#c97b84" />
           ) : health ? (
@@ -228,6 +236,26 @@ export default function SettingsScreen() {
               <Text style={styles.cardMono}>{API_BASE}/health</Text>
             </>
           )}
+        </View>
+
+        <Text style={styles.sectionTitle}>Chat</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardLine}>
+            Stuck on “Thinking…”, can’t type, or Send does nothing?
+          </Text>
+          <Pressable
+            onPress={() => requestConversationReset('settings_reset')}
+            style={({ pressed }) => [
+              styles.resetButton,
+              pressed && styles.resetButtonPressed,
+            ]}
+            accessibilityLabel="Reset conversation"
+          >
+            <Text style={styles.resetButtonLabel}>Reset conversation</Text>
+          </Pressable>
+          <Text style={styles.cardHint}>
+            Clears messages and unlocks text + voice without restarting the app.
+          </Text>
         </View>
 
         <Text style={styles.sectionTitle}>Device</Text>
@@ -332,6 +360,25 @@ const styles = StyleSheet.create({
     color: '#6b5f63',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     lineHeight: 16,
+  },
+  cardMonoInline: {
+    fontSize: 11,
+    color: '#6b5f63',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  resetButton: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: '#dc2626',
+  },
+  resetButtonPressed: { opacity: 0.85 },
+  resetButtonLabel: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
   statusOk: { color: '#2e7d4f', fontWeight: '700' },
   statusWarn: { color: '#b45309', fontWeight: '700' },

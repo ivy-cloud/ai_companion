@@ -15,6 +15,8 @@ export {
   blocksRecordingPrewarm,
   canEnterPhase,
   canExitSpeakingPhaseNow,
+  formatSendBlockBanner,
+  getInputLockReason,
   getSendMessageSkipReason,
   hasAssistantReplyStarted,
   isAssistantActivePhase,
@@ -23,6 +25,8 @@ export {
   shouldRecoverStuckSpeakingPhase,
   shouldRecoverThinkingNoStream,
   type SendMessageSkipReason,
+  formatSendBlockBanner,
+  getInputLockReason,
   type VoiceTurnMarks,
 } from './conversationStateGuards';
 

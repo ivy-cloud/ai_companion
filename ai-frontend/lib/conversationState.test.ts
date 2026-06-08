@@ -4,6 +4,8 @@ import {
   THINKING_NO_STREAM_MS,
   canEnterPhase,
   canExitSpeakingPhaseNow,
+  formatSendBlockBanner,
+  getInputLockReason,
   getSendMessageSkipReason,
   hasAssistantReplyStarted,
   isSpeakingPhaseBlocked,
@@ -119,6 +121,26 @@ test('speaking blocked while stream TTS draining', () => {
 
 test('idle can enter listening for conversation session', () => {
   assert.equal(canEnterPhase('idle', 'listening'), true);
+});
+
+test('input lock only during recording', () => {
+  assert.equal(getInputLockReason('idle'), null);
+  assert.equal(getInputLockReason('thinking'), null);
+  assert.equal(getInputLockReason('streaming'), null);
+  assert.equal(getInputLockReason('speaking'), null);
+  assert.equal(getInputLockReason('listening'), null);
+  assert.equal(getInputLockReason('recording'), 'recording');
+});
+
+test('formatSendBlockBanner includes phase detail', () => {
+  const banner = formatSendBlockBanner('chat_in_flight', {
+    phase: 'thinking',
+    chatInFlight: true,
+    voiceSendLock: false,
+    fromVoice: false,
+  });
+  assert.match(banner, /chat_in_flight|processing last turn/);
+  assert.match(banner, /phase=thinking/);
 });
 
 test('sendMessage skip: chat in flight', () => {

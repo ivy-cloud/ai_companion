@@ -101,6 +101,45 @@ export type VoiceTurnMarks = Partial<
   Record<'send_start' | 'stream_start' | 'stream_done' | 'first_token', number>
 >;
 
+/** Only active mic capture should disable the text field — not assistant phases. */
+export function getInputLockReason(phase: VoicePhase): 'recording' | null {
+  if (phase === 'recording') return 'recording';
+  return null;
+}
+
+export function formatSendBlockBanner(
+  reason: SendMessageSkipReason,
+  detail: {
+    phase: VoicePhase;
+    chatInFlight: boolean;
+    voiceSendLock: boolean;
+    fromVoice: boolean;
+  },
+): string {
+  const flags = [
+    `phase=${detail.phase}`,
+    detail.chatInFlight ? 'chatInFlight' : null,
+    detail.voiceSendLock ? 'voiceSendLock' : null,
+    detail.fromVoice ? 'voice' : 'typed',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  switch (reason) {
+    case 'empty_text':
+      return 'Send blocked: empty message';
+    case 'chat_in_flight':
+      return `Send blocked: still processing last turn (${flags}) — tap Send again to preempt`;
+    case 'voice_send_lock':
+      return `Send blocked: voice STT in progress (${flags}) — tap Reset conversation in Settings`;
+    case 'recording':
+      return 'Send blocked: finish recording before sending text';
+    case 'listening_non_conversation':
+      return `Send blocked: listening for voice (${flags})`;
+    default:
+      return `Send blocked: ${reason} (${flags})`;
+  }
+}
+
 export function getSendMessageSkipReason(input: {
   text: string;
   isProactive: boolean;

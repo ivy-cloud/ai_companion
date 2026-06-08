@@ -136,6 +136,8 @@ import {
   TURN_NO_RESPONSE_MS,
   blocksRecordingPrewarm,
   canExitSpeakingPhaseNow,
+  formatSendBlockBanner,
+  getInputLockReason,
   getSendMessageSkipReason,
   hasAssistantReplyStarted,
   isAssistantActivePhase,
@@ -158,7 +160,7 @@ import {
   isActiveTurn,
   mergeAbortSignals,
 } from '../lib/voiceSession';
-import { useAppSettings } from '../lib/appSettings';
+import { registerConversationReset } from '../lib/conversationReset';
 import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
 import { VoiceHero } from '../components/VoiceHero';
 import {
@@ -289,6 +291,7 @@ export default function ChatScreen() {
   const [backendHealthBanner, setBackendHealthBanner] = useState<string | null>(
     null,
   );
+  const [sendBlockBanner, setSendBlockBanner] = useState<string | null>(null);
   const [skillHints, setSkillHints] = useState<string[]>([]);
   const [voiceMeterLevel, setVoiceMeterLevel] = useState(0);
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -2053,6 +2056,65 @@ export default function ChatScreen() {
     if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
   };
 
+  /** Hard reset chat + voice state — unsticks chatInFlight, voiceSendLock, and assistant phases. */
+  const resetConversationState = (reason = 'user_reset') => {
+    voiceLog('conversation_reset', { reason, phase: voicePhaseRef.current });
+    clearProactiveTimer();
+    proactiveSessionCountRef.current = 0;
+    lastProactiveAtRef.current = 0;
+    proactiveTurnActiveRef.current = false;
+    setProactiveTurnActive(false);
+    proactiveBeatsRef.current = [];
+    clearConversationListenResumeTimer();
+    clearTurnNoResponseTimer();
+    resetConversationListenRetries();
+    conversationListenGenRef.current += 1;
+    conversationBargeGenRef.current += 1;
+    stopConversationBargeIn();
+    stopConversationMetering();
+    stopPttMetering();
+    clearVoiceMeterLevel();
+    const rec = recordingRef.current;
+    recordingRef.current = null;
+    recordingStartedAtRef.current = 0;
+    if (rec) void safeUnloadRecording(rec);
+    cancelActiveStreamTtsDrain();
+    abortTtsFetches(reason);
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    streamVoiceBufferRef.current = '';
+    pendingStreamTextRef.current = '';
+    resetStreamTts();
+    clearStreamUiFlush();
+    voiceSendLockRef.current = false;
+    micPressRef.current = false;
+    chatInFlightRef.current = false;
+    speakInFlightRef.current = false;
+    voiceTurnTimingRef.current = null;
+    voiceTurnSummaryPendingRef.current = false;
+    if (voiceTurnSummaryTimerRef.current) {
+      clearTimeout(voiceTurnSummaryTimerRef.current);
+      voiceTurnSummaryTimerRef.current = null;
+    }
+    activeAssistantIdRef.current = null;
+    conversationSessionRef.current = false;
+    setConversationSession(false);
+    bumpTurn(voiceSessionRef.current, reason);
+    bumpSpeakGeneration(voiceSessionRef.current, reason);
+    bumpStreamHandlers(voiceSessionRef.current, reason);
+    ensureUiUnlocked();
+    setMessages([]);
+    setInput('');
+    setVoiceInputError(null);
+    setSendBlockBanner(null);
+    setTtsTapToHearText(null);
+    setVoicePhaseTransition('idle', { force: true, reason });
+    void stopPlayback().catch(() => {});
+    void discardPrewarm();
+    void refreshBackendHealth();
+    if (voiceEnabledRef.current) prewarmVoiceMicIfIdle();
+  };
+
   const maybeFinishStreamTtsIdle = (turn: number, generation: number) => {
     if (!isActiveVoiceTurn(turn) || !isActiveSpeakGeneration(generation)) return;
     if (!streamTtsDoneRef.current) return;
@@ -3171,6 +3233,48 @@ export default function ChatScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    return registerConversationReset(resetConversationState);
+  }, []);
+
+  /** Recover stale refs after HMR or interrupted async (chatInFlight with no active turn). */
+  useEffect(() => {
+    const timing = voiceTurnTimingRef.current;
+    const sendStarted = timing?.marks?.send_start;
+    if (
+      chatInFlightRef.current &&
+      (sendStarted == null ||
+        shouldClearStaleChatInFlight(
+          true,
+          timing?.marks,
+          Date.now(),
+          sendStarted,
+          5_000,
+        ))
+    ) {
+      voiceLog('mount_stale_chat_cleared', {
+        phase: voicePhaseRef.current,
+        hadSendStart: sendStarted != null,
+      });
+      chatAbortRef.current?.abort();
+      chatAbortRef.current = null;
+      chatInFlightRef.current = false;
+      voiceSendLockRef.current = false;
+      ensureUiUnlocked();
+    }
+    if (
+      isAssistantActivePhase(voicePhaseRef.current) &&
+      !chatInFlightRef.current &&
+      !speakInFlightRef.current &&
+      !streamTtsDrainingRef.current &&
+      streamTtsQueueRef.current.length === 0 &&
+      !activeSoundRef.current
+    ) {
+      voiceLog('mount_stale_phase_cleared', { phase: voicePhaseRef.current });
+      setVoicePhaseTransition('idle', { force: true, reason: 'mount_recovery' });
+    }
+  }, []);
+
   /** Recover from stuck assistant phases (missed interrupt, stale async). */
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -3653,6 +3757,7 @@ export default function ChatScreen() {
       }
       if (
         chatInFlightRef.current ||
+        voiceSendLockRef.current ||
         isAssistantActivePhase(voicePhaseRef.current)
       ) {
         if (conversationMode) {
@@ -3660,6 +3765,9 @@ export default function ChatScreen() {
         } else {
           interruptAssistant();
         }
+        voiceSendLockRef.current = false;
+        chatInFlightRef.current = false;
+        ensureUiUnlocked();
       }
     }
 
@@ -3673,6 +3781,13 @@ export default function ChatScreen() {
       conversationMode: Boolean(conversationMode),
     });
     if (skipReason) {
+      const banner = formatSendBlockBanner(skipReason, {
+        phase: voicePhaseRef.current,
+        chatInFlight: chatInFlightRef.current,
+        voiceSendLock: voiceSendLockRef.current,
+        fromVoice,
+      });
+      setSendBlockBanner(banner);
       voiceLog('send_blocked', {
         reason: skipReason,
         textLen: text.length,
@@ -3693,6 +3808,8 @@ export default function ChatScreen() {
       }
       return false;
     }
+
+    setSendBlockBanner(null);
 
     if (isProactive) {
       clearProactiveTimer();
@@ -4130,15 +4247,20 @@ export default function ChatScreen() {
       conversationSession: conversationSessionRef.current,
     });
     if (!text) {
+      setSendBlockBanner('Send blocked: empty message');
       voiceLog('send_blocked', { reason: 'empty_text', source });
       return;
     }
     if (voicePhaseRef.current === 'recording') {
+      setSendBlockBanner('Send blocked: finish recording before sending text');
       voiceLog('send_blocked', { reason: 'recording', source });
       setVoiceInputError('Finish recording before sending text.');
       return;
     }
     void sendMessage().catch((err) => {
+      setSendBlockBanner(
+        `Send failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
       voiceLog('send_failed', {
         source,
         message: err instanceof Error ? err.message : 'unknown',
@@ -4163,13 +4285,8 @@ export default function ChatScreen() {
   const voiceBusy =
     voicePhase !== 'idle' &&
     !(voicePhase === 'listening' && voiceInputMode === 'conversation');
-  const inputLocked =
-    busy ||
-    voicePhase === 'thinking' ||
-    voicePhase === 'streaming' ||
-    voicePhase === 'speaking' ||
-    voicePhase === 'interrupting' ||
-    voicePhase === 'recording';
+  const inputLockReason = getInputLockReason(voicePhase);
+  const inputLocked = inputLockReason === 'recording';
   const sendEnabled = input.trim().length > 0 && voicePhase !== 'recording';
   const phaseLabel = voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
     proactive: proactiveTurnActive,
@@ -4225,6 +4342,24 @@ export default function ChatScreen() {
         ) : null}
         {backendHealthBanner ? (
           <Text style={styles.healthBanner}>{backendHealthBanner}</Text>
+        ) : null}
+        {sendBlockBanner ? (
+          <Pressable
+            onPress={() => resetConversationState('banner_tap_reset')}
+            style={({ pressed }) => [
+              styles.sendBlockBanner,
+              pressed && styles.sendBlockBannerPressed,
+            ]}
+            accessibilityLabel="Send blocked — tap to reset conversation"
+          >
+            <Text style={styles.sendBlockBannerText}>{sendBlockBanner}</Text>
+            <Text style={styles.sendBlockBannerHint}>Tap to reset conversation</Text>
+          </Pressable>
+        ) : null}
+        {inputLockReason === 'recording' ? (
+          <Text style={styles.sendBlockBannerText}>
+            Text input paused while recording — release Mic to type
+          </Text>
         ) : null}
         {conversationSession && voiceInputMode === 'conversation' ? (
           <Pressable
@@ -4386,7 +4521,10 @@ export default function ChatScreen() {
           <TextInput
             style={styles.input}
             value={input}
-            onChangeText={setInput}
+            onChangeText={(value) => {
+              setInput(value);
+              if (sendBlockBanner) setSendBlockBanner(null);
+            }}
             onFocus={() => {
               if (voicePhaseRef.current === 'listening') {
                 stopConversationListening();
@@ -4495,6 +4633,29 @@ const styles = StyleSheet.create({
     color: '#b45309',
     marginBottom: 8,
     lineHeight: 16,
+  },
+  sendBlockBanner: {
+    backgroundColor: '#fecaca',
+    borderWidth: 1,
+    borderColor: '#dc2626',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  sendBlockBannerPressed: {
+    backgroundColor: '#fca5a5',
+  },
+  sendBlockBannerText: {
+    fontSize: 12,
+    color: '#991b1b',
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  sendBlockBannerHint: {
+    fontSize: 11,
+    color: '#b91c1c',
+    marginTop: 4,
   },
   endConversationButton: {
     alignSelf: 'flex-start',
