@@ -160,6 +160,7 @@ import {
   isActiveTurn,
   mergeAbortSignals,
 } from '../lib/voiceSession';
+import { useAppSettings } from '../lib/appSettings';
 import { registerConversationReset } from '../lib/conversationReset';
 import { voicePhaseHint, voicePhaseLabel } from '../lib/voiceFlow';
 import { VoiceHero } from '../components/VoiceHero';

@@ -25,8 +25,6 @@ export {
   shouldRecoverStuckSpeakingPhase,
   shouldRecoverThinkingNoStream,
   type SendMessageSkipReason,
-  formatSendBlockBanner,
-  getInputLockReason,
   type VoiceTurnMarks,
 } from './conversationStateGuards';
 
