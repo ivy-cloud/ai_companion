@@ -31,7 +31,10 @@ export function resetIncrementalTtsState(state: IncrementalTtsState): void {
   state.spokenPrefix = '';
 }
 
-/** Pull newly completed sentences (or early clause) from the live stream buffer. */
+/**
+ * Pull newly completed sentences (or early clause) from the live stream buffer.
+ * Does not mutate spokenPrefix — call commitIncrementalChunks after enqueue/play.
+ */
 export function pullSpeakableChunks(
   state: IncrementalTtsState,
   fullStream: string,
@@ -39,19 +42,32 @@ export function pullSpeakableChunks(
   alreadyEnqueued?: Set<string>,
 ): string[] {
   const chunks: string[] = [];
+  let cursor = state.spokenPrefix;
   while (true) {
-    const next = nextSpeakableChunk(fullStream, state.spokenPrefix, flush);
+    const next = nextSpeakableChunk(fullStream, cursor, flush);
     if (!next) break;
     const key = prepareTextForSpeech(next);
     if (key && alreadyEnqueued?.has(key)) {
-      // Already queued — advance past it so flush can reach later sentences.
-      state.spokenPrefix = appendSpoken(state.spokenPrefix, next);
+      // Already queued — advance cursor so flush can reach later sentences.
+      cursor = appendSpoken(cursor, next);
       continue;
     }
     chunks.push(next);
-    state.spokenPrefix = appendSpoken(state.spokenPrefix, next);
+    cursor = appendSpoken(cursor, next);
   }
   return chunks;
+}
+
+/** Advance spokenPrefix only after chunks were queued (or deduped as already queued). */
+export function commitIncrementalChunks(
+  state: IncrementalTtsState,
+  chunks: string[],
+): void {
+  for (const chunk of chunks) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    state.spokenPrefix = appendSpoken(state.spokenPrefix, trimmed);
+  }
 }
 
 /** Utterances still needed after incremental speech (polished final reply). */

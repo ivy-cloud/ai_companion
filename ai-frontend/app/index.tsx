@@ -100,6 +100,7 @@ import {
 import { streamChatMessage, type ChatStreamDoneMeta } from '../lib/chatStream';
 import {
   buildFinalTtsUtterances,
+  commitIncrementalChunks,
   createIncrementalTtsState,
   pullSpeakableChunks,
   resetIncrementalTtsState,
@@ -109,7 +110,10 @@ import {
 import {
   playSettledForGeneration,
   shouldAutoRetryTts,
+  shouldLogTtsMissed,
   shouldOfferTapToHear,
+  TTS_PLAYBACK_SETTLE_WAIT_MS,
+  waitForPlaySettle,
 } from '../lib/ttsTurnGuard';
 import {
   getDeviceTimezone,
@@ -2133,23 +2137,47 @@ export default function ChatScreen() {
     generation: number,
     streamMode: boolean,
   ) => {
+    const replyLen = reply.trim().length;
+    if (replyLen <= 0) return;
+
+    const isSettled = () =>
+      playSettledForGeneration(ttsPlaySettledGenRef.current, generation);
+
+    await waitForPlaySettle(isSettled, TTS_PLAYBACK_SETTLE_WAIT_MS);
+
+    if (shouldLogTtsMissed(ttsPlaySettledGenRef.current, generation, replyLen)) {
+      voiceLog('tts_missed', {
+        turn,
+        generation,
+        streamMode,
+        replyLen,
+        activeTurn: voiceSessionRef.current.turn,
+        activeGen: voiceSessionRef.current.speakGeneration,
+        phase: voicePhaseRef.current,
+        queue: streamTtsQueueRef.current.length,
+        draining: streamTtsDrainingRef.current,
+        activeSound: Boolean(activeSoundRef.current),
+      });
+    }
+
     if (
       shouldAutoRetryTts(
         ttsPlaySettledGenRef.current,
         generation,
         turn,
         ttsRetryUsedTurnRef.current,
-        reply.trim().length,
+        replyLen,
       )
     ) {
       await retryTtsPlaybackOnce(reply, turn, generation, streamMode);
+      await waitForPlaySettle(isSettled, TTS_PLAYBACK_SETTLE_WAIT_MS);
     }
 
     if (
       shouldOfferTapToHear(
         ttsPlaySettledGenRef.current,
         generation,
-        reply.trim().length,
+        replyLen,
         ttsRetryUsedTurnRef.current,
         turn,
       )
@@ -2157,9 +2185,9 @@ export default function ChatScreen() {
       markTtsPlaybackFailed(reply, 'no_play_after_retry', {
         turn,
         generation,
-        replyLen: reply.trim().length,
+        replyLen,
       });
-    } else if (playSettledForGeneration(ttsPlaySettledGenRef.current, generation)) {
+    } else if (isSettled()) {
       setTtsTapToHearText(null);
     }
   };
@@ -2552,15 +2580,19 @@ export default function ChatScreen() {
         turn,
         generation,
         currentGen: voiceSessionRef.current.speakGeneration,
+        chunkCount: chunks.length,
       });
       return;
     }
     let added = false;
+    const committed: string[] = [];
     for (const chunk of chunks) {
       const trimmed = chunk.trim();
       if (!trimmed) continue;
       const key = streamTtsChunkKey(trimmed);
-      if (!key || streamTtsEnqueuedKeysRef.current.has(key)) {
+      if (!key) continue;
+      committed.push(trimmed);
+      if (streamTtsEnqueuedKeysRef.current.has(key)) {
         continue;
       }
       streamTtsEnqueuedKeysRef.current.add(key);
@@ -2575,9 +2607,19 @@ export default function ChatScreen() {
       }
       streamTtsQueueRef.current.push(trimmed);
     }
+    if (committed.length > 0) {
+      commitIncrementalChunks(streamTtsStateRef.current, committed);
+    }
     if (added) {
       logVoiceSnapshot('after_enqueue', { addedChunks: chunks.length });
       void drainStreamTtsQueue(turn, generation);
+    } else if (committed.length > 0) {
+      voiceLog('tts_skip', {
+        reason: 'enqueue_all_duplicate',
+        turn,
+        generation,
+        committed: committed.length,
+      });
     }
   };
 
@@ -3155,6 +3197,12 @@ export default function ChatScreen() {
 
       if (naturalFinish && isActiveSpeakGeneration(generation)) {
         markTtsPlaySettled(generation);
+      } else if (isActiveSpeakGeneration(generation) && settled) {
+        voiceLog('tts_play_no_settle', {
+          generation,
+          naturalFinish,
+          activeGen: voiceSessionRef.current.speakGeneration,
+        });
       }
 
       const played = sound;
@@ -3301,8 +3349,8 @@ export default function ChatScreen() {
         logVoiceSnapshot('before_wait_idle');
         await waitStreamTtsQueueIdle();
         logVoiceSnapshot('after_wait_idle');
-        if (!isActiveVoiceTurn(turn)) return;
         await finishTtsTurnWithPlaybackCheck(trimmedReply, turn, generation, true);
+        if (!isActiveVoiceTurn(turn)) return;
         serverSpeechChunksRef.current = null;
         finishStreamTtsTurn(turn);
         return;
@@ -4433,8 +4481,16 @@ export default function ChatScreen() {
       const ttsReply =
         replyForTts.trim() ||
         streamTtsRawRef.current.trim() ||
-        streamVoiceBufferRef.current.trim();
+        streamVoiceBufferRef.current.trim() ||
+        pendingStreamTextRef.current.trim();
       if (voiceEnabledRef.current && ttsReply) {
+        voiceLog('tts_after_stream', {
+          fromVoice,
+          typed: !fromVoice,
+          replyLen: ttsReply.length,
+          turn,
+          generation: voiceSessionRef.current.speakGeneration,
+        });
         if (isActiveVoiceTurn(turn)) {
           await runTtsForReply(ttsReply, turn);
         } else {

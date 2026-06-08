@@ -1,5 +1,6 @@
 import {
   buildFinalTtsUtterances,
+  commitIncrementalChunks,
   createIncrementalTtsState,
   pullSpeakableChunks,
   streamTtsAlreadyComplete,
@@ -58,6 +59,19 @@ test('flush reaches last sentence when first was only partial', () => {
   const joined = second.join(' ');
   if (!joined.toLowerCase().includes('new with you')) {
     throw new Error(`expected tail sentence, got ${JSON.stringify(second)}`);
+  }
+});
+
+test('pullSpeakableChunks does not advance spokenPrefix until commit', () => {
+  const full = 'One. Two. Three.';
+  const state = createIncrementalTtsState();
+  const pulled = pullSpeakableChunks(state, full, false);
+  if (state.spokenPrefix !== '') {
+    throw new Error('spokenPrefix should stay empty until commit');
+  }
+  commitIncrementalChunks(state, pulled);
+  if (!state.spokenPrefix.includes('One')) {
+    throw new Error('spokenPrefix should advance after commit');
   }
 });
 
