@@ -158,7 +158,7 @@ export default function SettingsScreen() {
         </SettingRow>
         <SettingRow
           label="Playback volume"
-          hint="In-app boost on top of iPhone side buttons. Silent switch can stay on — voice still plays."
+          hint="Max in-app gain is 100% (expo-av cap). Raise iPhone side volume; disable Bluetooth/AirPods routing."
           disabled={!settings.voiceEnabled}
         >
           <View style={styles.chipRow}>

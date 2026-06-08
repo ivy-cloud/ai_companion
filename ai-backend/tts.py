@@ -323,7 +323,7 @@ def _prosody_for_style(style: str, delivery: VoiceDelivery) -> tuple[str, str, s
         pitch = os.environ.get("AZURE_SPEECH_PITCH_FILLER", "+0.1st").strip() or "+0.1st"
         volume = _normalize_prosody_volume(
             os.environ.get("AZURE_SPEECH_VOLUME_FILLER", ""),
-            os.environ.get("AZURE_SPEECH_VOLUME", "+12%"),
+            os.environ.get("AZURE_SPEECH_VOLUME", "+25%"),
         )
     else:
         rate = _normalize_prosody_rate(
@@ -333,7 +333,7 @@ def _prosody_for_style(style: str, delivery: VoiceDelivery) -> tuple[str, str, s
         pitch = delivery.pitch_main.strip() or "-0.5st"
         volume = _normalize_prosody_volume(
             os.environ.get("AZURE_SPEECH_VOLUME_MAIN", ""),
-            os.environ.get("AZURE_SPEECH_VOLUME", "+12%"),
+            os.environ.get("AZURE_SPEECH_VOLUME", "+25%"),
         )
     if not re.match(r"^[+-]?\d+(\.\d+)?st$", pitch):
         pitch = "+0.1st" if style == "filler" else "-0.5st"

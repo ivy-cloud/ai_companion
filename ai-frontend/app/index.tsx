@@ -26,6 +26,7 @@ import {
   withRecordingMutex,
   ensureMicrophonePermission,
   prepareForTtsPlayback,
+  applyTtsSoundGain,
   prewarmRecordingPipeline,
   isSubstantiveTranscript,
   turnNoResponseTimeoutMs,
@@ -623,12 +624,13 @@ export default function ChatScreen() {
     return ttsAbortRef.current.signal;
   };
 
-  /** Prewarm conversation recorder even when phase blocks default prewarm (TTS fetch window). */
+  /** Prewarm mic during LLM/TTS fetch — never while speaking (steals iOS speaker route). */
   const prewarmConversationMicAggressive = () => {
     if (!voiceEnabledRef.current) return;
     if (voiceInputModeRef.current !== 'conversation') return;
     if (!conversationSessionRef.current) return;
     if (voicePhaseRef.current === 'listening' && recordingRef.current) return;
+    if (voicePhaseRef.current === 'speaking') return;
     setRecordingPrewarmBlocked(false);
     prewarmRecordingPipeline();
     syncRecordingPrewarmBlock(voicePhaseRef.current);
@@ -883,18 +885,25 @@ export default function ChatScreen() {
     if (Platform.OS !== 'ios') return;
     await prepareForTtsPlayback();
     const sound = primeSoundRef.current;
-    if (!sound) return;
+    if (!sound) {
+      voiceLog('ios_speaker_prime_skip', { reason: 'no_prime_sound' });
+      return;
+    }
     const vol = playbackVolumeRef.current;
     try {
-      await sound.setVolumeAsync(vol);
+      voiceLog('ios_speaker_prime_start', { volume: vol });
+      await applyTtsSoundGain(sound, vol);
       await sound.setPositionAsync(0);
       await sound.playAsync();
       // Brief play forces AVAudioSession onto the loudspeaker (not earpiece).
       await new Promise((resolve) => setTimeout(resolve, 45));
       await sound.pauseAsync();
       await sound.setPositionAsync(0);
-    } catch {
-      // continue — TTS may still play
+      await prepareForTtsPlayback();
+      voiceLog('ios_speaker_prime_done', { volume: vol });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      voiceLog('ios_speaker_prime_failed', { volume: vol, error: msg });
     }
   };
 
@@ -3048,8 +3057,13 @@ export default function ChatScreen() {
       activeSoundRef.current = sound;
       logVoiceState('tts_play_start', { generation });
       logVoiceSnapshot('play_start', { generation });
+      voiceLog('tts_play_volume', {
+        volume: vol,
+        generation,
+        platform: Platform.OS,
+      });
       await prepareForTtsPlayback();
-      await sound.setVolumeAsync(vol);
+      await applyTtsSoundGain(sound, vol);
 
       let settled = false;
       let naturalFinish = false;
@@ -3125,8 +3139,11 @@ export default function ChatScreen() {
         sound!.setProgressUpdateIntervalAsync(250).catch(() => {});
         sound!.setOnPlaybackStatusUpdate(checkFinished);
 
-        void sound!.playAsync().then(async () => {
+        void applyTtsSoundGain(sound!, vol)
+          .then(() => sound!.playAsync())
+          .then(async () => {
           markVoiceChunkPlay(voiceTurnTimingRef.current);
+          await applyTtsSoundGain(sound!, vol);
           const status = await sound!.getStatusAsync();
           checkFinished(status);
         }).catch((e) => {

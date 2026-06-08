@@ -8,7 +8,7 @@ export type AppSettings = {
   naturalVoiceEnabled: boolean;
   voiceGender: VoiceGender;
   voiceInputMode: VoiceInputMode;
-  /** In-app TTS gain (0.8–1.0); device volume buttons control system level. */
+  /** In-app TTS gain (0.8–1.0); expo-av caps at 1.0 — use iPhone side buttons for more. */
   playbackVolume: number;
 };
 

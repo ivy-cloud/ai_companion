@@ -252,6 +252,18 @@ Free-tier Gemini limits are per Google Cloud **project**. See [AI Studio rate li
 - Tap **test voice** under the toggle.
 - Check Control Center — audio not routed to unused AirPods.
 
+### AI voice too quiet (iPhone + Expo Go)
+
+Even at **100%** in Settings → Playback volume, loudness is limited by three layers:
+
+1. **iPhone system volume** (side buttons) — this is the main control; in-app gain cannot exceed **1.0** (expo-av has no 110% boost).
+2. **Audio route** — Bluetooth / AirPods / CarPlay cap perceived volume; use **iPhone Speaker** in Control Center and disconnect unused Bluetooth devices.
+3. **Azure SSML** — backend defaults to `AZURE_SPEECH_VOLUME=+25%`; set `loud` or `x-loud` in `ai-backend/.env` for more.
+
+**Why it can still sound quiet:** During conversation mode, mic prewarm used to switch iOS to **PlayAndRecord** (earpiece) while TTS played. The app now keeps **Playback** category during speaking. If audio is still faint, raise side-button volume and confirm speaker routing — Expo Go cannot override `defaultToSpeaker` on PlayAndRecord.
+
+In `[voice]` logs, confirm `ios_speaker_prime_done` and `tts_play_volume` with `volume: 1` at play time.
+
 ### `npm install` errors in `ai-frontend`
 
 ```bash

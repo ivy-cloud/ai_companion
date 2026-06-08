@@ -91,10 +91,20 @@ export async function configureTtsPlaybackAudioMode() {
 /**
  * Release mic/recorder session and switch to speaker-oriented playback before TTS.
  * Prewarm and PlayAndRecord (barge-in) otherwise route iOS audio to the earpiece.
+ * expo-av has no defaultToSpeaker — only allowsRecordingIOS:false (Playback category).
  */
 export async function prepareForTtsPlayback(): Promise<void> {
   await discardPrewarm();
   await configureTtsPlaybackAudioMode();
+}
+
+/** expo-av caps player gain at 1.0; device volume buttons set system level. */
+export async function applyTtsSoundGain(
+  sound: Audio.Sound,
+  volume: number,
+): Promise<void> {
+  await sound.setIsMutedAsync(false);
+  await sound.setVolumeAsync(volume);
 }
 
 export async function configureRecordingAudioMode() {
@@ -137,7 +147,10 @@ export function prewarmRecordingPipeline(): void {
   if (recordingPrewarmBlocked || prewarmPromise) return;
   prewarmPromise = (async () => {
     try {
+      // Re-check — aggressive prewarm unblocks briefly; TTS speaking must keep Playback route.
+      if (recordingPrewarmBlocked) return;
       await configureRecordingAudioMode();
+      if (recordingPrewarmBlocked) return;
       if (prewarmRecording) return;
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync(RECORDING_OPTIONS);

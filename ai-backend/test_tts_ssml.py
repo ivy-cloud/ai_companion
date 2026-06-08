@@ -16,8 +16,8 @@ class TtsSsmlTests(unittest.TestCase):
         self.assertIn('pitch="+0.5st"', xml)
 
     def test_includes_volume_boost(self):
-        xml = _wrap_prosody("1.0", "0st", "Hello.", volume="+12%")
-        self.assertIn('volume="+12%"', xml)
+        xml = _wrap_prosody("1.0", "0st", "Hello.", volume="+25%")
+        self.assertIn('volume="+25%"', xml)
 
 
 if __name__ == "__main__":
