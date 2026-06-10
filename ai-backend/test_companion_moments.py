@@ -99,6 +99,35 @@ class CompanionMomentsTests(unittest.TestCase):
                 self.assertIn("curious", hint.lower())
         self.assertTrue(found)
 
+    def test_think_through_hint_on_substantive_vent(self) -> None:
+        msg = (
+            "I've been so stressed about this job interview tomorrow "
+            "and I don't know if I'm ready at all"
+        )
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.think_through_turn_hint(msg, casual=True)
+        self.assertIn("Think-through", hint)
+        self.assertIn("what/how", hint.lower())
+
+    def test_think_through_skips_brief(self) -> None:
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.think_through_turn_hint(
+                "so stressed", casual=True
+            )
+        self.assertEqual(hint, "")
+
+    def test_session_opening_curious_tail(self) -> None:
+        profile.learn_from_user_message("My name is Alex.")
+        line = companion_moments.session_opening_line(resolve_clock("UTC"), force=True)
+        self.assertIsNotNone(line)
+        assert line is not None
+        self.assertTrue(
+            "morning" in line.lower()
+            or "up to" in line.lower()
+            or "how was" in line.lower()
+            or "here" in line.lower()
+        )
+
     def test_journal_reflection_hint(self) -> None:
         import profile_growth
 

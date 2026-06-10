@@ -106,6 +106,21 @@ _THOUGHTFUL = re.compile(
     re.I,
 )
 
+# Text proxy for audio frustration (Hume: apologetic/softer tone).
+_FRUSTRATED = re.compile(
+    r"\b(?:"
+    r"ugh|annoyed|frustrated|irritated|this is (?:stupid|dumb|ridiculous)|"
+    r"doesn't work|does not work|not working|wrong again|come on|"
+    r"stop (?:it|that)|whatever\b|you never|you always|"
+    r"why (?:won't|can't|doesn't)|for the (?:third|fourth|fifth) time"
+    r")\b|"
+    r"(?:^|\s)(?:no\.|ugh\.|seriously\??)\s*$",
+    re.I,
+)
+
+# ALL-CAPS words (≥3 letters) — energy proxy when STT preserves casing.
+_CAPS_WORD = re.compile(r"\b[A-Z]{3,}\b")
+
 
 def voice_supports_express(voice: str) -> bool:
     return voice.strip().lower() in _VOICE_SUPPORTS_EXPRESS
@@ -131,6 +146,24 @@ def express_style_for_hint(hint: EmotionHint) -> str:
     if hint == "warm":
         return "friendly"
     return "friendly"
+
+
+def prosody_rate_for_hint(hint: Optional[EmotionHint], base_rate: str) -> str:
+    """
+    Nudge SSML rate to match conversational vibe (Hume-style prosody match).
+    Sympathetic/gentle → slightly slower; excited → slightly faster.
+    """
+    if not hint or hint == "neutral":
+        return base_rate
+    try:
+        mult = float(base_rate.strip())
+    except ValueError:
+        return base_rate
+    if hint in ("sympathetic", "gentle"):
+        return f"{mult * 0.96:.3f}".rstrip("0").rstrip(".")
+    if hint == "excited":
+        return f"{min(mult * 1.04, 1.18):.3f}".rstrip("0").rstrip(".")
+    return base_rate
 
 
 def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
@@ -185,11 +218,43 @@ def silence_comfort_turn_hint(
     )
 
 
+def prosody_vibe_turn_hint(user_message: str, base_hint: EmotionHint) -> str:
+    """
+    Text-based prosody proxy (Hume/Gemini affective dialog) — match energy, soften on frustration.
+    STT is usually lower-case; caps/exclamation still land often enough to help.
+    """
+    msg = (user_message or "").strip()
+    if not msg:
+        return ""
+
+    if _FRUSTRATED.search(msg):
+        return (
+            "They sound frustrated — stay calm, brief, slightly apologetic if you contributed "
+            "to the snag; no cheerfulness, no 'I understand your concern'."
+        )
+
+    caps = _CAPS_WORD.findall(msg)
+    if len(caps) >= 2 or (len(caps) == 1 and _EXCLAMATION_BOOST.search(msg)):
+        return "High energy — match their pace and enthusiasm; still brief, don't shout back."
+
+    if _EXCLAMATION_BOOST.search(msg) and base_hint == "excited":
+        return "Excited vibe — share the moment; one exclamation OK, not hype-y."
+
+    words = len(msg.split())
+    if words <= 3 and not msg.rstrip().endswith("?"):
+        return "Curt and brief — one relaxed sentence back; don't over-explain."
+
+    return ""
+
+
 def conversation_tone_llm_hint(user_message: str, base_hint: EmotionHint) -> str:
     """Lightweight tone nudge: playful, calm, curious, thoughtful (casual turns only)."""
     msg = (user_message or "").strip()
     if not msg:
         return ""
+
+    if _FRUSTRATED.search(msg):
+        return "Frustrated — calm and direct; fix or clarify without defensiveness."
 
     if _PLAYFUL.search(msg):
         return "Playful, light — teasing OK if it fits; stay brief, not performative."
@@ -233,6 +298,8 @@ def detect_emotion_hint(
         return "warm"
 
     corpus = " ".join(_recent_user_lines(recent_history)[-2:] + [msg])
+    if _FRUSTRATED.search(msg) or _FRUSTRATED.search(corpus):
+        return "sympathetic"
     if _DISTRESS.search(corpus) or _SYMPATHY_ASK.search(msg):
         return "sympathetic"
     if _EXCITED.search(corpus) or _EXCLAMATION_BOOST.search(msg):

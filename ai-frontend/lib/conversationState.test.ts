@@ -7,8 +7,11 @@ import {
   formatSendBlockBanner,
   getInputLockReason,
   getSendMessageSkipReason,
+  isValidPostSttSendPhase,
   hasAssistantReplyStarted,
+  isOwningStreamTtsDrain,
   isSpeakingPhaseBlocked,
+  shouldClearOrphanedStreamTtsDrain,
   shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
   shouldRecoverThinkingNoStream,
@@ -250,6 +253,13 @@ test('sendMessage skip: voice send lock', () => {
   );
 });
 
+test('post-STT send accepts listening phase in conversation mode', () => {
+  assert.equal(isValidPostSttSendPhase('thinking', true), true);
+  assert.equal(isValidPostSttSendPhase('listening', true), true);
+  assert.equal(isValidPostSttSendPhase('listening', false), false);
+  assert.equal(isValidPostSttSendPhase('speaking', true), false);
+});
+
 test('thinking recovery when send never started', () => {
   assert.equal(
     shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS, {
@@ -283,4 +293,59 @@ test('thinking no recovery while stream active under threshold', () => {
 test('assistant reply started on first token', () => {
   assert.equal(hasAssistantReplyStarted({ first_token: 1 }), true);
   assert.equal(hasAssistantReplyStarted({ stream_start: 1 }), false);
+});
+
+test('owning drain matches active drainGen', () => {
+  assert.equal(isOwningStreamTtsDrain(4, 4), true);
+  assert.equal(isOwningStreamTtsDrain(4, 3), false);
+  assert.equal(isOwningStreamTtsDrain(4, null), false);
+});
+
+test('do not clear draining while owner prefetch is in flight', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(2, true, 2, 0, false, false),
+    false,
+  );
+});
+
+test('clear orphaned draining after gen bump', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(5, true, 3, 0, false, false),
+    true,
+  );
+});
+
+test('keep draining while audio is playing', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(1, true, null, 0, false, true),
+    false,
+  );
+});
+
+test('clear orphaned draining when owner ref is null', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(1, true, null, 0, false, false),
+    true,
+  );
+});
+
+test('skip clear when not draining', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(1, false, null, 0, false, false),
+    false,
+  );
+});
+
+test('skip clear while queue still has chunks', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(2, true, 2, 1, false, false),
+    false,
+  );
+});
+
+test('skip clear while speak is in flight', () => {
+  assert.equal(
+    shouldClearOrphanedStreamTtsDrain(2, true, 2, 0, true, false),
+    false,
+  );
 });

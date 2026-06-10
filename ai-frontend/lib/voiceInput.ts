@@ -249,3 +249,28 @@ export async function transcribeRecording(uri: string, apiBase: string): Promise
     return transcribeRecordingOnce(uri, apiBase);
   }
 }
+
+/** Rolling partial caption — failures return empty string (non-blocking). */
+export async function transcribePartialRecording(
+  uri: string,
+  apiBase: string,
+): Promise<string> {
+  const form = new FormData();
+  form.append('file', {
+    uri,
+    name: 'partial.wav',
+    type: 'audio/wav',
+  } as unknown as Blob);
+
+  try {
+    const response = await fetch(`${apiBase}/stt?partial=1`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!response.ok) return '';
+    const data = (await response.json()) as { text?: string };
+    return data.text?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}

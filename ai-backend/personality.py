@@ -2,11 +2,12 @@
 
 from typing import Optional
 
-from conversation_rhythm import backchannel_turn_hint
+from conversation_rhythm import backchannel_turn_hint, monologue_interrupt_turn_hint
 from emotion import (
     EmotionHint,
     conversation_tone_llm_hint,
     emotion_turn_hint_for_llm,
+    prosody_vibe_turn_hint,
     silence_comfort_turn_hint,
 )
 from human_speech import (
@@ -45,7 +46,7 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 {SPOKEN_DELIVERY_RULES}
 
 ## Style
-- **Length:** 1–{MAX_REPLY_SENTENCES} short sentences, under {MAX_REPLY_WORDS} spoken words — then stop.
+- **Length:** natural for the moment — often 1–3 sentences, up to {MAX_REPLY_SENTENCES} when needed, usually under {MAX_REPLY_WORDS} spoken words.
 - **Factual questions:** answer first, correct, minimal words — no "hmm," "oh," "interesting," or banter before the fact.
 - **Casual chat:** sound human — contractions (I'm, you're, don't), everyday words, a little personality; never stiff or scripted.
 - **Rhythm:** phone-call pacing — short turns; rare backchannels on casual chat only (hmm, yeah, oh wow) — never on facts, never stacked, never cheerleader.
@@ -61,7 +62,7 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 Brief and natural on the phone — **right first**, friendly second."""
 
 
-COMPANION_REPLY_INSTRUCTIONS = f"""Say this out loud — 1–{MAX_REPLY_SENTENCES} short sentences, under {MAX_REPLY_WORDS} words.
+COMPANION_REPLY_INSTRUCTIONS = f"""Say this out loud — natural length for the moment (often 1–3 sentences, up to {MAX_REPLY_WORDS} words).
 - **Factual:** direct correct answer first — no filler line before it. Never intentionally wrong.
 - **Casual:** warm friend on the phone — not robotic, not formal. Contractions OK; one brief filler OK if it fits. You are the companion, not the user.
 - **You/your:** when they ask about "you" or "your" (voice, name, age), they mean **you the companion** — never flip it and tell them to change **their** settings unless they said **my / I / me**.
@@ -75,7 +76,8 @@ COMPANION_REPLY_INSTRUCTIONS = f"""Say this out loud — 1–{MAX_REPLY_SENTENCE
 - Copyrighted song lyrics: never provide exact lyrics; give a short original inspired-by vibe instead."""
 
 REPLY_LENGTH_HINT = (
-    f"1–{MAX_REPLY_SENTENCES} short sentences, under {MAX_REPLY_WORDS} spoken words."
+    f"Natural length — often 1–3 sentences, up to {MAX_REPLY_SENTENCES} when needed, "
+    f"usually under {MAX_REPLY_WORDS} spoken words."
 )
 
 TURN_STABILITY_HINT = (
@@ -129,9 +131,11 @@ def build_turn_hints(
     mood = ""
     if emotion_hint and not factual and not math_turn and not memory_recall:
         mood = emotion_turn_hint_for_llm(emotion_hint)
+        vibe = prosody_vibe_turn_hint(trimmed, emotion_hint)
         tone = conversation_tone_llm_hint(trimmed, emotion_hint)
-        if tone:
-            mood = f"{mood} {tone}".strip() if mood else tone
+        for part in (vibe, tone):
+            if part:
+                mood = f"{mood} {part}".strip() if mood else part
         if mood:
             mood = f" {mood}"
 
@@ -156,6 +160,7 @@ def build_turn_hints(
     moment = ""
     continuity = ""
     curiosity = ""
+    think_through = ""
     journal = ""
     silence = ""
     try:
@@ -174,6 +179,9 @@ def build_turn_hints(
         curiosity = companion_moments.curiosity_turn_hint(trimmed, casual=True)
         if curiosity:
             curiosity = f" {curiosity}"
+        think_through = companion_moments.think_through_turn_hint(trimmed, casual=True)
+        if think_through:
+            think_through = f" {think_through}"
         journal = companion_moments.journal_reflection_hint(trimmed, casual=True)
         if journal:
             journal = f" {journal}"
@@ -183,11 +191,14 @@ def build_turn_hints(
         silence = silence_comfort_turn_hint(trimmed, emotion_hint)
         if silence:
             silence = f" {silence}"
-    her_hints = f"{continuity}{curiosity}{journal}{silence}"
+    her_hints = f"{continuity}{curiosity}{think_through}{journal}{silence}"
+    monologue = monologue_interrupt_turn_hint(trimmed)
+    if monologue:
+        monologue = f" {monologue}"
     short = trimmed.strip().lower().rstrip("?!.")
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue} {rhythm}"

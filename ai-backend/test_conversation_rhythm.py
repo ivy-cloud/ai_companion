@@ -49,6 +49,17 @@ class ConversationRhythmTests(unittest.TestCase):
         self.assertFalse(meta.get("casual"))
         self.assertTrue(meta.get("stream_tts"))
 
+    def test_long_monologue_sets_companion_interrupt_meta(self):
+        long_msg = " ".join(["word"] * 80)
+        meta = rhythm.rhythm_stream_meta(long_msg, factual=False)
+        self.assertTrue(meta.get("companion_interrupt"))
+
+    def test_monologue_interrupt_turn_hint(self):
+        long_msg = " ".join(["yeah"] * 75)
+        hint = rhythm.monologue_interrupt_turn_hint(long_msg)
+        self.assertIn("jumped in", hint.lower())
+        self.assertEqual(rhythm.monologue_interrupt_turn_hint("short message"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

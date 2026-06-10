@@ -25,7 +25,7 @@ _PRESETS: dict[VoiceGender, VoiceDelivery] = {
     "female": VoiceDelivery(
         # Sara: soft US female; pitch omitted in SSML (Azure rejects pitch="0st")
         voice="en-US-SaraNeural",
-        rate_main="0.96",
+        rate_main="1.10",
         pitch_main="medium",
         speaking_style="friendly",
         use_speaking_style=False,
@@ -34,7 +34,7 @@ _PRESETS: dict[VoiceGender, VoiceDelivery] = {
     ),
     "male": VoiceDelivery(
         voice="en-US-GuyNeural",
-        rate_main="0.94",
+        rate_main="1.08",
         pitch_main="medium",
         speaking_style="friendly",
         use_speaking_style=False,
@@ -79,7 +79,7 @@ def resolve_voice_delivery(
         return _PRESETS[normalize_gender(os.environ.get("COMPANION_VOICE_GENDER"))]
 
     gender = normalize_gender(os.environ.get("COMPANION_VOICE_GENDER"))
-    rate = os.environ.get("AZURE_SPEECH_RATE_MAIN", "0.94").strip() or "0.94"
+    rate = os.environ.get("AZURE_SPEECH_RATE_MAIN", "1.08").strip() or "1.08"
     pitch = os.environ.get("AZURE_SPEECH_PITCH_MAIN", "-0.5st").strip() or "-0.5st"
     style = os.environ.get("AZURE_SPEAKING_STYLE", "friendly").strip().lower() or "friendly"
     use_style = os.environ.get("AZURE_USE_SPEAKING_STYLE", "true").strip().lower() in (

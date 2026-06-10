@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { computeListenLatencyGaps, type VoiceTurnTiming } from './voiceLatency.ts';
+import {
+  classifyVoiceToVoiceMs,
+  computeListenLatencyGapsFromMarks,
+  computeVoiceToVoiceMs,
+  voiceLatencyTierSummary,
+  VOICE_LATENCY_TARGETS,
+} from './voiceLatencyMath.ts';
 
 function test(name: string, fn: () => void) {
   try {
@@ -12,29 +18,52 @@ function test(name: string, fn: () => void) {
 }
 
 test('listen latency gaps: play_settle → mic_open → listen_ready', () => {
-  const timing: VoiceTurnTiming = {
-    turn: 1,
-    t0: 1000,
-    marks: {
+  assert.deepEqual(
+    computeListenLatencyGapsFromMarks({
       play_settle: 5000,
       mic_open: 5280,
       listen_ready: 5310,
+    }),
+    {
+      playSettleToMicOpenMs: 280,
+      micOpenToListenReadyMs: 30,
+      playSettleToListenReadyMs: 310,
     },
-    chunkCount: 1,
-  };
-  assert.deepEqual(computeListenLatencyGaps(timing), {
-    playSettleToMicOpenMs: 280,
-    micOpenToListenReadyMs: 30,
-    playSettleToListenReadyMs: 310,
-  });
+  );
 });
 
 test('listen latency gaps: null when play_settle missing', () => {
-  const timing: VoiceTurnTiming = {
-    turn: 2,
-    t0: 0,
-    marks: { mic_open: 100, listen_ready: 120 },
-    chunkCount: 0,
-  };
-  assert.equal(computeListenLatencyGaps(timing), null);
+  assert.equal(
+    computeListenLatencyGapsFromMarks({ mic_open: 100, listen_ready: 120 }),
+    null,
+  );
+});
+
+test('voice_to_voice_ms: user_speech_end to first_audio_play', () => {
+  assert.equal(
+    computeVoiceToVoiceMs({
+      user_speech_end: 1100,
+      first_audio_play: 2450,
+    }),
+    1350,
+  );
+});
+
+test('latency tiers: voice_to_voice good / acceptable / slow', () => {
+  assert.equal(classifyVoiceToVoiceMs(1200), 'good');
+  assert.equal(classifyVoiceToVoiceMs(2500), 'acceptable');
+  assert.equal(classifyVoiceToVoiceMs(5000), 'slow');
+});
+
+test('latency tier summary in turn_summary marks', () => {
+  assert.deepEqual(
+    voiceLatencyTierSummary({
+      user_speech_end: 1000,
+      first_audio_play: 2200,
+      play_settle: 8000,
+      listen_ready: 8250,
+    }),
+    { voice_to_voice_tier: 'good', listen_ready_tier: 'good' },
+  );
+  assert.equal(VOICE_LATENCY_TARGETS.voiceToVoiceMs.good, 1500);
 });

@@ -7,6 +7,65 @@ import type { VoicePhase } from './conversationState';
 /** Silence after speech before auto-send (ms). Tunable — longer reduces cut-off mid-thought. */
 export const SILENCE_END_MS = 1000;
 
+/**
+ * Extra patience when live transcript suggests distress or low mood (Hume patient turn-taking).
+ */
+export const SILENCE_END_PATIENT_MS = 1600;
+
+/** Distress / low-mood cues — lightweight mirror of ai-backend/emotion.py (text only). */
+const PATIENT_PACING_DISTRESS =
+  /\b(?:sad|depressed|lonely|anxious|worried|scared|afraid|stressed|overwhelmed|hurting|hurt|cry(?:ing)?|grief|grieving|passed away|died|funeral|breakup|broke up|can't cope|hard day|rough day|not okay|not ok|exhausted|burnt out|burned out)\b/i;
+
+const PATIENT_PACING_ZH =
+  /(?:难过|伤心|焦虑|害怕|累|崩溃|分手|去世|孤独|沮丧|压力大)/;
+
+/** True when we should wait longer before end-of-turn (empathic companion pacing). */
+export function wantsPatientTurnPacing(liveTranscript: string): boolean {
+  const trimmed = liveTranscript.trim();
+  if (!trimmed) return false;
+  return PATIENT_PACING_DISTRESS.test(trimmed) || PATIENT_PACING_ZH.test(trimmed);
+}
+
+/** Resolve silence threshold from rolling partial STT (if any). */
+export function resolveSilenceEndMs(liveTranscript?: string | null): number {
+  if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) {
+    return SILENCE_END_PATIENT_MS;
+  }
+  return SILENCE_END_MS;
+}
+
+/** Extra silence window once when STT ends on an incomplete-thought marker. */
+export const SEMANTIC_TURN_EXTENSION_MS = 700;
+
+/** Trailing words / fillers that suggest the user may continue (EN + common ZH). */
+const INCOMPLETE_THOUGHT_ENDING =
+  /\b(and|but|because|so|or|if|when|while|though|although|unless|until|since|like|um|uh|er|ah)\s*[,.]?\s*$/i;
+
+const INCOMPLETE_THOUGHT_ENDING_ZH =
+  /(因为|但是|然后|所以|而且|不过|如果|虽然|可是|或者|还有|就是|那个|这个|嗯|啊|呃)\s*$/;
+
+/** True when transcript likely trails off mid-thought — extend listen once before send. */
+export function hasIncompleteThoughtEnding(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return (
+    INCOMPLETE_THOUGHT_ENDING.test(trimmed) ||
+    INCOMPLETE_THOUGHT_ENDING_ZH.test(trimmed)
+  );
+}
+
+/** Join buffered partial utterance with the next STT chunk. */
+export function combineUtteranceTranscripts(
+  prefix: string,
+  next: string,
+): string {
+  const a = prefix.trim();
+  const b = next.trim();
+  if (!a) return b;
+  if (!b) return a;
+  return `${a} ${b}`.replace(/\s+/g, ' ').trim();
+}
+
 /** Minimum time above speech threshold before silence can trigger send. */
 export const MIN_SPEECH_MS = 350;
 
@@ -19,8 +78,8 @@ export const SESSION_INACTIVITY_MS = 60_000;
 /** How often to poll recording levels. */
 export const METERING_INTERVAL_MS = 120;
 
-/** Sustained user speech before voice barge-in fires (ms). */
-export const BARGE_IN_MIN_SPEECH_MS = 580;
+/** Sustained user speech before voice barge-in fires (ms). ~Hume min_interruption_ms default (800). */
+export const BARGE_IN_MIN_SPEECH_MS = 750;
 
 /** Ignore metering briefly after barge-in monitor starts (thinking). */
 export const BARGE_IN_GRACE_MS = 600;
@@ -41,7 +100,8 @@ export const BARGE_IN_COOLDOWN_MS = 2000;
  * Listen is blocked while activeSound/drain/queue remain; STT echo uses
  * isLikelyAssistantEchoTranscript once the recorder is open.
  */
-export const POST_TTS_LISTEN_COOLDOWN_MS = 280;
+/** Brief echo-decay window after TTS — barge-in monitor stays hot during playback. */
+export const POST_TTS_LISTEN_COOLDOWN_MS = 150;
 
 /** Retry cadence when listen is temporarily blocked by TTS/drain/in-flight states. */
 export const LISTEN_RETRY_MS = 180;
@@ -147,8 +207,36 @@ export const METER_SPEECH_LEVEL_DB = -74;
  */
 export const SILENCE_DROP_FROM_PEAK_DB = 6;
 
-/** Force end-of-utterance after this much speech even without a clean silence gap. */
-export const MAX_UTTERANCE_MS = 14_000;
+/** Sustained user speech before companion gently jumps in (ms). */
+export const INTERRUPT_USER_SPEECH_MS = 30_000;
+
+/** Minimum speech before companion interrupt — avoids cutting in on brief noise. */
+export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 3_500;
+
+/** Brief spoken ack when companion interrupts a long monologue. */
+export const COMPANION_INTERRUPT_ACKS = ['Hang on—', 'Hold on—', 'Wait—'] as const;
+
+/** Pick a stable interrupt ack from speech duration (same monologue → same phrase). */
+export function pickCompanionInterruptAck(speechMs: number): string {
+  const idx = Math.floor(speechMs / 1000) % COMPANION_INTERRUPT_ACKS.length;
+  return COMPANION_INTERRUPT_ACKS[idx]!;
+}
+
+/**
+ * True when sustained speech exceeds interrupt threshold and patient pacing does not apply.
+ */
+export function shouldCompanionInterruptUser(
+  speechMs: number,
+  liveTranscript?: string | null,
+): boolean {
+  if (speechMs < MIN_SPEECH_BEFORE_INTERRUPT_MS) return false;
+  if (speechMs < INTERRUPT_USER_SPEECH_MS) return false;
+  if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) return false;
+  return true;
+}
+
+/** Hard cap — force commit even without a clean silence gap (after companion interrupt window). */
+export const MAX_UTTERANCE_MS = 45_000;
 
 /** Log hint when listening this long with no meter speech (quiet_voice_timeout). */
 export const QUIET_VOICE_TIMEOUT_MS = 5000;
@@ -224,11 +312,13 @@ export type MeterTickResult = {
   state: ConversationMeterState;
   /** Enough speech + trailing silence — stop chunk and send. */
   endSilence: boolean;
+  /** Sustained monologue — companion jumps in and commits partial utterance. */
+  companionInterrupt: boolean;
   /** No speech for SESSION_INACTIVITY_MS — end session. */
   inactive: boolean;
   /** Listening with no sawSpeech for QUIET_VOICE_TIMEOUT_MS — log once. */
   quietVoiceTimeout: boolean;
-  /** Ms of speech when endSilence fired (0 otherwise). */
+  /** Ms of speech when endSilence or companionInterrupt fired (0 otherwise). */
   speechDurationMs: number;
   /** Ms of trailing silence when endSilence fired (0 otherwise). */
   silenceDurationMs: number;
@@ -257,11 +347,22 @@ function nextPeakMetering(
   return peak === null ? metering : Math.max(peak, metering);
 }
 
+export type MeterTickOptions = {
+  /** Override default {@link SILENCE_END_MS} — e.g. patient pacing from live partial STT. */
+  silenceEndMs?: number;
+  /** Rolling partial STT — distress extends silence and blocks companion interrupt. */
+  liveTranscript?: string | null;
+  /** False outside an active conversation session. */
+  allowCompanionInterrupt?: boolean;
+};
+
 export function tickConversationMeter(
   state: ConversationMeterState,
   metering: number | undefined,
   now: number,
+  options?: MeterTickOptions,
 ): MeterTickResult {
+  const silenceEndMs = options?.silenceEndMs ?? SILENCE_END_MS;
   const peakMetering = nextPeakMetering(state.peakMetering, metering);
   const meterSpeech = isMeterSpeech(metering);
   const peakHeard =
@@ -281,13 +382,18 @@ export function tickConversationMeter(
       peakMetering,
     };
     const speechMs = now - speechStartedAt;
-    const forceEnd = speechMs >= MAX_UTTERANCE_MS;
+    const companionInterrupt =
+      options?.allowCompanionInterrupt !== false &&
+      shouldCompanionInterruptUser(speechMs, options?.liveTranscript);
+    const forceEnd = !companionInterrupt && speechMs >= MAX_UTTERANCE_MS;
+    const fired = companionInterrupt || forceEnd;
     return {
       state: next,
       endSilence: forceEnd,
+      companionInterrupt,
       inactive: false,
       quietVoiceTimeout: false,
-      speechDurationMs: forceEnd ? speechMs : 0,
+      speechDurationMs: fired ? speechMs : 0,
       silenceDurationMs: 0,
     };
   }
@@ -319,7 +425,7 @@ export function tickConversationMeter(
   const endSilence =
     next.sawSpeech &&
     speechMs >= MIN_SPEECH_MS &&
-    silenceMs >= SILENCE_END_MS;
+    silenceMs >= silenceEndMs;
   const forceEnd = speechMs >= MAX_UTTERANCE_MS;
   const fired = endSilence || forceEnd;
 
@@ -329,6 +435,7 @@ export function tickConversationMeter(
   return {
     state: next,
     endSilence: fired,
+    companionInterrupt: false,
     inactive,
     quietVoiceTimeout,
     speechDurationMs: fired ? speechMs : 0,
@@ -368,6 +475,14 @@ export function tickConversationBargeIn(
  * Whether conversation listen can start (or restart) from the current phase.
  * When already listening with an active recorder, returns false (no-op).
  */
+/** Don't open barge-in mic while final STT / send is in flight — races post-STT phase checks. */
+export function shouldDeferBargeInForVoiceCommit(
+  voiceSendLock: boolean,
+  listenChunkCommitInFlight: boolean,
+): boolean {
+  return voiceSendLock || listenChunkCommitInFlight;
+}
+
 export function canResumeConversationListen(
   phase: VoicePhase,
   hasRecording: boolean,

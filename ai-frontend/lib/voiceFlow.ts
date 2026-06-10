@@ -11,8 +11,18 @@ export function voicePhaseLabel(
   phase: VoicePhase,
   _isStreaming = false,
   conversationSession = false,
-  options?: { proactive?: boolean; companionName?: string },
+  options?: {
+    proactive?: boolean;
+    companionName?: string;
+    /** Post-TTS cooldown / mic reopen — avoid "paused" while session is live. */
+    openingMic?: boolean;
+    /** Companion jumped in on a long monologue. */
+    companionJumpingIn?: boolean;
+  },
 ): string {
+  if (options?.companionJumpingIn && conversationSession) {
+    return 'Jumping in…';
+  }
   if (
     options?.proactive &&
     conversationSession &&
@@ -35,7 +45,10 @@ export function voicePhaseLabel(
     case 'interrupting':
       return 'Stopping…';
     default:
-      return conversationSession ? 'Listening paused' : 'Ready';
+      if (conversationSession) {
+        return options?.openingMic ? 'Opening mic…' : 'Listening paused';
+      }
+      return 'Ready';
   }
 }
 
@@ -43,10 +56,11 @@ export function voicePhaseHint(
   phase: VoicePhase,
   isStreaming = false,
   conversationSession = false,
+  options?: { openingMic?: boolean },
 ): string {
   switch (phase) {
     case 'listening':
-      return 'Speak naturally · pause ~1s or tap Done speaking';
+      return 'Speak naturally · pause when ready or tap Done speaking';
     case 'recording':
       return 'Hold mic and speak…';
     case 'thinking':
@@ -69,9 +83,12 @@ export function voicePhaseHint(
     case 'interrupting':
       return 'Interrupting…';
     default:
-      return conversationSession
-        ? 'Conversation active · tap Mic (Listen) to resume'
-        : 'Hold Mic to talk · or type below';
+      if (conversationSession) {
+        return options?.openingMic
+          ? 'Almost ready — speak when you see Listening…'
+          : 'Conversation active · tap Mic (Listen) to resume';
+      }
+      return 'Hold Mic to talk · or type below';
   }
 }
 

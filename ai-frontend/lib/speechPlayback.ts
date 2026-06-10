@@ -5,12 +5,12 @@
 
 import { normalizeForSpeech } from './spokenNormalize';
 
-/** ~3 short spoken sentences from the backend (25 words). */
-export const MAX_SPOKEN_CHARS = 300;
+/** Safety cap for TTS — natural multi-sentence replies, not monologues. */
+export const MAX_SPOKEN_CHARS = 480;
 export const MAX_UTTERANCE_CHARS = 420;
-export const MAX_SPOKEN_SENTENCES = 2;
-export const MAX_SPOKEN_SENTENCES_CASUAL = 2;
-export const MAX_SPOKEN_CHARS_CASUAL = 140;
+export const MAX_SPOKEN_SENTENCES = 6;
+export const MAX_SPOKEN_SENTENCES_CASUAL = 4;
+export const MAX_SPOKEN_CHARS_CASUAL = 280;
 
 export type SpeechTrimOptions = {
   maxSentences: number;
@@ -155,11 +155,20 @@ export function remainderAfterSpoken(full: string, spokenPrefix: string): string
   if (!fullClean) return null;
   if (!prefixClean) return fullClean;
   if (fullClean === prefixClean) return null;
-  if (prefixClean.startsWith(fullClean) || prefixClean.length >= fullClean.length * 0.88) {
+  if (prefixClean.startsWith(fullClean)) {
     return null;
   }
   if (!fullClean.startsWith(prefixClean)) {
-    return null;
+    const lastSpoken = lastSentenceOf(spokenPrefix);
+    if (lastSpoken) {
+      const lastNorm = prepareTextForSpeech(lastSpoken);
+      const pos = fullClean.indexOf(lastNorm);
+      if (pos >= 0) {
+        const after = fullClean.slice(pos + lastNorm.length).trim();
+        if (after) return after;
+      }
+    }
+    return fullClean;
   }
   const rest = fullClean.slice(prefixClean.length).trim();
   return rest.length > 0 ? rest : null;

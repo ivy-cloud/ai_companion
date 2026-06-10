@@ -27,6 +27,7 @@ import llm_provider
 import memory
 import profile
 import profile_growth
+import realtime_voice
 import session_log
 import singing
 import stt
@@ -140,11 +141,16 @@ def _turn_emotion(
     *,
     factual: bool = False,
     memory_recall: bool = False,
+    reply_text: Optional[str] = None,
 ) -> tuple[str, Optional[str]]:
     """LLM mood hint + Azure express style for this turn (None = no express-as)."""
     if factual or memory_recall:
         return "neutral", None
-    hint = emotion.detect_emotion_hint(trimmed, memory.get_history())
+    hint = emotion.detect_emotion_hint(
+        trimmed,
+        memory.get_history(),
+        reply_text=reply_text,
+    )
     return hint, emotion.express_style_for_hint(hint)
 
 
@@ -329,7 +335,7 @@ def _stream_canned_reply(
         **_turn_log_fields(started_at, clock, learn_at_start),
         extra=log_extra,
     )
-    emotion_hint, express_style = _turn_emotion(trimmed)
+    emotion_hint, express_style = _turn_emotion(trimmed, reply_text=spoken_reply)
     for piece in _stream_text_chunks(spoken_reply):
         yield _ndjson_line({"text": piece})
     done_payload: dict = {
@@ -622,6 +628,7 @@ def stream_chat_events(
             context.trimmed_latest,
             factual=context.factual_reply,
             memory_recall=profile.is_user_profile_turn(context.trimmed_latest),
+            reply_text=reply,
         )
         done_payload: dict = {
             "done": True,
@@ -721,6 +728,7 @@ def health(voice_gender: Optional[str] = None):
         "hint": hint,
         "azure_tts": tts.tts_status(voice_gender),
         "azure_stt": stt.stt_status(),
+        "realtime_voice": realtime_voice.realtime_status(),
         "web_search": web_search.status(),
         "dev_mode": dev_mode.mock_status(),
         "session_log": session_log.status(),
@@ -770,7 +778,10 @@ def synthesize(body: TtsRequest):
 
 
 @app.post("/stt")
-async def transcribe(file: UploadFile = File(...)):
+async def transcribe(
+    file: UploadFile = File(...),
+    partial: bool = False,
+):
     """Speech-to-text via Azure (upload recording from the app)."""
     audio_bytes = await file.read()
     filename = file.filename or "recording.wav"
@@ -780,14 +791,17 @@ async def transcribe(file: UploadFile = File(...)):
             filename=filename,
             content_type=file.content_type,
         )
-        session_log.log_stt(text, filename=filename)
-        return {"text": text}
+        if not partial:
+            session_log.log_stt(text, filename=filename)
+        return {"text": text, "partial": partial}
     except HTTPException as exc:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-        session_log.log_stt("", filename=filename, error=detail)
+        if not partial:
+            session_log.log_stt("", filename=filename, error=detail)
         raise
     except Exception as exc:
-        session_log.log_stt("", filename=filename, error=str(exc))
+        if not partial:
+            session_log.log_stt("", filename=filename, error=str(exc))
         raise
 
 

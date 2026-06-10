@@ -24,7 +24,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   voiceEnabled: true,
   naturalVoiceEnabled: true,
   voiceGender: 'female',
-  voiceInputMode: 'ptt',
+  voiceInputMode: 'conversation',
   playbackVolume: PLAYBACK_VOLUME_MAX,
 };
 

@@ -35,7 +35,12 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE,
 )
 
-from emotion import normalize_express_style, resolve_express_style, voice_supports_express
+from emotion import (
+    normalize_express_style,
+    prosody_rate_for_hint,
+    resolve_express_style,
+    voice_supports_express,
+)
 from spoken_text import normalize_for_speech
 from voice_config import VoiceDelivery, resolve_voice_delivery, voice_options_for_client
 
@@ -372,6 +377,8 @@ def synthesize_speech(
 
     voice = delivery.voice
     hint_norm = (emotion_hint or "").strip().lower() or None
+    if hint_norm:
+        rate = prosody_rate_for_hint(hint_norm, rate)  # type: ignore[arg-type]
     if hint_norm == "neutral":
         hint_norm = None
     use_express, express_name = resolve_express_style(

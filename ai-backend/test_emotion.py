@@ -6,6 +6,8 @@ from emotion import (
     detect_emotion_hint,
     express_style_for_hint,
     normalize_express_style,
+    prosody_rate_for_hint,
+    prosody_vibe_turn_hint,
     resolve_express_style,
     silence_comfort_turn_hint,
     voice_supports_express,
@@ -39,6 +41,17 @@ class EmotionDetectionTests(unittest.TestCase):
             "sympathetic",
         )
 
+    def test_reply_text_refines_hint(self):
+        self.assertEqual(
+            detect_emotion_hint("Tell me more.", reply_text="That's amazing — congrats!"),
+            "excited",
+        )
+
+    def test_prosody_rate_nudge(self):
+        self.assertEqual(prosody_rate_for_hint("gentle", "1.1"), "1.056")
+        self.assertEqual(prosody_rate_for_hint("excited", "1.1"), "1.144")
+        self.assertEqual(prosody_rate_for_hint("neutral", "1.1"), "1.1")
+
     def test_silence_comfort_brief(self):
         hint = silence_comfort_turn_hint("yeah", "warm")
         self.assertIn("brief", hint.lower())
@@ -49,6 +62,20 @@ class EmotionDetectionTests(unittest.TestCase):
             "sympathetic",
         )
         self.assertIn("short", hint.lower())
+
+    def test_frustration_hint(self):
+        self.assertEqual(
+            detect_emotion_hint("Ugh this doesn't work again"),
+            "sympathetic",
+        )
+
+    def test_prosody_frustration(self):
+        hint = prosody_vibe_turn_hint("ugh wrong again", "warm")
+        self.assertIn("frustrated", hint.lower())
+
+    def test_prosody_curt(self):
+        hint = prosody_vibe_turn_hint("yeah ok", "warm")
+        self.assertIn("brief", hint.lower())
 
 
 class ExpressStyleTests(unittest.TestCase):

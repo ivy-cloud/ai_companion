@@ -13,6 +13,14 @@ type VoiceHeroProps = {
   speakLouderHint?: boolean;
   doneSpeakingVisible?: boolean;
   onDoneSpeaking?: () => void;
+  /** ChatGPT-style mute while assistant TTS plays (conversation mode). */
+  muteVisible?: boolean;
+  ttsMuted?: boolean;
+  onToggleMute?: () => void;
+  /** Label override for the manual end-of-turn control (default: Done speaking). */
+  doneSpeakingLabel?: string;
+  /** Rolling partial STT while listening (conversation mode). */
+  liveTranscript?: string | null;
   waveVisible: boolean;
   waveSubtle?: boolean;
   ambient?: boolean;
@@ -31,6 +39,11 @@ export function VoiceHero({
   speakLouderHint = false,
   doneSpeakingVisible = false,
   onDoneSpeaking,
+  muteVisible = false,
+  ttsMuted = false,
+  onToggleMute,
+  doneSpeakingLabel = 'Done speaking',
+  liveTranscript = null,
   waveVisible,
   waveSubtle = false,
   ambient = false,
@@ -41,9 +54,16 @@ export function VoiceHero({
   if (compact) {
     return (
       <View style={styles.compactHero} accessibilityRole="summary">
-        <Text style={styles.compactPhaseLabel} numberOfLines={1}>
-          {phaseLabel}
-        </Text>
+        <View style={styles.compactLabelCol}>
+          <Text style={styles.compactPhaseLabel} numberOfLines={1}>
+            {phaseLabel}
+          </Text>
+          {liveTranscript ? (
+            <Text style={styles.liveTranscriptCompact} numberOfLines={2}>
+              {liveTranscript}
+            </Text>
+          ) : null}
+        </View>
         <View style={styles.compactMeterCol}>
           {(waveVisible || ambient) && (
             <VoiceInputWave
@@ -59,19 +79,37 @@ export function VoiceHero({
             visible={meterVisible}
             hint={decibelHint}
           />
-          {doneSpeakingVisible && onDoneSpeaking ? (
-            <Pressable
-              style={({ pressed }) => [
-                styles.doneSpeakingButton,
-                pressed && styles.doneSpeakingPressed,
-              ]}
-              onPress={onDoneSpeaking}
-              accessibilityRole="button"
-              accessibilityLabel="Done speaking"
-            >
-              <Text style={styles.doneSpeakingLabel}>Done speaking</Text>
-            </Pressable>
-          ) : null}
+          <View style={styles.escapeRow}>
+            {muteVisible && onToggleMute ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.escapeButton,
+                  styles.escapeButtonSecondary,
+                  pressed && styles.escapePressed,
+                ]}
+                onPress={onToggleMute}
+                accessibilityRole="button"
+                accessibilityLabel={ttsMuted ? 'Unmute assistant' : 'Mute assistant'}
+              >
+                <Text style={styles.escapeLabelSecondary}>
+                  {ttsMuted ? 'Unmute' : 'Mute'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {doneSpeakingVisible && onDoneSpeaking ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.escapeButton,
+                  pressed && styles.escapePressed,
+                ]}
+                onPress={onDoneSpeaking}
+                accessibilityRole="button"
+                accessibilityLabel={doneSpeakingLabel}
+              >
+                <Text style={styles.escapeLabel}>{doneSpeakingLabel}</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       </View>
     );
@@ -81,6 +119,11 @@ export function VoiceHero({
     <View style={styles.hero} accessibilityRole="summary">
       <Text style={styles.companionName}>{companionName}</Text>
       <Text style={styles.phaseLabel}>{phaseLabel}</Text>
+      {liveTranscript ? (
+        <Text style={styles.liveTranscript} numberOfLines={3}>
+          {liveTranscript}
+        </Text>
+      ) : null}
       <VoiceInputWave
         level={level}
         visible={waveVisible || ambient}
@@ -93,19 +136,37 @@ export function VoiceHero({
         visible={meterVisible}
         hint={decibelHint}
       />
-      {doneSpeakingVisible && onDoneSpeaking ? (
-        <Pressable
-          style={({ pressed }) => [
-            styles.doneSpeakingButton,
-            pressed && styles.doneSpeakingPressed,
-          ]}
-          onPress={onDoneSpeaking}
-          accessibilityRole="button"
-          accessibilityLabel="Done speaking"
-        >
-          <Text style={styles.doneSpeakingLabel}>Done speaking</Text>
-        </Pressable>
-      ) : null}
+      <View style={styles.escapeRow}>
+        {muteVisible && onToggleMute ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.escapeButton,
+              styles.escapeButtonSecondary,
+              pressed && styles.escapePressed,
+            ]}
+            onPress={onToggleMute}
+            accessibilityRole="button"
+            accessibilityLabel={ttsMuted ? 'Unmute assistant' : 'Mute assistant'}
+          >
+            <Text style={styles.escapeLabelSecondary}>
+              {ttsMuted ? 'Unmute' : 'Mute'}
+            </Text>
+          </Pressable>
+        ) : null}
+        {doneSpeakingVisible && onDoneSpeaking ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.escapeButton,
+              pressed && styles.escapePressed,
+            ]}
+            onPress={onDoneSpeaking}
+            accessibilityRole="button"
+            accessibilityLabel={doneSpeakingLabel}
+          >
+            <Text style={styles.escapeLabel}>{doneSpeakingLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <Text style={styles.phaseHint}>{phaseHint}</Text>
     </View>
   );
@@ -134,8 +195,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#ead9d4',
   },
-  compactPhaseLabel: {
+  compactLabelCol: {
     flex: 1,
+    minWidth: 0,
+  },
+  compactPhaseLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#4a3f42',
@@ -157,8 +221,22 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: '#4a3f42',
-    marginBottom: 14,
+    marginBottom: 6,
     textAlign: 'center',
+  },
+  liveTranscript: {
+    fontSize: 15,
+    fontStyle: 'italic',
+    color: '#6b5d60',
+    textAlign: 'center',
+    marginBottom: 10,
+    paddingHorizontal: 8,
+  },
+  liveTranscriptCompact: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#6b5d60',
+    marginTop: 2,
   },
   phaseHint: {
     fontSize: 13,
@@ -168,19 +246,35 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingHorizontal: 8,
   },
-  doneSpeakingButton: {
+  escapeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
     marginTop: 10,
+  },
+  escapeButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     backgroundColor: '#4a3f42',
   },
-  doneSpeakingPressed: {
+  escapeButtonSecondary: {
+    backgroundColor: '#e8ddd8',
+    borderWidth: 1,
+    borderColor: '#c9b8b0',
+  },
+  escapePressed: {
     opacity: 0.85,
   },
-  doneSpeakingLabel: {
+  escapeLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: '#faf7f5',
+  },
+  escapeLabelSecondary: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4a3f42',
   },
 });

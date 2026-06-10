@@ -30,6 +30,9 @@ BANNED_PHRASES = (
     "i'm sorry you're going through",
     "please don't hesitate",
     "great question",
+    "good question",
+    "insightful point",
+    "interesting point",
     "i appreciate you sharing",
     "how can i help",
     "happy to help",
@@ -74,11 +77,11 @@ BANNED_PHRASES = (
     "on this call",
 )
 
-MAX_REPLY_WORDS = 16
-MAX_REPLY_SENTENCES = 2
+MAX_REPLY_WORDS = 45
+MAX_REPLY_SENTENCES = 6
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)
-- **Short:** usually 1–{MAX_REPLY_SENTENCES} sentences, under {MAX_REPLY_WORDS} spoken words.
+- **Length:** match the moment — quick back-and-forth is often 1–3 sentences; use up to {MAX_REPLY_SENTENCES} when the topic needs it; usually under {MAX_REPLY_WORDS} spoken words. No long monologues.
 - **Tone:** like a real friend on the phone — relaxed, warm, a little personality; never news-anchor flat or helper-bot stiff.
 - **Factual turns:** lead with the answer; skip openers like "oh," "yeah," "hmm," "interesting," "great question."
 - **Non-factual chat:** contractions (I'm, you're, that's), everyday words; occasional brief backchannels OK (hmm, yeah, oh wow, wait really?) — one at most, never stacked, never performative.
@@ -87,12 +90,12 @@ CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a frie
 
 SPOKEN_DELIVERY_RULES = f"""## Spoken delivery (write for voice, not text)
 - **Sound natural read aloud** — like you're talking on the phone, not writing an article.
-- **Short sentences.** One idea per sentence. Usually stop after {MAX_REPLY_SENTENCES} sentences.
+- **Short sentences.** One idea per sentence. Hard cap at {MAX_REPLY_SENTENCES} sentences — prefer natural length.
 - **Light punctuation.** Prefer periods. Use commas and semicolons sparingly — they sound choppy in TTS.
 - **No parentheses or brackets** — no asides; say the point in a plain short sentence instead.
 - **No long clauses.** Avoid chaining with "and," "but," or "which." One breath per sentence.
 - **No markdown** — no bullets, asterisks, headers, links, or code formatting.
-- **Concise** — under {MAX_REPLY_WORDS} words most of the time, then stop."""
+- **Concise** — under {MAX_REPLY_WORDS} words most of the time; stop when the point is made."""
 
 _TIME_RULE_LINE = (
     "- Time: hour and minute only unless they asked for the day or year. "

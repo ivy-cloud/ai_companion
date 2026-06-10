@@ -19,21 +19,24 @@ function isSameSpokenLine(a: string, b: string): boolean {
 }
 
 export type IncrementalTtsState = {
-  /** Normalized text already queued or spoken this turn. */
+  /** Normalized text already played this turn. */
   spokenPrefix: string;
+  /** Normalized text queued for playback (may be ahead of spokenPrefix). */
+  queuedPrefix: string;
 };
 
 export function createIncrementalTtsState(): IncrementalTtsState {
-  return { spokenPrefix: '' };
+  return { spokenPrefix: '', queuedPrefix: '' };
 }
 
 export function resetIncrementalTtsState(state: IncrementalTtsState): void {
   state.spokenPrefix = '';
+  state.queuedPrefix = '';
 }
 
 /**
  * Pull newly completed sentences (or early clause) from the live stream buffer.
- * Does not mutate spokenPrefix — call commitIncrementalChunks after enqueue/play.
+ * Does not mutate prefixes — call commitQueuedChunks after enqueue.
  */
 export function pullSpeakableChunks(
   state: IncrementalTtsState,
@@ -42,7 +45,7 @@ export function pullSpeakableChunks(
   alreadyEnqueued?: Set<string>,
 ): string[] {
   const chunks: string[] = [];
-  let cursor = state.spokenPrefix;
+  let cursor = state.queuedPrefix;
   while (true) {
     const next = nextSpeakableChunk(fullStream, cursor, flush);
     if (!next) break;
@@ -58,16 +61,51 @@ export function pullSpeakableChunks(
   return chunks;
 }
 
-/** Advance spokenPrefix only after chunks were queued (or deduped as already queued). */
-export function commitIncrementalChunks(
+/** Advance queuedPrefix only after chunks were added to the playback queue. */
+export function commitQueuedChunks(
   state: IncrementalTtsState,
   chunks: string[],
 ): void {
   for (const chunk of chunks) {
     const trimmed = chunk.trim();
     if (!trimmed) continue;
-    state.spokenPrefix = appendSpoken(state.spokenPrefix, trimmed);
+    state.queuedPrefix = appendSpoken(state.queuedPrefix, trimmed);
   }
+}
+
+/** Advance spokenPrefix only after audio for a chunk actually played. */
+export function commitPlayedChunk(state: IncrementalTtsState, chunk: string): void {
+  const trimmed = chunk.trim();
+  if (!trimmed) return;
+  state.spokenPrefix = appendSpoken(state.spokenPrefix, trimmed);
+}
+
+/** @deprecated Use commitQueuedChunks / commitPlayedChunk. */
+export function commitIncrementalChunks(
+  state: IncrementalTtsState,
+  chunks: string[],
+): void {
+  commitQueuedChunks(state, chunks);
+}
+
+function replyPrefixCoversFull(reply: string, prefix: string): boolean {
+  const trimmed = reply.trim();
+  if (!trimmed || !prefix.trim()) return false;
+
+  const full = prepareTextForSpeech(trimmed);
+  const pref = prepareTextForSpeech(prefix);
+  if (!full || !pref) return false;
+  if (full === pref) return true;
+  if (!full.startsWith(pref)) return false;
+
+  const tail = full.slice(pref.length).trim();
+  if (!tail) return true;
+
+  const lastInPrefix = lastSentenceOf(prefix);
+  if (lastInPrefix && isSameSpokenLine(lastInPrefix, tail)) {
+    return true;
+  }
+  return false;
 }
 
 /** Utterances still needed after incremental speech (polished final reply). */
@@ -78,9 +116,11 @@ export function buildFinalTtsUtterances(
 ): string[] {
   const trimmed = finalReply.trim();
   if (!trimmed) return [];
+  if (streamTtsAlreadyComplete(trimmed, state)) return [];
 
+  // Only spokenPrefix reflects audio the user heard — queued may be ahead of playback.
   const remainder = remainderAfterSpoken(trimmed, state.spokenPrefix);
-  const text = remainder ?? (state.spokenPrefix ? '' : trimmed);
+  const text = remainder ?? (state.spokenPrefix.trim() ? '' : trimmed);
   if (!text) return [];
 
   const utterances = buildSpeechUtterances(text, trim === false ? false : trim);
@@ -91,35 +131,40 @@ export function buildFinalTtsUtterances(
   return deduped;
 }
 
-/** True when streaming TTS already spoke the full reply (prevents repeating the last sentence). */
+/** True when streaming TTS already played the full reply (not merely queued). */
 export function streamTtsAlreadyComplete(
   finalReply: string,
-  spokenPrefix: string,
+  stateOrSpoken: IncrementalTtsState | string,
 ): boolean {
+  const state: IncrementalTtsState =
+    typeof stateOrSpoken === 'string'
+      ? { spokenPrefix: stateOrSpoken, queuedPrefix: stateOrSpoken }
+      : stateOrSpoken;
+
   const trimmed = finalReply.trim();
   if (!trimmed) return true;
-  if (!spokenPrefix.trim()) return false;
 
-  const remainder = remainderAfterSpoken(trimmed, spokenPrefix);
-  if (!remainder) return true;
+  if (!state.spokenPrefix.trim()) return false;
 
-  const rest = prepareTextForSpeech(remainder);
-  const lastSpoken = lastSentenceOf(spokenPrefix);
-  if (lastSpoken && isSameSpokenLine(lastSpoken, rest)) {
-    return true;
-  }
-
-  // Trailing punctuation / filler only — not a repeat of a full new sentence.
-  if (rest.length < 12 && !/[.!?]/.test(rest)) {
+  if (replyPrefixCoversFull(trimmed, state.spokenPrefix)) {
     return true;
   }
 
   const full = prepareTextForSpeech(trimmed);
-  const spoken = prepareTextForSpeech(spokenPrefix);
+  const spoken = prepareTextForSpeech(state.spokenPrefix);
   if (full === spoken) return true;
-  if (spoken.endsWith(rest)) {
+
+  const remainder = remainderAfterSpoken(trimmed, state.spokenPrefix);
+  if (!remainder) {
+    return false;
+  }
+
+  const rest = prepareTextForSpeech(remainder);
+  const lastSpoken = lastSentenceOf(state.spokenPrefix);
+  if (lastSpoken && isSameSpokenLine(lastSpoken, rest)) {
     return true;
   }
+
   if (!full.startsWith(spoken)) {
     return false;
   }
@@ -128,6 +173,5 @@ export function streamTtsAlreadyComplete(
   if (lastSpoken && isSameSpokenLine(lastSpoken, tail)) {
     return true;
   }
-  // Short non-sentence crumbs only (not "Three."-style closings).
-  return tail.length < 12 && !/[.!?]/.test(tail);
+  return false;
 }

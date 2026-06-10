@@ -105,7 +105,16 @@ tail -f ai-backend/data/session_log.jsonl
 curl -s 'http://127.0.0.1:8000/debug/session-log?limit=120&type=voice&format=text'
 ```
 
-Look for: `stream_on_done`, `run_tts_single_clip`, `snapshot_play_start`, `skip_duplicate_play`, `echo_suppressed`, `stt_ignored_during_tts`, `turn_summary` (latency ms).
+Look for: `stream_on_done`, `run_tts_single_clip`, `snapshot_play_start`, `skip_duplicate_play`, `echo_suppressed`, `stt_ignored_during_tts`, `partial_stt`, `turn_summary` (latency ms).
+
+### STT endpoints
+
+| Endpoint | Use |
+|----------|-----|
+| `POST /stt` | Final utterance after silence / Done speaking (logged to session log) |
+| `POST /stt?partial=1` | Rolling partial caption while listening (not logged; failures are silent) |
+
+Phase 5 Realtime speech-to-speech: stubs in `realtime_voice.py` / `realtimeVoice.ts`; `/health` → `realtime_voice.ready`.
 
 ### Reading `turn_summary`
 
@@ -113,6 +122,8 @@ Each voice turn logs one `turn_summary` event (Metro `[voice]` and session log).
 
 | Field | Meaning |
 |-------|---------|
+| `user_speech_end_ms` | Meter/done-speaking committed end of user speech (may be negative vs `send_start` — STT runs between) |
+| `voice_to_voice_ms` | **Key metric:** `user_speech_end` → first audible TTS playback |
 | `first_token_ms` | First streamed LLM token |
 | `stream_done_ms` | Full reply received |
 | `first_tts_fetch_ms` | First Azure TTS response written to cache |
@@ -121,13 +132,15 @@ Each voice turn logs one `turn_summary` event (Metro `[voice]` and session log).
 | `mic_open_ms` | Conversation recorder opened after TTS |
 | `listen_ready_ms` | Meter running — safe to speak |
 
-Typical healthy conversation turn: `first_token` → `stream_done` → `first_tts_fetch` → `play_settle` → `mic_open` → `listen_ready`. Large gaps between `play_settle` and `listen_ready` usually mean post-TTS cooldown or `schedule_listen_blocked`.
+Typical healthy conversation turn: `user_speech_end` → `first_token` → `stream_done` → `first_tts_fetch` → `first_audio_play` → `play_settle` → `mic_open` → `listen_ready`. Large gaps between `play_settle` and `listen_ready` usually mean post-TTS cooldown or `schedule_listen_blocked`. ChatGPT-inspired UX notes: [docs/chatgpt-voice-learnings.md](docs/chatgpt-voice-learnings.md).
 
 **Phase 1 (conversation quality):** saved friend notes are in the system prompt on normal turns (not only explicit recall questions); canned recall routes unchanged. Voice replies target ~2 short sentences / ~16 words; clearer mic/echo/STT error copy.
 
-**Phase 2 (latency):** single-clip TTS prefetch, slightly faster playback-idle detection; `turn_summary` includes post-TTS mic timing. Post-TTS listen cooldown stays **700ms** for echo safety.
+**Phase 2 (latency):** single-clip TTS prefetch, slightly faster playback-idle detection; `turn_summary` includes post-TTS mic timing. Post-TTS listen cooldown is **150ms** (echo guards + barge-in monitor during TTS).
 
 **Phase 3 (polish):** **End conversation** button while a conversation session is active; health preflight on app load and before starting conversation mode (`lib/healthPreflight.ts`); louder TTS failure hints (volume / silent mode); watchdog thresholds tuned so recovery is rare in normal use (see below).
+
+**Companion interrupt (user monologue):** During conversation listen, sustained speech past **30s** (`INTERRUPT_USER_SPEECH_MS`) with no pause triggers `companion_interrupt` — meter commits the partial utterance (like `end_silence`), UI shows **Jumping in…**, and a brief ack TTS (`Hang on—` / `Hold on—`) plays while STT runs. Blocked when partial STT matches distress cues (patient pacing). Hard cap `MAX_UTTERANCE_MS` is **45s**. Backend sets `rhythm.companion_interrupt` and a turn hint for long transcripts (70+ words). Voice log: `companion_interrupt`.
 
 **Growth:** `profile_growth.py` — structured prefs (`music_style`, `mood`, `topic`), “remember that” / correction / appreciation loops, reflection memories (`user_shared_moment`), usage-based **skill hints** in `/health` companion info and stream `rhythm.skill_hints`; occasional casual-chat nudge via turn hints (~18% of eligible turns).
 
@@ -144,6 +157,8 @@ The conversation watchdog should **not** fire on every turn. If you see `watchdo
 | `LISTEN_PAUSED_STUCK_MS` | 7000 | Idle stuck even with pending timer |
 | `WATCHDOG_RECOVERY_COOLDOWN_MS` | 8000 | Min gap between recoveries |
 | `ASSISTANT_STUCK_MS` | 28000 | Assistant phase with no in-flight work |
+| `INTERRUPT_USER_SPEECH_MS` | 30000 | Companion jumps in on sustained monologue |
+| `MAX_UTTERANCE_MS` | 45000 | Hard force-commit while user still speaking |
 | Speaking recovery | `conversationState.ts` | Watchdog exits `speaking` when blockers clear but phase stuck ≥28s |
 
 Session opener: conversation mode may call `GET /companion/session-open` once; listen opens only after opener TTS (or immediately if no line).

@@ -23,6 +23,8 @@ export type RhythmMeta = {
   stream_tts?: boolean;
   fast_ack?: string;
   interruptible?: boolean;
+  /** Backend hint: companion should jump in on this turn (long monologue). */
+  companion_interrupt?: boolean;
   proactive?: boolean;
   proactive_beats?: string[];
 };

@@ -8,16 +8,29 @@ import {
   LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
   MIN_SPEECH_MS,
+  MIN_SPEECH_BEFORE_INTERRUPT_MS,
+  INTERRUPT_USER_SPEECH_MS,
+  MAX_UTTERANCE_MS,
+  COMPANION_INTERRUPT_ACKS,
+  pickCompanionInterruptAck,
+  shouldCompanionInterruptUser,
   POST_TTS_LISTEN_COOLDOWN_MS,
   PROACTIVE_IDLE_MS,
   PROACTIVE_MAX_PER_SESSION,
   PROACTIVE_MIN_GAP_MS,
   QUIET_VOICE_TIMEOUT_MS,
   SILENCE_END_MS,
+  SILENCE_END_PATIENT_MS,
+  resolveSilenceEndMs,
+  wantsPatientTurnPacing,
   SPEECH_LEVEL_DB,
   shouldSecondChanceQuietListen,
   canResumeConversationListen,
+  shouldDeferBargeInForVoiceCommit,
+  combineUtteranceTranscripts,
   createConversationMeterState,
+  hasIncompleteThoughtEnding,
+  SEMANTIC_TURN_EXTENSION_MS,
   isMeterSpeech,
   isSilenceForEndDetection,
   isSpeechLevel,
@@ -59,7 +72,7 @@ test('fresh listen: only idle or speaking', () => {
 });
 
 test('phase0: listen timing constants stay bounded', () => {
-  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 280);
+  assert.equal(POST_TTS_LISTEN_COOLDOWN_MS, 150);
   assert.equal(LISTEN_RETRY_MS, 180);
   assert.equal(LISTENING_STUCK_MS, 6500);
   assert.equal(LISTEN_OPEN_GRACE_MS, 800);
@@ -203,4 +216,119 @@ test('proactive timing constants bounded', () => {
   assert.ok(PROACTIVE_IDLE_MS >= 8000 && PROACTIVE_IDLE_MS <= 12_000);
   assert.equal(PROACTIVE_MIN_GAP_MS, 20_000);
   assert.equal(PROACTIVE_MAX_PER_SESSION, 3);
+});
+
+test('semantic turn extension constant bounded', () => {
+  assert.ok(SEMANTIC_TURN_EXTENSION_MS >= 400 && SEMANTIC_TURN_EXTENSION_MS <= 1200);
+});
+
+test('patient turn pacing: distress extends silence threshold', () => {
+  assert.equal(wantsPatientTurnPacing("I'm really sad today"), true);
+  assert.equal(wantsPatientTurnPacing('hey what is up'), false);
+  assert.equal(resolveSilenceEndMs("I'm anxious about work"), SILENCE_END_PATIENT_MS);
+  assert.equal(resolveSilenceEndMs('quick question'), SILENCE_END_MS);
+  assert.ok(SILENCE_END_PATIENT_MS > SILENCE_END_MS);
+});
+
+test('incomplete thought: English trailing conjunctions', () => {
+  assert.equal(hasIncompleteThoughtEnding('I want to go and'), true);
+  assert.equal(hasIncompleteThoughtEnding('Wait, but'), true);
+  assert.equal(hasIncompleteThoughtEnding('because'), true);
+  assert.equal(hasIncompleteThoughtEnding('so um'), true);
+  assert.equal(hasIncompleteThoughtEnding('hello there'), false);
+  assert.equal(hasIncompleteThoughtEnding('pizza please'), false);
+});
+
+test('incomplete thought: Chinese trailing markers', () => {
+  assert.equal(hasIncompleteThoughtEnding('我想去因为'), true);
+  assert.equal(hasIncompleteThoughtEnding('好的但是'), true);
+  assert.equal(hasIncompleteThoughtEnding('你好'), false);
+});
+
+test('combine utterance transcripts joins with space', () => {
+  assert.equal(combineUtteranceTranscripts('I want', 'pizza'), 'I want pizza');
+  assert.equal(combineUtteranceTranscripts('', 'hello'), 'hello');
+  assert.equal(combineUtteranceTranscripts('go and', 'then eat'), 'go and then eat');
+});
+
+test('defer barge-in while STT commit in flight', () => {
+  assert.equal(shouldDeferBargeInForVoiceCommit(false, true), true);
+  assert.equal(shouldDeferBargeInForVoiceCommit(true, false), true);
+  assert.equal(shouldDeferBargeInForVoiceCommit(false, false), false);
+});
+
+test('companion interrupt timing constants bounded', () => {
+  assert.ok(INTERRUPT_USER_SPEECH_MS >= 25_000 && INTERRUPT_USER_SPEECH_MS <= 40_000);
+  assert.ok(MIN_SPEECH_BEFORE_INTERRUPT_MS >= MIN_SPEECH_MS);
+  assert.ok(MAX_UTTERANCE_MS > INTERRUPT_USER_SPEECH_MS);
+});
+
+test('shouldCompanionInterruptUser: sustained speech only', () => {
+  assert.equal(shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS - 1), false);
+  assert.equal(shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS), true);
+  assert.equal(shouldCompanionInterruptUser(MIN_SPEECH_BEFORE_INTERRUPT_MS - 1), false);
+});
+
+test('shouldCompanionInterruptUser: patient pacing blocks interrupt', () => {
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, "I'm really sad today"),
+    false,
+  );
+});
+
+test('companion interrupt ack is stable per speech duration', () => {
+  const a = pickCompanionInterruptAck(30_500);
+  const b = pickCompanionInterruptAck(30_500);
+  assert.equal(a, b);
+  assert.ok(COMPANION_INTERRUPT_ACKS.includes(a as (typeof COMPANION_INTERRUPT_ACKS)[number]));
+});
+
+test('meter: companionInterrupt fires on sustained speech', () => {
+  const t0 = 1000;
+  let state = createConversationMeterState(t0);
+  state = {
+    ...state,
+    sawSpeech: true,
+    speechStartedAt: t0,
+    silenceSince: null,
+    peakMetering: -48,
+  };
+  const before = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS - 1, {
+    allowCompanionInterrupt: true,
+  });
+  assert.equal(before.companionInterrupt, false);
+  const fired = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS, {
+    allowCompanionInterrupt: true,
+  });
+  assert.equal(fired.companionInterrupt, true);
+  assert.equal(fired.endSilence, false);
+  assert.ok(fired.speechDurationMs >= INTERRUPT_USER_SPEECH_MS);
+});
+
+test('meter: companionInterrupt blocked during distress partial', () => {
+  const t0 = 1000;
+  const state = {
+    ...createConversationMeterState(t0),
+    sawSpeech: true,
+    speechStartedAt: t0,
+    silenceSince: null,
+    peakMetering: -48,
+  };
+  const fired = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS, {
+    allowCompanionInterrupt: true,
+    liveTranscript: "I'm anxious about everything",
+  });
+  assert.equal(fired.companionInterrupt, false);
+});
+
+test('meter: endSilence unchanged for normal pause', () => {
+  const t0 = 1000;
+  let state = createConversationMeterState(t0);
+  state = tickConversationMeter(state, -48, t0 + 100).state;
+  state = tickConversationMeter(state, -55, t0 + MIN_SPEECH_MS).state;
+  const ready = tickConversationMeter(state, -55, t0 + MIN_SPEECH_MS + SILENCE_END_MS, {
+    allowCompanionInterrupt: true,
+  });
+  assert.equal(ready.endSilence, true);
+  assert.equal(ready.companionInterrupt, false);
 });

@@ -145,7 +145,7 @@ export default function SettingsScreen() {
         </SettingRow>
         <SettingRow
           label="Natural voice"
-          hint="Shorter replies — about two sentences max."
+          hint="Warmer, more conversational tone — still concise, not lecture-length."
           disabled={!settings.voiceEnabled}
         >
           <Switch

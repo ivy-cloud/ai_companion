@@ -140,6 +140,16 @@ export function formatSendBlockBanner(
   }
 }
 
+/** Conversation STT finished — allow send even if barge-in briefly flipped phase to idle/listening. */
+export function isValidPostSttSendPhase(
+  phase: VoicePhase,
+  fromConversation: boolean,
+): boolean {
+  if (phase === 'thinking' || phase === 'streaming') return true;
+  if (!fromConversation) return false;
+  return phase === 'idle' || phase === 'listening';
+}
+
 export function getSendMessageSkipReason(input: {
   text: string;
   isProactive: boolean;
@@ -226,6 +236,31 @@ export function canExitSpeakingPhaseNow(
   blockers: SpeakingPhaseBlockers,
 ): boolean {
   return phase === 'speaking' && !isSpeakingPhaseBlocked(blockers);
+}
+
+/** True while this drainGen still owns the active stream-TTS drain loop. */
+export function isOwningStreamTtsDrain(
+  activeDrainGen: number,
+  ownerDrainGen: number | null,
+): boolean {
+  return ownerDrainGen != null && ownerDrainGen === activeDrainGen;
+}
+
+/**
+ * Clear a stuck streamTtsDraining flag only when no drain loop still owns it
+ * (prefetch in flight with an empty queue must not be cleared).
+ */
+export function shouldClearOrphanedStreamTtsDrain(
+  activeDrainGen: number,
+  draining: boolean,
+  ownerDrainGen: number | null,
+  queueLen: number,
+  speakInFlight: boolean,
+  activeSound: boolean,
+): boolean {
+  if (!draining || queueLen > 0 || speakInFlight || activeSound) return false;
+  if (ownerDrainGen == null) return true;
+  return !isOwningStreamTtsDrain(activeDrainGen, ownerDrainGen);
 }
 
 export function shouldRecoverStuckSpeakingPhase(

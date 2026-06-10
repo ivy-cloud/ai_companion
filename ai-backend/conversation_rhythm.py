@@ -89,6 +89,17 @@ def backchannel_turn_hint(message: str, casual: bool) -> str:
     )
 
 
+def monologue_interrupt_turn_hint(message: str) -> str:
+    """After client jumped in on a long monologue — brief ack then respond to what they said."""
+    words = len(message.split())
+    if words < 70:
+        return ""
+    return (
+        "They were mid-story when you gently jumped in — one brief ack "
+        "(hang on / I hear you), then respond to what they said so far; no lecture."
+    )
+
+
 def rhythm_stream_meta(
     message: str,
     *,
@@ -110,6 +121,8 @@ def rhythm_stream_meta(
     }
     if ack:
         meta["fast_ack"] = ack
+    if len(message.split()) >= 70:
+        meta["companion_interrupt"] = True
     try:
         import profile_growth
 
@@ -131,7 +144,7 @@ def rhythm_stream_meta(
 
 def speech_chunks_for_reply(text: str) -> List[str]:
     """
-    Smaller TTS-sized chunks for progressive playback (1–2 sentences each).
+    Smaller TTS-sized chunks for progressive playback (sentence-sized clips).
     """
     from human_speech import trim_for_voice
 

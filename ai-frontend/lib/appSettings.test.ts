@@ -20,6 +20,7 @@ function test(name: string, fn: () => void) {
 }
 
 test('exports default settings shape', () => {
+  assert.equal(DEFAULT_APP_SETTINGS.voiceInputMode, 'conversation');
   const settings: AppSettings = getAppSettings();
   assert.equal(typeof settings.voiceEnabled, 'boolean');
   assert.equal(typeof settings.naturalVoiceEnabled, 'boolean');

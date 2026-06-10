@@ -124,11 +124,15 @@ def session_opening_line(
     if memory and band in ("evening", "night"):
         tail = f" I'm {companion_name} — still thinking about how {memory}. Here if you want to talk."
     elif memory:
-        tail = f" It's {companion_name} — I remember {memory}. What's on your mind?"
-    elif band in ("evening", "night"):
-        tail = f" It's {companion_name}. I'm here with you if you want to talk."
+        tail = f" It's {companion_name} — I remember {memory}. How's that been?"
+    elif band == "morning":
+        tail = f" It's {companion_name}. How's your morning going?"
+    elif band == "afternoon":
+        tail = f" It's {companion_name}. What've you been up to today?"
+    elif band == "evening":
+        tail = f" It's {companion_name}. How was your day?"
     else:
-        tail = f" It's {companion_name}. I'm around — say what's on your mind."
+        tail = f" It's {companion_name}. I'm here with you if you want to talk."
 
     line = f"{lead}{tail}"
     if len(line) > 220:
@@ -226,8 +230,43 @@ def curiosity_turn_hint(message: str, *, casual: bool) -> str:
         return ""
 
     return (
-        "If it fits, one gentle curious question back (Her-style) — "
-        "warm and brief, not interview or therapy."
+        "If it fits, one gentle curious question back — prefer what/how over why "
+        "(Pi-style); warm and brief, not interview or therapy."
+    )
+
+
+_VENT_THINK_THROUGH = re.compile(
+    r"\b(?:"
+    r"stressed|overwhelmed|anxious|worried|scared|hard day|rough day|"
+    r"don't know (?:what|how|if)|not sure (?:what|how|if)|"
+    r"figure out|thinking through|weighing|decision|interview|"
+    r"argument with|fight with|broke up|passed away|grieving|"
+    r"can't sleep|insomnia|deadline|fired|laid off"
+    r")\b",
+    re.I,
+)
+
+
+def think_through_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Pi-style think-through — substantive vents get one clarifying question,
+    not immediate advice or stacked empathy.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if len(text.split()) < 8:
+        return ""
+    if not _VENT_THINK_THROUGH.search(text):
+        return ""
+    if not _stable_roll(text, "think_through", 0.12):
+        return ""
+
+    return (
+        "Think-through (Pi-style): help them untangle — one gentle what/how question, "
+        "not why; listen first, don't fix or therapize; brief and warm."
     )
 
 

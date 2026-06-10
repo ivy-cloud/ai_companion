@@ -3,9 +3,15 @@
  */
 
 import { voiceLog } from './voiceTurnLog';
+import {
+  computeListenLatencyGapsFromMarks,
+  computeVoiceToVoiceMs,
+  voiceLatencyTierSummary,
+} from './voiceLatencyMath';
 
 export type VoiceTimingMark =
   | 'send_start'
+  | 'user_speech_end'
   | 'stream_start'
   | 'first_token'
   | 'first_tts_enqueue'
@@ -48,25 +54,14 @@ export function markVoiceTiming(
   console.log(`[voice-latency] turn=${timing.turn} ${mark} +${ms}ms`);
 }
 
-export type ListenLatencyGaps = {
-  playSettleToMicOpenMs: number;
-  micOpenToListenReadyMs: number;
-  playSettleToListenReadyMs: number;
-};
+export type { ListenLatencyGaps } from './voiceLatencyMath';
 
 /** Post-TTS mic reopen gaps for voiceLog listen_latency_gaps. */
 export function computeListenLatencyGaps(
   timing: VoiceTurnTiming | null,
-): ListenLatencyGaps | null {
-  if (timing?.marks.play_settle == null || timing.marks.mic_open == null) {
-    return null;
-  }
-  const listenReady = timing.marks.listen_ready ?? Date.now();
-  return {
-    playSettleToMicOpenMs: timing.marks.mic_open - timing.marks.play_settle,
-    micOpenToListenReadyMs: listenReady - timing.marks.mic_open,
-    playSettleToListenReadyMs: listenReady - timing.marks.play_settle,
-  };
+): ReturnType<typeof computeListenLatencyGapsFromMarks> {
+  if (!timing) return null;
+  return computeListenLatencyGapsFromMarks(timing.marks);
 }
 
 export function markVoiceChunkPlay(timing: VoiceTurnTiming | null): void {
@@ -84,9 +79,16 @@ export function logVoiceTurnSummary(timing: VoiceTurnTiming | null): void {
   const m = timing.marks;
   const ms = (mark: VoiceTimingMark) =>
     m[mark] != null ? m[mark]! - timing.t0 : null;
+  const voiceToVoiceMs = computeVoiceToVoiceMs(m);
+  const tiers = voiceLatencyTierSummary(m);
+
   voiceLog('turn_summary', {
     turn: timing.turn,
     send_start_ms: 0,
+    user_speech_end_ms: ms('user_speech_end') ?? '—',
+    voice_to_voice_ms: voiceToVoiceMs ?? '—',
+    voice_to_voice_tier: tiers.voice_to_voice_tier ?? '—',
+    listen_ready_tier: tiers.listen_ready_tier ?? '—',
     first_token_ms: ms('first_token') ?? '—',
     stream_done_ms: ms('stream_done') ?? '—',
     first_tts_fetch_ms: ms('first_tts_fetch_done') ?? '—',
