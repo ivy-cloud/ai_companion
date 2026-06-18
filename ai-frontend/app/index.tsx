@@ -349,6 +349,8 @@ export default function ChatScreen() {
   const conversationListenResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  /** Serializes ensureConversationListening so failures cannot spawn parallel mic-open storms. */
+  const ensureListenChainRef = useRef(Promise.resolve());
   /** Timestamp of the most recent "schedule_listen" attempt (preserved across 400ms retries). */
   const lastListenScheduleAtRef = useRef<number | null>(null);
   /** When the mic actually starts recording (for listen_ready latency). */
@@ -861,7 +863,14 @@ export default function ChatScreen() {
   };
 
   const retryConversationListen = (minDelayMs = LISTEN_RETRY_MS) => {
-    if (!bumpConversationListenRetry()) return;
+    if (!bumpConversationListenRetry()) {
+      setMicOpeningHint(false);
+      setVoiceInputError(
+        'Microphone stayed closed. Tap the voice area to retry, or end conversation and start again.',
+      );
+      voiceLog('listen_open_give_up', {});
+      return;
+    }
     scheduleConversationListen(
       Math.max(minDelayMs, nextConversationListenRetryDelay()),
     );
@@ -1026,6 +1035,8 @@ export default function ChatScreen() {
     extra?: Record<string, string | number | boolean>,
   ) => {
     voiceLog('tts_failed', { reason, ...extra });
+    ttsTurnFinishingRef.current = false;
+    speakInFlightRef.current = false;
     setVoicePlaybackError(
       formatVoicePlaybackError(
         'No audio heard — raise volume, silent switch off, tap above to hear.',
@@ -1865,24 +1876,34 @@ export default function ChatScreen() {
       logVoiceState('listen_without_recording', { phase: 'listening', msInPhase });
       // Keep listening phase — startConversationListening resumes without recorder.
     }
-    void (async () => {
-      await clearStaleTtsListenBlockers();
-      const blocked = isTtsBlockingConversationListen();
-      if (blocked) {
-        voiceLog('listen_blocked', {
-          reason,
-          phase: voicePhaseRef.current,
-          queue: streamTtsQueueRef.current.length,
-          draining: streamTtsDrainingRef.current,
-          activeSound: Boolean(activeSoundRef.current),
-          speakInFlight: speakInFlightRef.current,
-        });
-        retryConversationListen();
-        return;
-      }
-      logVoiceState('ensure_listen', { phase: voicePhaseRef.current, reason });
-      await startConversationListening({ resumeAfterInterrupt: true });
-    })();
+    ensureListenChainRef.current = ensureListenChainRef.current
+      .then(async () => {
+        if (
+          !conversationSessionRef.current ||
+          voiceInputModeRef.current !== 'conversation' ||
+          !voiceEnabledRef.current
+        ) {
+          return;
+        }
+        await stopPlayback();
+        await clearStaleTtsListenBlockers();
+        const blocked = isTtsBlockingConversationListen();
+        if (blocked) {
+          voiceLog('listen_blocked', {
+            reason,
+            phase: voicePhaseRef.current,
+            queue: streamTtsQueueRef.current.length,
+            draining: streamTtsDrainingRef.current,
+            activeSound: Boolean(activeSoundRef.current),
+            speakInFlight: speakInFlightRef.current,
+          });
+          retryConversationListen();
+          return;
+        }
+        logVoiceState('ensure_listen', { phase: voicePhaseRef.current, reason });
+        await startConversationListening({ resumeAfterInterrupt: true });
+      })
+      .catch(() => undefined);
   };
 
   /** Single debounced path back to Listening… after TTS / errors / interrupt. */
@@ -2026,6 +2047,7 @@ export default function ChatScreen() {
       }
 
       try {
+        await stopPlayback();
         await releaseAllActiveRecorders();
         const recording = await startConversationRecording();
         if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
@@ -2117,7 +2139,7 @@ export default function ChatScreen() {
         }
         setVoiceInputError(formatVoiceInputError(raw, onlyOne));
         setVoicePhaseTransition('idle');
-        ensureConversationListening();
+        retryConversationListen(500);
       }
     });
   };
@@ -3268,6 +3290,16 @@ export default function ChatScreen() {
     ) {
       speakInFlightRef.current = false;
       logVoiceState('clear_stale_speak_in_flight', {});
+    }
+    if (
+      ttsTurnFinishingRef.current &&
+      !speakInFlightRef.current &&
+      !activeSoundRef.current &&
+      streamTtsQueueRef.current.length === 0 &&
+      !streamTtsDrainingRef.current
+    ) {
+      ttsTurnFinishingRef.current = false;
+      logVoiceState('clear_stale_tts_turn_finishing', {});
     }
   };
 

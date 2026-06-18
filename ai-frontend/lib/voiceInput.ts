@@ -179,12 +179,14 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
 
 /** Conversation mode: metering enabled for silence / speech detection. */
 export async function startConversationRecording(): Promise<Audio.Recording> {
-  await configureRecordingAudioMode();
-  await discardPrewarm();
-  const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
-  await recording.startAsync();
-  return recording;
+  return withRecordingMutex(async () => {
+    await configureRecordingAudioMode();
+    await discardPrewarm();
+    const recording = new Audio.Recording();
+    await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
+    await recording.startAsync();
+    return recording;
+  });
 }
 
 export async function startPushToTalkRecording(): Promise<Audio.Recording> {
