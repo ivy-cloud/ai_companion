@@ -121,12 +121,45 @@ class CompanionMomentsTests(unittest.TestCase):
         line = companion_moments.session_opening_line(resolve_clock("UTC"), force=True)
         self.assertIsNotNone(line)
         assert line is not None
+        self.assertNotIn("It's ", line)
         self.assertTrue(
             "morning" in line.lower()
             or "up to" in line.lower()
             or "how was" in line.lower()
             or "here" in line.lower()
         )
+
+    def test_session_opening_resume_no_name_intro(self) -> None:
+        import memory as conv_memory
+
+        with patch.object(conv_memory, "exchange_count", return_value=3), patch.object(
+            conv_memory,
+            "last_exchange",
+            return_value=("we were talking about my job interview tomorrow", "good luck"),
+        ):
+            line = companion_moments.session_opening_line(
+                resolve_clock("UTC"), resume=True
+            )
+        if line:
+            self.assertNotIn("It's ", line)
+            self.assertTrue(
+                "pick up" in line.lower()
+                or "keep going" in line.lower()
+                or "something new" in line.lower()
+            )
+
+    def test_session_opening_resume_can_be_silent(self) -> None:
+        import memory as conv_memory
+
+        with patch.object(conv_memory, "exchange_count", return_value=2), patch.object(
+            conv_memory, "last_exchange", return_value=("hello there", "hi")
+        ), patch.object(
+            companion_moments, "_resume_opening_roll", return_value=None
+        ):
+            line = companion_moments.session_opening_line(
+                resolve_clock("UTC"), resume=True
+            )
+        self.assertIsNone(line)
 
     def test_journal_reflection_hint(self) -> None:
         import profile_growth

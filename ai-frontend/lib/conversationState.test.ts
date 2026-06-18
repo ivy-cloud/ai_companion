@@ -15,6 +15,10 @@ import {
   shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
   shouldRecoverThinkingNoStream,
+  shouldRecoverStreamingIncomplete,
+  shouldRecoverSttProcessingStuck,
+  STREAM_INCOMPLETE_MS,
+  STT_PROCESSING_STUCK_MS,
 } from './conversationStateGuards.ts';
 
 function test(name: string, fn: () => void) {
@@ -285,6 +289,49 @@ test('thinking no recovery while stream active under threshold', () => {
     shouldRecoverThinkingNoStream('thinking', THINKING_NO_STREAM_MS - 1, {
       sendStarted: true,
       streamStarted: false,
+    }),
+    false,
+  );
+});
+
+test('stt processing recovery when voice send lock held', () => {
+  assert.equal(
+    shouldRecoverSttProcessingStuck(true, STT_PROCESSING_STUCK_MS, {
+      sendStarted: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecoverSttProcessingStuck(true, STT_PROCESSING_STUCK_MS - 1, {
+      sendStarted: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecoverSttProcessingStuck(true, STT_PROCESSING_STUCK_MS, {
+      sendStarted: true,
+    }),
+    false,
+  );
+});
+
+test('streaming recovery when stream_start without stream_done', () => {
+  assert.equal(
+    shouldRecoverStreamingIncomplete('streaming', STREAM_INCOMPLETE_MS, {
+      stream_start: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecoverStreamingIncomplete('streaming', STREAM_INCOMPLETE_MS - 1, {
+      stream_start: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecoverStreamingIncomplete('streaming', STREAM_INCOMPLETE_MS, {
+      stream_start: 1,
+      stream_done: 2,
     }),
     false,
   );

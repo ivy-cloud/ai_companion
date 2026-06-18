@@ -14,6 +14,7 @@ export type HealthPreflightResult = {
   azureTtsReady: boolean | null;
   hint: string | null;
   devMode: DevModeStatus | null;
+  memoryExchanges: number | null;
 };
 
 export function formatHealthBanner(result: HealthPreflightResult): string | null {
@@ -52,6 +53,7 @@ export async function fetchHealthPreflight(
         azureTtsReady: null,
         hint: `Backend returned ${response.status} — check server at ${apiBase}`,
         devMode: null,
+        memoryExchanges: null,
       };
     }
     const data = (await response.json()) as {
@@ -59,6 +61,7 @@ export async function fetchHealthPreflight(
       hint?: string;
       dev_mode?: DevModeStatus;
       azure_tts?: { ready?: boolean; hint?: string };
+      memory_exchanges?: number;
     };
     const dev = data.dev_mode ?? null;
     const mockUnexpected = Boolean(
@@ -82,6 +85,8 @@ export async function fetchHealthPreflight(
       azureTtsReady: azureReady,
       hint,
       devMode: dev,
+      memoryExchanges:
+        typeof data.memory_exchanges === 'number' ? data.memory_exchanges : null,
     };
   } catch {
     return {
@@ -91,6 +96,7 @@ export async function fetchHealthPreflight(
       azureTtsReady: null,
       hint: `Can't reach backend (${apiBase}) — start server & same Wi‑Fi`,
       devMode: null,
+      memoryExchanges: null,
     };
   }
 }

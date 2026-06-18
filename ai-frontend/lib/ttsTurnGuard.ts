@@ -12,6 +12,13 @@ export function playSettledForGeneration(
   return settledGen === generation;
 }
 
+export type TtsRetryOptions = {
+  /** User already heard at least one clip this turn (do not replay the full reply). */
+  audioStarted?: boolean;
+  /** Normalized text already spoken this turn. */
+  spokenChars?: number;
+};
+
 /** One automatic retry per turn when reply text exists but nothing played. */
 export function shouldAutoRetryTts(
   settledGen: number,
@@ -19,10 +26,13 @@ export function shouldAutoRetryTts(
   turn: number,
   retryUsedTurn: number,
   replyLen: number,
+  options?: TtsRetryOptions,
 ): boolean {
   if (replyLen <= 0) return false;
   if (playSettledForGeneration(settledGen, generation)) return false;
   if (retryUsedTurn === turn) return false;
+  if (options?.audioStarted) return false;
+  if ((options?.spokenChars ?? 0) > 0) return false;
   return true;
 }
 

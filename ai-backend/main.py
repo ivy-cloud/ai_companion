@@ -674,14 +674,26 @@ def stream_chat_events(
 
 
 @app.get("/companion/session-open")
-def companion_session_open(timezone: Optional[str] = None, force: bool = False):
+def companion_session_open(
+    timezone: Optional[str] = None,
+    force: bool = False,
+    resume: bool = False,
+):
     """Optional spoken opener when the app starts a voice conversation session."""
     clock = resolve_clock(timezone)
-    line = companion_moments.session_opening_line(clock, force=force)
+    line = companion_moments.session_opening_line(clock, force=force, resume=resume)
+    has_history = memory.exchange_count() > 0
+    if resume and has_history:
+        mode = "resume" if line else "silent_listen"
+    elif line:
+        mode = "fresh"
+    else:
+        mode = "none"
     return {
         "line": line,
         "time_band": companion_moments.time_of_day_band(clock),
         "offered": line is not None,
+        "mode": mode,
     }
 
 

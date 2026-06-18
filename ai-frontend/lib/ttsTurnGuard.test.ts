@@ -35,6 +35,18 @@ test('shouldAutoRetry false when retry already used on turn', () => {
   if (shouldAutoRetryTts(-1, 2, 5, 5, 40)) throw new Error('expected no retry');
 });
 
+test('shouldAutoRetry false when audio already started', () => {
+  if (shouldAutoRetryTts(-1, 2, 5, -1, 40, { audioStarted: true })) {
+    throw new Error('expected no retry after audio');
+  }
+});
+
+test('shouldAutoRetry false when spoken prefix exists', () => {
+  if (shouldAutoRetryTts(-1, 2, 5, -1, 40, { spokenChars: 12 })) {
+    throw new Error('expected no retry when spoken');
+  }
+});
+
 test('shouldOfferTapToHear after retry exhausted', () => {
   if (!shouldOfferTapToHear(-1, 2, 40, 5, 5)) {
     throw new Error('expected tap hint');

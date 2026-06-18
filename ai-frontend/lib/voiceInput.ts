@@ -56,6 +56,8 @@ export const RECORDING_OPTIONS: Audio.RecordingOptions = {
 
 let prewarmRecording: Audio.Recording | null = null;
 let prewarmPromise: Promise<void> | null = null;
+/** Bumped on discard so in-flight prewarm cannot claim the single Recording slot. */
+let prewarmGeneration = 0;
 let recordingMutex: Promise<void> = Promise.resolve();
 
 /** Serialize prepare/start so Expo never has two Recording objects prepared at once. */
@@ -152,15 +154,20 @@ export function setRecordingPrewarmBlocked(blocked: boolean): void {
 /** Keep a prepared recorder hot so press-to-talk starts faster. */
 export function prewarmRecordingPipeline(): void {
   if (recordingPrewarmBlocked || prewarmPromise) return;
+  const generation = ++prewarmGeneration;
   prewarmPromise = (async () => {
     try {
       // Re-check — aggressive prewarm unblocks briefly; TTS speaking must keep Playback route.
-      if (recordingPrewarmBlocked) return;
+      if (recordingPrewarmBlocked || generation !== prewarmGeneration) return;
       await configureRecordingAudioMode();
-      if (recordingPrewarmBlocked) return;
+      if (recordingPrewarmBlocked || generation !== prewarmGeneration) return;
       if (prewarmRecording) return;
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync(RECORDING_OPTIONS);
+      if (recordingPrewarmBlocked || generation !== prewarmGeneration) {
+        await safeUnloadRecording(recording);
+        return;
+      }
       prewarmRecording = recording;
     } catch {
       prewarmRecording = null;
@@ -171,11 +178,18 @@ export function prewarmRecordingPipeline(): void {
 }
 
 export async function discardPrewarm(): Promise<void> {
+  prewarmGeneration += 1;
   if (prewarmPromise) {
     await prewarmPromise.catch(() => undefined);
   }
   await safeUnloadRecording(prewarmRecording);
   prewarmRecording = null;
+}
+
+/** Free Expo's single prepared Recording slot before opening conversation mic. */
+export async function ensureRecordingSlotFree(): Promise<void> {
+  await discardPrewarm();
+  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 /** Start recording using prewarmed instance when available. */
@@ -187,6 +201,7 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
 /** Conversation mode: metering enabled for silence / speech detection.
  * Caller must hold the recording mutex (see startConversationListening). */
 export async function startConversationRecording(): Promise<Audio.Recording> {
+  await ensureRecordingSlotFree();
   await prepareForConversationListen();
   const recording = new Audio.Recording();
   await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);

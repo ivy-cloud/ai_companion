@@ -11,6 +11,8 @@ export {
   SPEAKING_STUCK_MS,
   INTERRUPTING_STUCK_MS,
   THINKING_NO_STREAM_MS,
+  STREAM_INCOMPLETE_MS,
+  STT_PROCESSING_STUCK_MS,
   TURN_NO_RESPONSE_MS,
   blocksRecordingPrewarm,
   canEnterPhase,
@@ -27,6 +29,8 @@ export {
   shouldClearStaleChatInFlight,
   shouldRecoverStuckSpeakingPhase,
   shouldRecoverThinkingNoStream,
+  shouldRecoverStreamingIncomplete,
+  shouldRecoverSttProcessingStuck,
   type SendMessageSkipReason,
   type VoiceTurnMarks,
 } from './conversationStateGuards';

@@ -33,9 +33,12 @@ export function shouldStreamTtsWhileOpen(
   voiceEnabled: boolean,
   naturalVoice: boolean,
   rhythm?: RhythmMeta | null,
+  options?: { conversationMode?: boolean },
 ): boolean {
   if (!voiceEnabled) return false;
   if (rhythm?.stream_tts === false) return false;
+  // Conversation: one playback pass after the stream ends (incremental + final duplicated lines).
+  if (options?.conversationMode) return false;
   return true;
 }
 

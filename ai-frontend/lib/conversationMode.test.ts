@@ -269,6 +269,23 @@ test('shouldCompanionInterruptUser: sustained speech only', () => {
   assert.equal(shouldCompanionInterruptUser(MIN_SPEECH_BEFORE_INTERRUPT_MS - 1), false);
 });
 
+test('shouldCompanionInterruptUser: backend hint lowers threshold', () => {
+  assert.equal(
+    shouldCompanionInterruptUser(9_999, null, { backendHint: true }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(10_000, null, { backendHint: true }),
+    true,
+  );
+});
+
+test('shouldCompanionInterruptUser: long live transcript lowers threshold', () => {
+  const long = Array.from({ length: 36 }, (_, i) => `word${i}`).join(' ');
+  assert.equal(shouldCompanionInterruptUser(13_999, long), false);
+  assert.equal(shouldCompanionInterruptUser(14_000, long), true);
+});
+
 test('shouldCompanionInterruptUser: patient pacing blocks interrupt', () => {
   assert.equal(
     shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, "I'm really sad today"),

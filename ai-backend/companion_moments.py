@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 import companion
+import memory
 import profile
 from context import ResolvedClock, format_local_now_parts, resolve_clock
 
@@ -97,47 +98,82 @@ def time_of_day_greeting_phrase(band: TimeBand) -> str:
     return "Hey"
 
 
+def _topic_snippet(text: str, max_words: int = 7) -> str:
+    words = [w for w in text.strip().split() if w]
+    if not words:
+        return ""
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]) + "…"
+
+
+def _resume_opening_roll(last_user: str, clock: ResolvedClock) -> Optional[str]:
+    """Continuation, fresh topic, or silent listen when resuming with history."""
+    digest = hashlib.sha256(
+        f"resume:{last_user[:80]}:{_opening_roll_key(clock)}".encode()
+    ).hexdigest()
+    roll = int(digest[:8], 16) / 0xFFFFFFFF
+    name = _user_first_name()
+    hey = f"Hey, {name}." if name else "Hey."
+    snippet = _topic_snippet(last_user)
+    if roll < 0.42:
+        return None
+    if roll < 0.72 and snippet:
+        return f"{hey} Want to pick up where we left off — {snippet}?"
+    return f"{hey} Want to keep going on that, or talk about something new?"
+
+
+def _fresh_opening_line(resolved: ResolvedClock) -> str:
+    band = time_of_day_band(resolved)
+    greet = time_of_day_greeting_phrase(band)
+    name = _user_first_name()
+    lead = f"{greet}, {name}." if name else f"{greet}."
+    memory_snip = _pick_memory_snippet()
+    if memory_snip and band in ("evening", "night"):
+        tail = f" Still thinking about {memory_snip}. How've you been?"
+    elif memory_snip:
+        tail = f" I remember {memory_snip} — how's that going?"
+    elif band == "morning":
+        tail = " How's your morning going?"
+    elif band == "afternoon":
+        tail = " What've you been up to today?"
+    elif band == "evening":
+        tail = " How was your day?"
+    else:
+        tail = " I'm here if you want to talk."
+    line = f"{lead}{tail}"
+    if len(line) > 220:
+        line = f"{lead} I'm here if you want to talk."
+    return line
+
+
 def session_opening_line(
     clock: Optional[ResolvedClock] = None,
     *,
     force: bool = False,
+    resume: bool = False,
 ) -> Optional[str]:
     """
-    Optional one-line opener when a voice session starts (~38% of days per tz).
-    Uses first name + at most one saved note; never clingy or assistant-y.
+    Optional one-line opener when a voice session starts.
+
+    With chat history (resume=True): continue last topic, offer something new,
+    or stay silent — no repetitive name intro.
+    First sessions: ~38% chance of a curious greeting without "It's {name}…".
     """
     resolved = clock or resolve_clock()
+    has_history = memory.exchange_count() > 0
+
+    if resume or (has_history and not force):
+        last_user, _ = memory.last_exchange()
+        if last_user:
+            return _resume_opening_roll(last_user, resolved)
+        if has_history and not force:
+            return None
+
     if not force and not should_offer_session_opening(resolved):
         return None
 
-    band = time_of_day_band(resolved)
-    greet = time_of_day_greeting_phrase(band)
-    name = _user_first_name()
-    companion_name = companion.get_companion_name()
-
-    if name:
-        lead = f"{greet}, {name}."
-    else:
-        lead = f"{greet}."
-
-    memory = _pick_memory_snippet()
-    if memory and band in ("evening", "night"):
-        tail = f" I'm {companion_name} — still thinking about how {memory}. Here if you want to talk."
-    elif memory:
-        tail = f" It's {companion_name} — I remember {memory}. How's that been?"
-    elif band == "morning":
-        tail = f" It's {companion_name}. How's your morning going?"
-    elif band == "afternoon":
-        tail = f" It's {companion_name}. What've you been up to today?"
-    elif band == "evening":
-        tail = f" It's {companion_name}. How was your day?"
-    else:
-        tail = f" It's {companion_name}. I'm here with you if you want to talk."
-
-    line = f"{lead}{tail}"
-    if len(line) > 220:
-        line = f"{lead} It's {companion_name}. I'm here with you."
-    return line
+    return _fresh_opening_line(resolved)
 
 
 def clock_moment_turn_hint(clock: Optional[ResolvedClock] = None) -> str:

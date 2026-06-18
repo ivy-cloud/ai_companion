@@ -87,6 +87,12 @@ export const ASSISTANT_STUCK_MS = 28_000;
 /** Thinking with no stream_start — abort chat and release locks. */
 export const THINKING_NO_STREAM_MS = 30_000;
 
+/** stream_start without stream_done — XHR/onDone hung; recover and reopen mic. */
+export const STREAM_INCOMPLETE_MS = 10_000;
+
+/** STT / voiceSendLock held without send_start — transcription hung. */
+export const STT_PROCESSING_STUCK_MS = 18_000;
+
 /** User speech sent but no assistant tokens — diagnostic + recovery. */
 export const TURN_NO_RESPONSE_MS = 45_000;
 
@@ -205,12 +211,37 @@ export function shouldRecoverThinkingNoStream(
   return !opts.streamStarted;
 }
 
+/** voiceSendLock during STT with no outbound send yet. */
+export function shouldRecoverSttProcessingStuck(
+  voiceSendLock: boolean,
+  stuckMs: number,
+  opts: { sendStarted: boolean },
+  thresholdMs = STT_PROCESSING_STUCK_MS,
+): boolean {
+  if (!voiceSendLock || opts.sendStarted) return false;
+  return stuckMs >= thresholdMs;
+}
+
+/** stream_start arrived but stream_done never fired — stuck after LLM reply. */
+export function shouldRecoverStreamingIncomplete(
+  phase: VoicePhase,
+  stuckMs: number,
+  marks: VoiceTurnMarks | undefined,
+  thresholdMs = STREAM_INCOMPLETE_MS,
+): boolean {
+  if (phase !== 'streaming' && phase !== 'thinking') return false;
+  if (stuckMs < thresholdMs) return false;
+  if (marks?.stream_start == null) return false;
+  if (marks?.stream_done != null) return false;
+  return true;
+}
+
 export function hasAssistantReplyStarted(marks: VoiceTurnMarks | undefined): boolean {
   return marks?.first_token != null || marks?.stream_done != null;
 }
 
 /** Max time to remain in speaking with no playback work (watchdog safety net). */
-export const SPEAKING_STUCK_MS = 3_000;
+export const SPEAKING_STUCK_MS = 12_000;
 
 export type SpeakingPhaseBlockers = {
   speakInFlight: boolean;

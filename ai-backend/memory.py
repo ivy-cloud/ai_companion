@@ -8,7 +8,7 @@ Never learned from assistant messages. No vectors, embeddings, or summarization.
 import json
 from collections import deque
 from pathlib import Path
-from typing import Deque, List, Literal, TypedDict
+from typing import Deque, List, Literal, Optional, TypedDict
 
 Role = Literal["user", "assistant"]
 
@@ -72,6 +72,20 @@ def get_history() -> List[MemoryMessage]:
 
 def exchange_count() -> int:
     return len(_history) // 2
+
+
+def last_exchange() -> tuple[Optional[str], Optional[str]]:
+    """Most recent user message and assistant reply, if any."""
+    user_text: Optional[str] = None
+    asst_text: Optional[str] = None
+    for msg in reversed(_history):
+        if msg["role"] == "assistant" and asst_text is None:
+            asst_text = msg["text"]
+        elif msg["role"] == "user" and user_text is None:
+            user_text = msg["text"]
+        if user_text and asst_text:
+            break
+    return user_text, asst_text
 
 
 def append_exchange(user_message: str, assistant_message: str) -> None:

@@ -228,9 +228,19 @@ export function pickCompanionInterruptAck(speechMs: number): string {
 export function shouldCompanionInterruptUser(
   speechMs: number,
   liveTranscript?: string | null,
+  options?: { backendHint?: boolean },
 ): boolean {
   if (speechMs < MIN_SPEECH_BEFORE_INTERRUPT_MS) return false;
-  if (speechMs < INTERRUPT_USER_SPEECH_MS) return false;
+  let thresholdMs = INTERRUPT_USER_SPEECH_MS;
+  if (options?.backendHint) {
+    thresholdMs = Math.min(thresholdMs, 10_000);
+  } else if (liveTranscript?.trim()) {
+    const words = liveTranscript.trim().split(/\s+/).filter(Boolean).length;
+    if (words >= 35) {
+      thresholdMs = Math.min(thresholdMs, 14_000);
+    }
+  }
+  if (speechMs < thresholdMs) return false;
   if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) return false;
   return true;
 }
@@ -354,6 +364,8 @@ export type MeterTickOptions = {
   liveTranscript?: string | null;
   /** False outside an active conversation session. */
   allowCompanionInterrupt?: boolean;
+  /** Backend rhythm hint — user is on a long monologue. */
+  companionInterruptHint?: boolean;
 };
 
 export function tickConversationMeter(
@@ -384,7 +396,9 @@ export function tickConversationMeter(
     const speechMs = now - speechStartedAt;
     const companionInterrupt =
       options?.allowCompanionInterrupt !== false &&
-      shouldCompanionInterruptUser(speechMs, options?.liveTranscript);
+      shouldCompanionInterruptUser(speechMs, options?.liveTranscript, {
+        backendHint: options?.companionInterruptHint === true,
+      });
     const forceEnd = !companionInterrupt && speechMs >= MAX_UTTERANCE_MS;
     const fired = companionInterrupt || forceEnd;
     return {
