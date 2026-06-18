@@ -153,6 +153,18 @@ export function voiceLog(event: string, detail?: VoiceLogDetail): void {
   const payload = formatPayload(event, detail);
   console.log(formatConsoleLine(event, payload));
 
+  const critical =
+    event === 'listen_open_failed' ||
+    event === 'listen_open_give_up' ||
+    event === 'tts_failed' ||
+    event === 'stt_empty' ||
+    event === 'stt_result';
+
+  if (critical) {
+    postVoiceLogEntry({ event, detail: payload });
+    return;
+  }
+
   if (!shouldEnqueueNetwork(event, detail)) {
     return;
   }

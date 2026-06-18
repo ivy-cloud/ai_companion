@@ -119,6 +119,13 @@ export async function configureRecordingAudioMode() {
   });
 }
 
+/** After TTS playback, iOS needs a beat before PlayAndRecord accepts a new recorder. */
+export async function prepareForConversationListen(): Promise<void> {
+  await discardPrewarm();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  await configureRecordingAudioMode();
+}
+
 /**
  * Mic open for conversation barge-in (PlayAndRecord on iOS).
  * Do not use while TTS is playing — call prepareForTtsPlayback() during playback
@@ -180,8 +187,7 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
 /** Conversation mode: metering enabled for silence / speech detection.
  * Caller must hold the recording mutex (see startConversationListening). */
 export async function startConversationRecording(): Promise<Audio.Recording> {
-  await configureRecordingAudioMode();
-  await discardPrewarm();
+  await prepareForConversationListen();
   const recording = new Audio.Recording();
   await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
   await recording.startAsync();

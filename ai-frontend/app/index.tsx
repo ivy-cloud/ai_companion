@@ -1903,8 +1903,15 @@ export default function ChatScreen() {
           retryConversationListen();
           return;
         }
+        setRecordingPrewarmBlocked(true);
         logVoiceState('ensure_listen', { phase: voicePhaseRef.current, reason });
-        await startConversationListening({ resumeAfterInterrupt: true });
+        try {
+          await startConversationListening({ resumeAfterInterrupt: true });
+        } finally {
+          if (voicePhaseRef.current === 'listening' && recordingRef.current) {
+            setRecordingPrewarmBlocked(false);
+          }
+        }
       })
       .catch(() => undefined);
   };
@@ -2096,6 +2103,7 @@ export default function ChatScreen() {
           raw.includes('Only one Recording') || raw.includes('one Recording object');
         if (onlyOne) {
           try {
+            await stopPlayback();
             await releaseAllActiveRecorders();
             const recording = await startConversationRecording();
             if (
