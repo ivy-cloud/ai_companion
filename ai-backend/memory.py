@@ -6,6 +6,7 @@ Never learned from assistant messages. No vectors, embeddings, or summarization.
 """
 
 import json
+import re
 from collections import deque
 from pathlib import Path
 from typing import Deque, List, Literal, Optional, TypedDict
@@ -86,6 +87,108 @@ def last_exchange() -> tuple[Optional[str], Optional[str]]:
         if user_text and asst_text:
             break
     return user_text, asst_text
+
+
+_DEICTIC = re.compile(
+    r"\b(?:that|this|it|those|these|there|the same|what about|how about|"
+    r"who won|which one|last game|the game|the match|the score|that game)\b",
+    re.I,
+)
+
+_AMBIGUOUS_SHORT = re.compile(
+    r"^(?:"
+    r"(?:what|who)\s+about\b|"
+    r"(?:who|what)\s+won\b|"
+    r"last\s+\w+\s+today\b|"
+    r"the\s+(?:game|match|score|result)\b|"
+    r"and\s+(?:the|that)\b|"
+    r"how\s+(?:did|was)\s+(?:that|it)\b"
+    r")",
+    re.I,
+)
+
+_CURRENT_TIME = re.compile(
+    r"\b(?:today|tonight|yesterday|this morning|this afternoon|this evening|"
+    r"right now|latest|just now)\b",
+    re.I,
+)
+
+
+def is_ambiguous_follow_up(message: str) -> bool:
+    """Short or deictic follow-up that needs recent chat to interpret."""
+    text = message.strip()
+    if not text or not _history:
+        return False
+    words = text.split()
+    lower = text.lower().rstrip("?!.")
+    if len(words) <= 2:
+        return True
+    if len(words) <= 6 and _DEICTIC.search(lower):
+        return True
+    if _AMBIGUOUS_SHORT.match(lower):
+        return True
+    if re.search(r"\blast\s+(?:game|match|one)\b", lower) and _CURRENT_TIME.search(lower):
+        return True
+    return False
+
+
+def recent_user_messages(limit: int = 2) -> List[str]:
+    """Last N user lines from chat history (oldest first)."""
+    users: List[str] = []
+    for msg in reversed(_history):
+        if msg["role"] == "user":
+            users.append(msg["text"])
+            if len(users) >= limit:
+                break
+    return list(reversed(users))
+
+
+def current_topic_summary() -> Optional[str]:
+    """Lightweight topic from the last 1–2 substantive user turns."""
+    users = recent_user_messages(2)
+    if not users:
+        return None
+    for text in reversed(users):
+        words = text.split()
+        if len(words) < 3:
+            continue
+        snippet = " ".join(words[:12])
+        if len(snippet) > 100:
+            snippet = f"{snippet[:99].rstrip()}…"
+        return snippet
+    last = users[-1].strip()
+    return last[:80] if last else None
+
+
+def continuity_follow_up_turn_hint(message: str) -> str:
+    """Turn hint when a short follow-up refers to the ongoing thread."""
+    if not is_ambiguous_follow_up(message):
+        return ""
+    topic = current_topic_summary()
+    if topic:
+        return (
+            f"Continuity: they are continuing the thread about «{topic}» — "
+            "resolve their follow-up in that context before answering generally."
+        )
+    return (
+        "Continuity: short follow-up — use the recent chat messages to infer "
+        "what they mean; do not answer as if this were a brand-new topic."
+    )
+
+
+def should_keep_history_for_turn(
+    message: str,
+    *,
+    math_turn: bool,
+    profile_turn: bool,
+    factual: bool,
+) -> bool:
+    """Whether recent exchanges stay in the LLM message list for this turn."""
+    if math_turn or profile_turn:
+        return False
+    if factual and not is_ambiguous_follow_up(message):
+        return False
+    return bool(_history)
 
 
 def append_exchange(user_message: str, assistant_message: str) -> None:

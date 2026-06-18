@@ -151,8 +151,13 @@ def build_turn_hints(
     if is_time_question(trimmed):
         return f"{REPLY_LENGTH_HINT} Time/date from Right now only — answer directly."
     if factual:
+        import memory as conv_memory
+
+        follow = conv_memory.continuity_follow_up_turn_hint(trimmed)
+        if follow:
+            follow = f" {follow}"
         return (
-            f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT} "
+            f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT}{follow} "
             f"{backchannel_turn_hint(trimmed, casual=False)}"
         )
     rhythm = backchannel_turn_hint(trimmed, casual=True)
@@ -196,9 +201,15 @@ def build_turn_hints(
     if monologue:
         monologue = f" {monologue}"
     short = trimmed.strip().lower().rstrip("?!.")
-    if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2:
+    import memory as conv_memory
+
+    ambiguous = conv_memory.is_ambiguous_follow_up(trimmed)
+    if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2 or ambiguous:
+        continuity = conv_memory.continuity_follow_up_turn_hint(trimmed)
+        if continuity:
+            continuity = f" {continuity}"
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{continuity} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
     return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue} {rhythm}"

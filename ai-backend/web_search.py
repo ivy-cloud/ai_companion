@@ -225,6 +225,7 @@ def build_search_queries(
     user_message: str,
     *,
     location_hint: str = "",
+    conversation_context: Optional[str] = None,
 ) -> List[str]:
     """Build live search queries (keywords only — never stored answers)."""
     original = user_message.strip()
@@ -232,6 +233,12 @@ def build_search_queries(
     year = _current_year()
     queries = [core, original]
     place = location_hint.strip()
+
+    if conversation_context:
+        context = conversation_context.strip()
+        if context:
+            queries.insert(0, f"{core} {context[:140]}")
+            queries.insert(1, f"{context[:100]} {core}")
 
     if is_weather_question(original):
         if place:
@@ -481,7 +488,12 @@ def _rank_hits(query: str, hits: List[SearchHit]) -> List[SearchHit]:
     return sorted(hits, key=lambda h: _score_hit(query, h), reverse=True)
 
 
-def search_web(user_message: str, *, location_hint: str = "") -> List[SearchHit]:
+def search_web(
+    user_message: str,
+    *,
+    location_hint: str = "",
+    conversation_context: Optional[str] = None,
+) -> List[SearchHit]:
     limit = max_results()
     providers: List[Callable[[str, int], List[SearchHit]]] = [
         _search_tavily,
@@ -490,7 +502,11 @@ def search_web(user_message: str, *, location_hint: str = "") -> List[SearchHit]
     ]
 
     combined: List[SearchHit] = []
-    queries = build_search_queries(user_message, location_hint=location_hint)
+    queries = build_search_queries(
+        user_message,
+        location_hint=location_hint,
+        conversation_context=conversation_context,
+    )
 
     for query in queries:
         for provider in providers:
@@ -514,7 +530,12 @@ def search_web(user_message: str, *, location_hint: str = "") -> List[SearchHit]
     return _rank_hits(user_message, combined[:limit])
 
 
-def format_for_prompt(hits: List[SearchHit], query: str) -> str:
+def format_for_prompt(
+    hits: List[SearchHit],
+    query: str,
+    *,
+    contextual_follow_up: bool = False,
+) -> str:
     if not hits:
         extra = ""
         if is_weather_question(query):
@@ -530,10 +551,20 @@ def format_for_prompt(hits: List[SearchHit], query: str) -> str:
             "Never say lookup, search results, or context."
         )
 
+    if contextual_follow_up:
+        history_line = (
+            "Use recent chat above to interpret what they mean by shorthand — "
+            "then answer from these sources."
+        )
+    else:
+        history_line = (
+            "Answer from these sources only. Ignore earlier chat turns about facts — they may be wrong."
+        )
+
     lines = [
         "## Live web lookup (fetched seconds ago)\n",
         f"Question: {query}",
-        "Answer from these sources only. Ignore earlier chat turns about facts — they may be wrong.",
+        history_line,
         "Do not use training memory if it conflicts with these notes.",
     ]
     for i, hit in enumerate(hits, 1):
@@ -541,24 +572,51 @@ def format_for_prompt(hits: List[SearchHit], query: str) -> str:
     return "\n".join(lines)
 
 
-def lookup_for_message(user_message: str, *, clock=None) -> Optional[str]:
+def lookup_for_message(
+    user_message: str,
+    *,
+    clock=None,
+    chat_topic: str = "",
+) -> Optional[str]:
     if not should_search(user_message):
         return None
     hint = _location_hint_from_context(clock)
-    hits = search_web(user_message.strip(), location_hint=hint)
-    return format_for_prompt(hits, user_message.strip())
+    topic = chat_topic.strip()
+    hits = search_web(
+        user_message.strip(),
+        location_hint=hint,
+        conversation_context=topic or None,
+    )
+    return format_for_prompt(
+        hits,
+        user_message.strip(),
+        contextual_follow_up=bool(topic),
+    )
 
 
 def lookup_with_hits(
     user_message: str,
     *,
     clock=None,
+    chat_topic: Optional[str] = None,
 ) -> tuple[Optional[str], List[SearchHit]]:
     if not should_search(user_message):
         return None, []
     hint = _location_hint_from_context(clock)
-    hits = search_web(user_message.strip(), location_hint=hint)
-    return format_for_prompt(hits, user_message.strip()), hits
+    topic = (chat_topic or "").strip()
+    hits = search_web(
+        user_message.strip(),
+        location_hint=hint,
+        conversation_context=topic or None,
+    )
+    return (
+        format_for_prompt(
+            hits,
+            user_message.strip(),
+            contextual_follow_up=bool(topic),
+        ),
+        hits,
+    )
 
 
 def has_usable_hits(hits: List[SearchHit]) -> bool:

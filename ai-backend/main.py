@@ -165,8 +165,15 @@ def build_chat_context(
     if len(trimmed) > memory.MAX_MESSAGE_CHARS:
         trimmed = trimmed[: memory.MAX_MESSAGE_CHARS] + "…"
 
+    ambiguous_follow_up = memory.is_ambiguous_follow_up(trimmed)
+    chat_topic = memory.current_topic_summary() if ambiguous_follow_up else None
+
     if web_block is None or hits is None:
-        web_block, hits = web_search.lookup_with_hits(trimmed, clock=clock)
+        web_block, hits = web_search.lookup_with_hits(
+            trimmed,
+            clock=clock,
+            chat_topic=chat_topic,
+        )
     math_turn = is_simple_math_question(trimmed)
     factual = math_turn or (
         web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
@@ -178,17 +185,26 @@ def build_chat_context(
     )
 
     # Factual / profile turns: no chat history (avoids wrong or invented context).
-    if factual or profile_turn:
-        history = []
-    else:
+    # Ambiguous follow-ups keep history so "last game today" resolves after World Cup chat.
+    if memory.should_keep_history_for_turn(
+        trimmed, math_turn=math_turn, profile_turn=profile_turn, factual=factual
+    ):
         history = memory.to_ollama_messages(trimmed)
+    else:
+        history = []
 
     user_content = trimmed
     if math_turn:
         user_content = f"{trimmed}\n\n{DIRECT_MATH_INSTRUCTIONS}"
     elif factual and web_block:
+        topic_prefix = ""
+        if ambiguous_follow_up and chat_topic:
+            topic_prefix = (
+                f"Recent conversation topic (resolve their follow-up in this context): "
+                f"{chat_topic}\n\n"
+            )
         user_content = (
-            f"{web_block}\n\n"
+            f"{topic_prefix}{web_block}\n\n"
             f"They asked: {trimmed}\n\n"
             "Answer using only the live web lookup above.\n\n"
             f"{COMPANION_REPLY_INSTRUCTIONS}"
@@ -222,18 +238,27 @@ def build_grounded_chat_context(
     web_block: Optional[str],
     *,
     clock=None,
+    keep_history: bool = False,
+    chat_topic: Optional[str] = None,
 ) -> ChatContext:
     """Companion voice pass after sources-only grounding."""
     system = build_system_prompt(trimmed, web_block, clock=clock)
+    topic_prefix = ""
+    if chat_topic:
+        topic_prefix = (
+            f"Recent conversation topic (resolve their follow-up in this context): "
+            f"{chat_topic}\n\n"
+        )
     user_content = (
-        f"They asked: {trimmed}\n\n"
+        f"{topic_prefix}They asked: {trimmed}\n\n"
         f"Accurate answer (keep these facts correct):\n{grounded_fact}\n\n"
         f"{COMPANION_REPLY_INSTRUCTIONS}\n\n"
         f"({build_turn_hints(trimmed, factual=True)})"
     )
+    history = memory.to_ollama_messages(trimmed) if keep_history else []
     return ChatContext(
         system={"role": "system", "content": system},
-        history=[],
+        history=history,
         latest_user={"role": "user", "content": user_content},
         trimmed_latest=trimmed,
         factual_reply=True,
@@ -586,15 +611,36 @@ def stream_chat_events(
             yield from _canned(president_reply, "canned:president")
             return
 
-        web_block, hits = web_search.lookup_with_hits(trimmed, clock=clock)
+        ambiguous_follow_up = memory.is_ambiguous_follow_up(trimmed)
+        chat_topic = memory.current_topic_summary() if ambiguous_follow_up else None
+        web_block, hits = web_search.lookup_with_hits(
+            trimmed,
+            clock=clock,
+            chat_topic=chat_topic,
+        )
         use_grounding = web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
         grounded: Optional[str] = None
+        math_turn = is_simple_math_question(trimmed)
+        profile_turn = profile.is_user_profile_turn(trimmed)
+        keep_history = memory.should_keep_history_for_turn(
+            trimmed,
+            math_turn=math_turn,
+            profile_turn=profile_turn,
+            factual=use_grounding or (
+                web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
+            ),
+        )
 
         if use_grounding:
             grounded = grounding.answer_from_sources(trimmed, hits)
             if grounded:
                 context = build_grounded_chat_context(
-                    trimmed, grounded, web_block, clock=clock
+                    trimmed,
+                    grounded,
+                    web_block,
+                    clock=clock,
+                    keep_history=keep_history,
+                    chat_topic=chat_topic,
                 )
             else:
                 context = build_chat_context(trimmed, web_block, hits, clock=clock)
