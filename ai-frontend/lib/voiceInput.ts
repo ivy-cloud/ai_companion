@@ -177,16 +177,15 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
   isMeteringEnabled: true,
 };
 
-/** Conversation mode: metering enabled for silence / speech detection. */
+/** Conversation mode: metering enabled for silence / speech detection.
+ * Caller must hold the recording mutex (see startConversationListening). */
 export async function startConversationRecording(): Promise<Audio.Recording> {
-  return withRecordingMutex(async () => {
-    await configureRecordingAudioMode();
-    await discardPrewarm();
-    const recording = new Audio.Recording();
-    await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
-    await recording.startAsync();
-    return recording;
-  });
+  await configureRecordingAudioMode();
+  await discardPrewarm();
+  const recording = new Audio.Recording();
+  await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
+  await recording.startAsync();
+  return recording;
 }
 
 export async function startPushToTalkRecording(): Promise<Audio.Recording> {

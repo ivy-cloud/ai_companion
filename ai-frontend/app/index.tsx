@@ -1811,7 +1811,10 @@ export default function ChatScreen() {
     ensureUiUnlocked();
     await clearStaleTtsListenBlockers();
     logVoiceState('watchdog_idle_reopen_listen', { stuckMs, reason });
-    ensureConversationListening(reason);
+    ensureListenChainRef.current = Promise.resolve();
+    resetConversationListenRetries();
+    setMicOpeningHint(true);
+    scheduleConversationListen(0);
   };
 
   /** Unstick conversation mode after a missed interrupt / stale STT / failed listen transition. */
@@ -2138,6 +2141,10 @@ export default function ChatScreen() {
           }
         }
         setVoiceInputError(formatVoiceInputError(raw, onlyOne));
+        voiceLog('listen_open_failed', {
+          error: raw.slice(0, 160),
+          onlyOne,
+        });
         setVoicePhaseTransition('idle');
         retryConversationListen(500);
       }
