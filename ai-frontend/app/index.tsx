@@ -332,17 +332,6 @@ export default function ChatScreen() {
     setListenChunkSending(false);
     setCompanionJumpingIn(false);
   };
-  /** True during post-TTS cooldown / scheduled mic reopen (live session UX). */
-  const [micOpeningHint, setMicOpeningHint] = useState(false);
-  const markConversationMicReopening = () => {
-    if (
-      conversationSessionRef.current &&
-      voiceInputModeRef.current === 'conversation' &&
-      voiceEnabledRef.current
-    ) {
-      setMicOpeningHint(true);
-    }
-  };
   /** Rolling partial STT caption while user speaks (conversation listen). */
   const [liveTranscript, setLiveTranscript] = useState('');
   const [ttsMuted, setTtsMuted] = useState(false);
@@ -907,7 +896,6 @@ export default function ChatScreen() {
   const retryConversationListen = (minDelayMs = LISTEN_RETRY_MS) => {
     if (!bumpConversationListenRetry()) {
       conversationMicOpenInFlightRef.current = false;
-      setMicOpeningHint(false);
       setRecordingPrewarmBlocked(false);
       syncRecordingPrewarmBlock(voicePhaseRef.current);
       setVoiceInputError(
@@ -1280,7 +1268,6 @@ export default function ChatScreen() {
     proactiveBeatsRef.current = [];
     clearConversationListenResumeTimer();
     resetConversationListenRetries();
-    setMicOpeningHint(false);
     conversationListenGenRef.current += 1;
     conversationSessionRef.current = false;
     sessionOpenerPlayedRef.current = false;
@@ -1575,7 +1562,6 @@ export default function ChatScreen() {
                 force: true,
                 reason: 'listen_meter_blocked',
               });
-              markConversationMicReopening();
               ensureConversationListening('listen_meter_blocked');
             }
           }
@@ -1787,7 +1773,6 @@ export default function ChatScreen() {
       );
     }
 
-    setMicOpeningHint(true);
     setVoicePhaseTransition('idle', { force: true, reason: 'stt_pending' });
 
     try {
@@ -1849,7 +1834,6 @@ export default function ChatScreen() {
     logVoiceState('watchdog_idle_reopen_listen', { stuckMs, reason });
     ensureListenChainRef.current = Promise.resolve();
     resetConversationListenRetries();
-    setMicOpeningHint(true);
     scheduleConversationListen(0);
   };
 
@@ -1861,9 +1845,6 @@ export default function ChatScreen() {
       !voiceEnabledRef.current
     ) {
       return;
-    }
-    if (voicePhaseRef.current === 'idle') {
-      markConversationMicReopening();
     }
     if (voiceSendLockRef.current) {
       return;
@@ -2001,7 +1982,6 @@ export default function ChatScreen() {
     }
     setRecordingPrewarmBlocked(true);
     void discardPrewarm();
-    setMicOpeningHint(true);
     conversationListenResumeTimerRef.current = setTimeout(() => {
       conversationListenResumeTimerRef.current = null;
       void (async () => {
@@ -2176,7 +2156,6 @@ export default function ChatScreen() {
           return;
         }
 
-        setMicOpeningHint(false);
         conversationMicOpenInFlightRef.current = false;
         partialUtteranceBufferRef.current = '';
         conversationSemanticExtensionUsedRef.current = false;
@@ -2221,7 +2200,6 @@ export default function ChatScreen() {
                 retryConversationListen(300);
                 return;
               }
-              setMicOpeningHint(false);
               conversationMicOpenInFlightRef.current = false;
               partialUtteranceBufferRef.current = '';
               conversationSemanticExtensionUsedRef.current = false;
@@ -2248,7 +2226,6 @@ export default function ChatScreen() {
           error: raw.slice(0, 160),
           onlyOne,
         });
-        markConversationMicReopening();
         setVoicePhaseTransition('idle');
         retryConversationListen(onlyOne ? 400 : 500);
       }
@@ -2869,7 +2846,6 @@ export default function ChatScreen() {
       voiceInputModeRef.current === 'conversation';
     if (keepConversation) {
       setVoicePhaseTransition('idle', { force: true, reason });
-      markConversationMicReopening();
       scheduleConversationListen(200);
     } else {
       releaseVoiceUi(reason);
@@ -3590,7 +3566,6 @@ export default function ChatScreen() {
       voiceInputModeRef.current === 'conversation' &&
       voiceEnabledRef.current
     ) {
-      markConversationMicReopening();
       scheduleConversationListen(
         reason.includes('watchdog') ? 80 : POST_TTS_LISTEN_COOLDOWN_MS,
       );
@@ -4399,7 +4374,6 @@ export default function ChatScreen() {
                 reason: 'watchdog_listen_no_rec',
               });
             }
-            markConversationMicReopening();
             ensureConversationListening('watchdog_listening_stuck');
           }
         });
