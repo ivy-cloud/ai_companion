@@ -493,8 +493,9 @@ export function tickConversationBargeIn(
 export function shouldDeferBargeInForVoiceCommit(
   voiceSendLock: boolean,
   listenChunkCommitInFlight: boolean,
+  ttsBlocking = false,
 ): boolean {
-  return voiceSendLock || listenChunkCommitInFlight;
+  return voiceSendLock || listenChunkCommitInFlight || ttsBlocking;
 }
 
 export function canResumeConversationListen(

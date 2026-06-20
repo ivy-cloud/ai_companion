@@ -769,8 +769,13 @@ def health(voice_gender: Optional[str] = None):
             ollama_status = "unreachable"
             model_ready = False
             hint = hint or f"Start Ollama: ollama serve ({exc})"
+    azure_tts_status = tts.tts_status(voice_gender)
+    status_ok = model_ready and azure_tts_status.get("ready", False) is not False
+    combined_hint = hint
+    if not azure_tts_status.get("ready", False) and azure_tts_status.get("hint"):
+        combined_hint = azure_tts_status["hint"]
     return {
-        "status": "ok" if model_ready else "degraded",
+        "status": "ok" if status_ok else "degraded",
         "llm_provider": provider,
         "model": llm_provider.active_model(),
         "model_ready": model_ready,
@@ -783,8 +788,8 @@ def health(voice_gender: Optional[str] = None):
         "companion": companion.get_companion_info(),
         "local_time": format_local_now(),
         "streaming": "ndjson",
-        "hint": hint,
-        "azure_tts": tts.tts_status(voice_gender),
+        "hint": combined_hint,
+        "azure_tts": azure_tts_status,
         "azure_stt": stt.stt_status(),
         "realtime_voice": realtime_voice.realtime_status(),
         "web_search": web_search.status(),

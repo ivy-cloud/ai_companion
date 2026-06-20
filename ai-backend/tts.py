@@ -3,9 +3,10 @@
 import html
 import os
 import re
+import time
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import httpx
 from fastapi import HTTPException
@@ -226,6 +227,50 @@ def tts_configured() -> bool:
     return bool(_speech_key() and _speech_region())
 
 
+_TTS_PROBE_TTL_SEC = 120.0
+_tts_probe_cache: Optional[Tuple[float, bool, Optional[str]]] = None
+
+
+def probe_tts_live() -> Tuple[bool, Optional[str]]:
+    """
+    Key present ≠ Azure accepts synthesis. Cache briefly to avoid hammering Azure on /health.
+    Returns (ok, user_hint).
+    """
+    global _tts_probe_cache
+    if not tts_configured():
+        return False, (
+            "Azure Speech key missing. Set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION in ai-backend/.env."
+        )
+
+    now = time.monotonic()
+    if _tts_probe_cache is not None:
+        cached_at, ok, hint = _tts_probe_cache
+        if now - cached_at < _TTS_PROBE_TTL_SEC:
+            return ok, hint
+
+    try:
+        audio = synthesize_speech("Hi.", style="default")
+        ok = bool(audio) and len(audio) >= 100
+        hint = None if ok else "Azure TTS returned empty audio."
+        _tts_probe_cache = (now, ok, hint)
+        return ok, hint
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        hint = detail
+        if exc.status_code == 401:
+            hint = (
+                "Azure Speech rejected your TTS key (401). In Azure Portal open your "
+                "Speech resource → Keys and endpoint → copy Key 1. Set AZURE_SPEECH_KEY "
+                "and AZURE_SPEECH_REGION to that resource's Location (e.g. westus2)."
+            )
+        _tts_probe_cache = (now, False, hint)
+        return False, hint
+    except Exception as exc:
+        hint = f"Azure TTS probe failed: {exc}"
+        _tts_probe_cache = (now, False, hint)
+        return False, hint
+
+
 def tts_status(gender_override: Optional[str] = None) -> dict:
     import dev_mode
 
@@ -233,11 +278,18 @@ def tts_status(gender_override: Optional[str] = None) -> dict:
         return dev_mode.mock_tts_health()
     key_ok = bool(_speech_key())
     region = _speech_region()
-    ready = key_ok and bool(region)
+    configured = key_ok and bool(region)
+    live_ok: Optional[bool] = None
+    live_hint: Optional[str] = None
+    if configured:
+        live_ok, live_hint = probe_tts_live()
+    ready = configured and live_ok is not False
     delivery = _delivery(gender_override)
 
     status: dict = {
         "ready": ready,
+        "configured": configured,
+        "live_ok": live_ok,
         "voice": delivery.voice,
         "voice_label": delivery.label,
         "voice_gender": delivery.gender,
@@ -260,10 +312,12 @@ def tts_status(gender_override: Optional[str] = None) -> dict:
         )
         if ready and voice_supports_express(delivery.voice)
         else None,
-        "voice_options": voice_options_for_client() if ready else [],
+        "voice_options": voice_options_for_client() if configured else [],
     }
 
-    if not ready:
+    if live_ok is False and live_hint:
+        status["hint"] = live_hint
+    elif not ready:
         if not _ENV_FILE.is_file():
             status["hint"] = (
                 f"No .env at {_ENV_FILE} — copy ai-backend/.env.example to .env "

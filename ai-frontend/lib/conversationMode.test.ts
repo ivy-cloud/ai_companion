@@ -255,6 +255,7 @@ test('defer barge-in while STT commit in flight', () => {
   assert.equal(shouldDeferBargeInForVoiceCommit(false, true), true);
   assert.equal(shouldDeferBargeInForVoiceCommit(true, false), true);
   assert.equal(shouldDeferBargeInForVoiceCommit(false, false), false);
+  assert.equal(shouldDeferBargeInForVoiceCommit(false, false, true), true);
 });
 
 test('companion interrupt timing constants bounded', () => {

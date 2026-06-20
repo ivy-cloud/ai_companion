@@ -494,20 +494,18 @@ export default function ChatScreen() {
     ) {
       return;
     }
+    const ttsBlocking = isTtsBlockingConversationListen();
     if (
       shouldDeferBargeInForVoiceCommit(
         voiceSendLockRef.current,
         listenChunkCommitInFlightRef.current,
+        ttsBlocking,
       )
     ) {
       return;
     }
     const phase = voicePhaseRef.current;
     if (phase !== 'thinking' && phase !== 'streaming' && phase !== 'speaking') {
-      return;
-    }
-    // Still allow voice barge-in while TTS plays so the user can interrupt.
-    if (isTtsBlockingConversationListen() && phase !== 'speaking') {
       return;
     }
     void startConversationBargeIn({ forTts: phase === 'speaking' });
@@ -533,6 +531,7 @@ export default function ChatScreen() {
       shouldDeferBargeInForVoiceCommit(
         voiceSendLockRef.current,
         listenChunkCommitInFlightRef.current,
+        isTtsBlockingConversationListen(),
       )
     ) {
       return;
@@ -1916,6 +1915,7 @@ export default function ChatScreen() {
         conversationMicOpenInFlightRef.current = true;
         setRecordingPrewarmBlocked(true);
         stopConversationBargeIn();
+        await releaseAllActiveRecorders();
         await discardPrewarm();
         await stopPlayback();
         await clearStaleTtsListenBlockers();
@@ -2100,6 +2100,7 @@ export default function ChatScreen() {
       const listenGen = ++conversationListenGenRef.current;
       stopConversationBargeIn();
       stopConversationMetering();
+      await releaseAllActiveRecorders();
 
       if (voicePhaseRef.current === 'speaking' && !options?.resumeAfterInterrupt) {
         interruptAssistant({ keepConversationSession: true });
@@ -2574,8 +2575,9 @@ export default function ChatScreen() {
     const parts = buildSpeakParts(reply.trim(), false, serverSpeechChunksRef.current);
     if (parts.length === 0) return;
     setVoicePlaybackError(null);
-    setVoicePhaseTransition('speaking', { reason: 'tts_auto_retry' });
+    stopConversationBargeIn();
     await prepareForTtsPlayback();
+    setVoicePhaseTransition('speaking', { reason: 'tts_auto_retry' });
     await speakParts(parts);
   };
 
@@ -3984,13 +3986,13 @@ export default function ChatScreen() {
       if (!isActiveVoiceTurn(turn)) return;
 
       setVoicePlaybackError(null);
-      setVoicePhaseTransition('speaking');
       setTtsMuted(false);
       ttsMutedRef.current = false;
       stopConversationBargeIn();
-
       await clearStaleTtsListenBlockers();
       await prepareForTtsPlayback();
+      if (!isActiveVoiceTurn(turn)) return;
+      setVoicePhaseTransition('speaking');
       if (!isActiveVoiceTurn(turn)) return;
       let ok = await speakParts(parts);
       if (ok && isActiveSpeakGeneration(generation)) {

@@ -60,7 +60,7 @@ export async function fetchHealthPreflight(
       status?: string;
       hint?: string;
       dev_mode?: DevModeStatus;
-      azure_tts?: { ready?: boolean; hint?: string };
+      azure_tts?: { ready?: boolean; hint?: string; live_ok?: boolean };
       memory_exchanges?: number;
     };
     const dev = data.dev_mode ?? null;
@@ -75,6 +75,9 @@ export async function fetchHealthPreflight(
     if (typeof data.hint === 'string' && data.hint.trim()) {
       hint = data.hint.length > 120 ? `${data.hint.slice(0, 117)}…` : data.hint;
     } else if (azureReady === false && data.azure_tts?.hint) {
+      const h = data.azure_tts.hint;
+      hint = h.length > 120 ? `${h.slice(0, 117)}…` : h;
+    } else if (data.azure_tts?.live_ok === false && data.azure_tts?.hint) {
       const h = data.azure_tts.hint;
       hint = h.length > 120 ? `${h.slice(0, 117)}…` : h;
     }

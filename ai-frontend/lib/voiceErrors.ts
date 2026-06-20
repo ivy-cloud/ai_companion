@@ -25,6 +25,14 @@ export function formatVoicePlaybackError(raw: string): string {
     return 'No sound — raise volume and turn off silent mode, then tap above.';
   }
   if (
+    lower.includes('401') ||
+    lower.includes('unauthorized') ||
+    lower.includes('subscription-key') ||
+    lower.includes('ocp-apim')
+  ) {
+    return 'Voice auth failed — fix AZURE_SPEECH_KEY in ai-backend/.env (Azure Portal → Speech → Keys).';
+  }
+  if (
     lower.includes('timeout') ||
     lower.includes('empty') ||
     lower.includes('invalid audio') ||
