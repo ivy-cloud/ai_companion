@@ -293,6 +293,44 @@ def is_time_question(message: str) -> bool:
     return False
 
 
+_CASUAL_DAY_COMMENT = re.compile(
+    r"\b(?:"
+    r"(?:today|tonight)\s+is\s+(?:a\s+)?(?:"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r")|"
+    r"it(?:'s| is)\s+(?:a\s+)?(?:"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r")(?:\s+(?:today|tonight))?"
+    r")\b",
+    re.I,
+)
+
+_SOCIAL_CHECKIN = re.compile(
+    r"\b(?:"
+    r"how (?:are you|you doing|is it going|have you been|was your)|"
+    r"how's (?:it going|your day|everything)|"
+    r"you (?:ok|okay|alright)\??"
+    r")\b",
+    re.I,
+)
+
+
+def is_casual_day_comment(message: str) -> bool:
+    """User stating the day casually — not asking what day it is."""
+    text = message.strip()
+    if not text or is_time_question(text):
+        return False
+    return bool(_CASUAL_DAY_COMMENT.search(text))
+
+
+def is_social_checkin(message: str) -> bool:
+    """Small talk — how are you, not a factual lookup."""
+    text = message.strip()
+    if not text or is_time_question(text):
+        return False
+    return bool(_SOCIAL_CHECKIN.search(text))
+
+
 def _time_intent(lower: str) -> str:
     """year | time | day | date | time_and_day | year_and_time"""
     wants_year = bool(re.search(r"\byear\b", lower))

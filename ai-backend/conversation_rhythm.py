@@ -117,6 +117,28 @@ def monologue_interrupt_turn_hint(message: str, *, jumped_in: bool = False) -> s
     )
 
 
+def friend_social_turn_hint(message: str, *, casual: bool) -> str:
+    """Anti-assistant nudge for social small talk and casual day comments."""
+    if not casual:
+        return ""
+    from context import is_casual_day_comment, is_social_checkin
+
+    text = message.strip()
+    if not text:
+        return ""
+    parts: list[str] = []
+    if is_casual_day_comment(text):
+        parts.append(
+            "Casual day comment — friend vibe, not calendar police. "
+            "Do NOT open with 'No, actually' unless they asked what day it is."
+        )
+    if is_social_checkin(text):
+        parts.append(
+            "Social check-in — warm and brief; never 'Thanks for asking' or helper-bot polish."
+        )
+    return " ".join(parts)
+
+
 def rhythm_stream_meta(
     message: str,
     *,

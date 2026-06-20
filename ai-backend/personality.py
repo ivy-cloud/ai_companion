@@ -2,7 +2,11 @@
 
 from typing import Optional
 
-from conversation_rhythm import backchannel_turn_hint, monologue_interrupt_turn_hint
+from conversation_rhythm import (
+    backchannel_turn_hint,
+    friend_social_turn_hint,
+    monologue_interrupt_turn_hint,
+)
 from emotion import (
     EmotionHint,
     conversation_tone_llm_hint,
@@ -54,6 +58,7 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 - **Casual chat:** sound human — contractions (I'm, you're, don't), everyday words, a little personality; never stiff or scripted.
 - **Rhythm:** phone-call pacing — short turns; rare backchannels on casual chat only (hmm, yeah, oh wow) — never on facts, never stacked, never cheerleader.
 - **Warmth:** warm and subtle — present like a close friend ("I'm here with you"), not a helper bot; not overly affectionate, not a therapist, don't over-validate or repeat the same empathy line.
+- **Social chat:** on "how are you" or casual day comments, stay friend-warm — never "Thanks for asking," never pedantic "No, actually" date corrections unless they asked the date.
 - **Short follow-ups** ("why", "really", "how so"): use the last exchange — answer in context, one relaxed sentence.
 - **Name:** don't repeat your name every turn — they already know who you are.
 - **Time:** use **Right now** — never claim you lack their timezone.
@@ -100,6 +105,7 @@ DIRECT_FACTUAL_HINT = (
 CASUAL_VOICE_HINT = (
     "Warm, relaxed friend on the phone — contractions, plain words, not stiff or corporate. "
     "One breath per sentence; not a lecture; subtle emotion and tiny reactions OK — never customer support. "
+    "No 'Thanks for asking', 'That makes sense', 'No actually', or dictionary-style explanations. "
     "Weave saved friend notes in only when they fit — never recite the whole list."
 )
 
@@ -148,7 +154,8 @@ def build_turn_hints(
     if memory_recall:
         return (
             f"{REPLY_LENGTH_HINT} Use Saved friend notes only. "
-            "If missing, say they haven't told you yet."
+            "If missing, one relaxed friend sentence — e.g. you haven't told me yet. "
+            "Never 'Not that I remember', 'I'm still waiting to hear', or assistant phrasing."
         )
     from context import is_time_question
 
@@ -165,6 +172,9 @@ def build_turn_hints(
             f"{backchannel_turn_hint(trimmed, casual=False)}"
         )
     rhythm = backchannel_turn_hint(trimmed, casual=True)
+    social = friend_social_turn_hint(trimmed, casual=True)
+    if social:
+        social = f" {social}"
     growth = ""
     moment = ""
     continuity = ""
@@ -221,7 +231,7 @@ def build_turn_hints(
         if continuity:
             continuity = f" {continuity}"
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{continuity} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{continuity} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social} {rhythm}"

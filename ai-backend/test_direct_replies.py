@@ -9,7 +9,9 @@ from context import (
     companion_math_reply,
     companion_time_reply,
     format_today_anchor,
+    is_casual_day_comment,
     is_simple_math_question,
+    is_social_checkin,
     is_this_year_age_question,
     is_time_question,
     needs_clock_context,
@@ -282,6 +284,24 @@ class DirectReplyTests(unittest.TestCase):
         polished = polish_for_speech(raw).lower()
         self.assertNotIn("lookup", polished)
         self.assertNotIn("can't find your age", polished)
+
+    def test_casual_day_comment_not_time_question(self):
+        self.assertFalse(is_time_question("Alright, today is Friday."))
+        self.assertTrue(is_casual_day_comment("Alright, today is Friday."))
+        self.assertFalse(is_casual_day_comment("What day is it?"))
+
+    def test_social_checkin_detected(self):
+        self.assertTrue(is_social_checkin("Sure. How are you doing today?"))
+
+    def test_polish_strips_assistant_openers(self):
+        raw = "Thanks for asking. That makes sense — I'm doing alright."
+        polished = polish_for_speech(raw).lower()
+        self.assertNotIn("thanks for asking", polished)
+        self.assertNotIn("that makes sense", polished)
+
+    def test_casual_day_turn_hint(self):
+        hints = build_turn_hints("Alright, today is Friday.")
+        self.assertIn("calendar police", hints.lower())
 
 
 if __name__ == "__main__":

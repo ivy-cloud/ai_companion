@@ -224,9 +224,9 @@ _REMEMBER_TOPIC = re.compile(
 )
 
 _UNKNOWN_REPLIES = (
-    "I don't think you've told me that yet.",
-    "Hmm, I don't think you've mentioned that.",
-    "Not that I remember — you haven't told me.",
+    "Hmm, I don't think you've told me that.",
+    "I don't have that — did you mention it?",
+    "Not ringing a bell — I don't think you've said.",
 )
 
 _ASSISTANT_ECHO = re.compile(
@@ -993,6 +993,8 @@ def try_memory_recall_reply(
             if key == "age":
                 return f"Right — {line}."
             return f"Right — {line}."
+        if key == "age":
+            return "Hmm, I don't think you've told me your age yet."
         return _unknown_reply(text)
 
     topic_match = _REMEMBER_TOPIC.search(text)

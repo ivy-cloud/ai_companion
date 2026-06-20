@@ -140,6 +140,14 @@ class ProfileMemoryTests(unittest.TestCase):
         reply = profile.try_memory_recall_reply("Do you remember my age?")
         self.assertIn("48", reply or "")
 
+    def test_recall_age_unknown_friend_tone(self) -> None:
+        reply = profile.try_memory_recall_reply("Do you remember my age?")
+        self.assertIsNotNone(reply)
+        assert reply is not None
+        self.assertIn("age", reply.lower())
+        self.assertNotIn("not that i remember", reply.lower())
+        self.assertNotIn("still waiting", reply.lower())
+
     def test_age_conflict_47_then_48(self) -> None:
         profile.learn_from_user_message("I'm 47.")
         result = profile.learn_from_user_message("I'm 48.")

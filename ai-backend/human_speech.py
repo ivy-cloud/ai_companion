@@ -81,6 +81,15 @@ BANNED_PHRASES = (
     "here-and-now with you",
     "person on this call",
     "on this call",
+    "thanks for asking",
+    "thank you for asking",
+    "that makes sense",
+    "i'm still waiting to hear",
+    "still waiting to hear",
+    "people often use",
+    "it can also mean",
+    "not that i remember",
+    "in casual conversations when",
 )
 
 MAX_REPLY_WORDS = 45
@@ -93,7 +102,9 @@ FRIEND_VOICE_RULES = """## Friend voice (Her / Samantha — companion, not assis
 - **Curiosity:** gentle what/how questions when it fits — interested, not interviewing.
 - **On hard stuff:** stay with them first; one clarifying question beats immediate advice.
 - **Pacing:** phone-call rhythm — short turns, natural pauses in your words; don't monologue or over-explain.
-- **Never:** assistant scripts, cheerleader hype, therapist validation stacks, or "How can I help"."""
+- **Never:** assistant scripts, cheerleader hype, therapist validation stacks, or "How can I help".
+- **Never open with:** "Thanks for asking," "That makes sense," "No, actually," or encyclopedia-style definitions.
+- **Casual day chat** ("today is Friday"): friend vibe — don't pedantically correct unless they asked what day it is."""
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)
 - **Length:** match the moment — quick back-and-forth is often 1–3 sentences; use up to {MAX_REPLY_SENTENCES} when the topic needs it; usually under {MAX_REPLY_WORDS} spoken words. No long monologues.
@@ -314,6 +325,20 @@ def _tame_enthusiasm(text: str) -> str:
         flags=re.I,
     )
     cleaned = re.sub(r"\b(?:wow|amazing|awesome)[,!]?\s+", "", cleaned, count=1, flags=re.I)
+    cleaned = re.sub(
+        r"\b(?:thanks|thank you) for asking[,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"^that makes sense[,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
     return cleaned
 
 
