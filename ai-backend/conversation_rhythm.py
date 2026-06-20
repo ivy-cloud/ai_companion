@@ -39,6 +39,27 @@ _MAX_CHUNK_SENTENCES = 2
 # Short replies: one Azure clip (no dead air between sentences).
 _MAX_SINGLE_CLIP_CHARS = 420
 
+_SIMPLE_ACK = re.compile(
+    r"^(?:ok(?:ay)?|k|yeah|yep|yup|sure|right|got it|cool|nice|alright|"
+    r"mhm|mm(?:-?hmm)?|fair enough|true|totally|uh[\s-]?huh|gotcha)[.!?]*$",
+    re.I,
+)
+
+
+def is_simple_acknowledgment(message: str) -> bool:
+    """Bare OK/yeah/got it — match energy; don't therapize or reopen the thread."""
+    return bool(_SIMPLE_ACK.match((message or "").strip()))
+
+
+def acknowledgment_turn_hint(message: str) -> str:
+    if not is_simple_acknowledgment(message):
+        return ""
+    return (
+        "Simple ack — one short relaxed line back (Cool. / Got it. / Nice.). "
+        "Match their energy; don't therapize, coach, or dig into the last topic."
+    )
+
+
 _STORY_OR_FACT = re.compile(
     r"\b(?:weather|forecast|president|population|calculate|math|what time|what day|"
     r"how old|how much|how many|who is|when was)\b",

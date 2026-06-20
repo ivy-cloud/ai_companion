@@ -30,7 +30,13 @@ class HerCompanionTests(unittest.TestCase):
             "yeah",
             emotion_hint=detect_emotion_hint("yeah"),
         )
-        self.assertIn("Silence comfort", hint)
+        self.assertIn("Simple ack", hint)
+
+    def test_build_turn_hints_ok_skips_her_layers(self) -> None:
+        hint = personality.build_turn_hints("OK.")
+        self.assertIn("Simple ack", hint)
+        self.assertNotIn("Friend reaction", hint)
+        self.assertNotIn("Active listening", hint)
 
     def test_build_turn_hints_skips_her_on_factual(self) -> None:
         hint = personality.build_turn_hints(

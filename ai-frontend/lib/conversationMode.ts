@@ -109,6 +109,15 @@ export const LISTEN_RETRY_MS = 180;
 /** Recover when Listening… with no mic or blocked meter for this long (safety only). */
 export const LISTENING_STUCK_MS = 6500;
 
+/**
+ * Idle "Opening mic…" with a pending schedule_listen but no recorder — force recovery.
+ * Uses lastListenScheduleAt (preserved across LISTEN_RETRY_MS), not phaseChangedAt.
+ */
+export const OPENING_MIC_STUCK_MS = 5500;
+
+/** Max time for ensureListenChain mic-open work (release + iOS mode + recorder). */
+export const MIC_OPEN_CHAIN_TIMEOUT_MS = 12_000;
+
 /** Meter may bail while TTS refs are stale — reopen listen after this (ms). */
 export const LISTEN_METER_BLOCKED_MS = 2200;
 
@@ -186,6 +195,16 @@ export function shouldRecoverListenPausedStuck(
   if (stuckMs < IDLE_LISTEN_RECOVERY_MS) return false;
   if (!hasPendingListenTimer) return true;
   return stuckMs >= LISTEN_PAUSED_STUCK_MS;
+}
+
+/** True when schedule_listen fired but mic never opened within OPENING_MIC_STUCK_MS. */
+export function shouldRecoverOpeningMicStuck(
+  lastScheduleListenAt: number | null,
+  nowMs: number,
+  thresholdMs = OPENING_MIC_STUCK_MS,
+): boolean {
+  if (lastScheduleListenAt == null) return false;
+  return nowMs - lastScheduleListenAt >= thresholdMs;
 }
 
 /**

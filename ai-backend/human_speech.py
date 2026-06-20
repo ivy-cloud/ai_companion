@@ -94,6 +94,19 @@ BANNED_PHRASES = (
     "search results",
     "the lookup shows",
     "based on my search",
+    "that's really cool",
+    "that is really cool",
+    "that's so cool",
+    "being a bit hard on yourself",
+    "being hard on yourself",
+    "what's making you feel",
+    "what is making you feel",
+    "i'm glad we connected",
+    "im glad we connected",
+    "how's your day going so far",
+    "how is your day going so far",
+    "you said you were",
+    "you said you are",
 )
 
 MAX_REPLY_WORDS = 45
@@ -108,6 +121,8 @@ FRIEND_VOICE_RULES = """## Friend voice (Her / Samantha — companion, not assis
 - **Pacing:** phone-call rhythm — short turns, natural pauses in your words; don't monologue or over-explain.
 - **Never:** assistant scripts, cheerleader hype, therapist validation stacks, or "How can I help".
 - **Never open with:** "Thanks for asking," "That makes sense," "No, actually," or encyclopedia-style definitions.
+- **Simple acks** (OK, yeah, got it): one short line back — don't therapize, coach, or reopen the last topic.
+- **Personal facts they share:** warm nod ("January, got it") — not hollow hype ("That's really cool!") or therapist probes.
 - **Casual day chat** ("today is Friday"): friend vibe — don't pedantically correct unless they asked what day it is."""
 
 CONVERSATIONAL_STYLE_RULES = f"""## Conversational style (voice call with a friend)
@@ -343,6 +358,40 @@ def _tame_enthusiasm(text: str) -> str:
         count=1,
         flags=re.I,
     )
+    cleaned = re.sub(
+        r"\bthat'?s (?:really |so )?cool[!,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\byou(?:'re| are) being (?:a bit )?hard on yourself[,.]?\s*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\bwhat(?:'s| is) making you feel (?:that way|this way)(?: today)?\??\s*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\bi(?:'m| am) glad we connected[,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"(?:,?\s*)?calling yourself \w+[.!?]?\s*",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\bYou(?:'re| are)\s*,\s*", "You're ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;")
     return cleaned
 
 

@@ -7,6 +7,8 @@ import {
   LISTENING_STUCK_MS,
   LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
+  MIC_OPEN_CHAIN_TIMEOUT_MS,
+  OPENING_MIC_STUCK_MS,
   MIN_SPEECH_MS,
   MIN_SPEECH_BEFORE_INTERRUPT_MS,
   INTERRUPT_USER_SPEECH_MS,
@@ -37,6 +39,7 @@ import {
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
+  shouldRecoverOpeningMicStuck,
   tickConversationMeter,
 } from './conversationMode.ts';
 
@@ -135,6 +138,18 @@ test('listen paused stuck: waits for idle recovery threshold', () => {
 test('listen paused stuck: pending timer defers until stuck threshold', () => {
   assert.equal(shouldRecoverListenPausedStuck(IDLE_LISTEN_RECOVERY_MS, true), false);
   assert.equal(shouldRecoverListenPausedStuck(LISTEN_PAUSED_STUCK_MS, true), true);
+});
+
+test('opening mic stuck: uses schedule timestamp not phase clock', () => {
+  const now = 10_000;
+  assert.equal(shouldRecoverOpeningMicStuck(null, now), false);
+  assert.equal(shouldRecoverOpeningMicStuck(now - OPENING_MIC_STUCK_MS + 1, now), false);
+  assert.equal(shouldRecoverOpeningMicStuck(now - OPENING_MIC_STUCK_MS, now), true);
+});
+
+test('opening mic stuck constants bounded', () => {
+  assert.equal(OPENING_MIC_STUCK_MS, 5500);
+  assert.ok(MIC_OPEN_CHAIN_TIMEOUT_MS >= OPENING_MIC_STUCK_MS);
 });
 
 test('phase0: listen paused stuck constant after idle recovery', () => {

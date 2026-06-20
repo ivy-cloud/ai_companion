@@ -1,4 +1,5 @@
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { withTimeout } from './asyncTimeout';
 import { isEmptySttError } from './voiceTranscript';
 
 export {
@@ -121,6 +122,11 @@ export async function configureRecordingAudioMode() {
   });
 }
 
+/** Max time for iOS audio-mode switch + recorder prepare/start (safety net). */
+export const MIC_OPEN_TIMEOUT_MS = 9000;
+
+export { withTimeout } from './asyncTimeout';
+
 /** After TTS playback, iOS needs a beat before PlayAndRecord accepts a new recorder. */
 export async function prepareForConversationListen(): Promise<void> {
   await discardPrewarm();
@@ -201,12 +207,18 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
 /** Conversation mode: metering enabled for silence / speech detection.
  * Caller must hold the recording mutex (see startConversationListening). */
 export async function startConversationRecording(): Promise<Audio.Recording> {
-  await ensureRecordingSlotFree();
-  await prepareForConversationListen();
-  const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
-  await recording.startAsync();
-  return recording;
+  return withTimeout(
+    (async () => {
+      await ensureRecordingSlotFree();
+      await prepareForConversationListen();
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
+      await recording.startAsync();
+      return recording;
+    })(),
+    MIC_OPEN_TIMEOUT_MS,
+    'startConversationRecording',
+  );
 }
 
 export async function startPushToTalkRecording(): Promise<Audio.Recording> {

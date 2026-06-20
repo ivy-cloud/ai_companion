@@ -347,7 +347,8 @@ def active_listening_turn_hint(message: str, *, casual: bool) -> str:
     return (
         "Active listening: if it fits naturally, echo one short phrase they used "
         "(e.g. 'that interview tomorrow' / 'the lake') — shows you heard them; "
-        "one nod only, not parroting the whole message."
+        "one nod only, not parroting the whole message. "
+        "Never confirmation-parrot ('You said X, right?') on facts they just told you."
     )
 
 

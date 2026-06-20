@@ -1,6 +1,7 @@
 """Azure Speech-to-Text (REST) — same subscription as Neural TTS."""
 
 import json
+import struct
 from typing import Optional
 
 import httpx
@@ -48,17 +49,80 @@ def _stt_url(locale: str) -> str:
     region = _speech_region()
     return (
         f"https://{region}.stt.speech.microsoft.com/speech/recognition/"
-        f"conversation/cognitiveservices/v1?language={locale}"
+        f"conversation/cognitiveservices/v1"
+        f"?language={locale}"
+        f"&initialSilenceTimeoutMs=6000"
     )
 
 
-def _guess_content_type(filename: str, fallback: Optional[str]) -> str:
-    if fallback and "audio" in fallback.lower():
-        return fallback
+def _parse_wav_sample_rate(audio_bytes: bytes) -> Optional[int]:
+    """Read sample rate from a PCM WAV header (offset 24, little-endian uint32)."""
+    if len(audio_bytes) < 28:
+        return None
+    if audio_bytes[0:4] != b"RIFF" or audio_bytes[8:12] != b"WAVE":
+        return None
+    sample_rate = struct.unpack("<I", audio_bytes[24:28])[0]
+    return sample_rate if sample_rate > 0 else None
+
+
+def _wav_content_type(audio_bytes: bytes) -> str:
+    sample_rate = _parse_wav_sample_rate(audio_bytes) or 16000
+    return f"audio/wav; codecs=audio/pcm; samplerate={sample_rate}"
+
+
+def _guess_content_type(
+    filename: str,
+    fallback: Optional[str],
+    audio_bytes: bytes,
+) -> str:
     ext = ""
     if "." in filename:
         ext = filename.rsplit(".", 1)[-1].lower()
-    return _CONTENT_TYPES.get(ext, "audio/wav; codecs=audio/pcm; samplerate=16000")
+
+    if ext == "wav" or (fallback and "wav" in fallback.lower()):
+        return _wav_content_type(audio_bytes)
+
+    if ext in _CONTENT_TYPES:
+        return _CONTENT_TYPES[ext]
+
+    if fallback and "audio" in fallback.lower():
+        return fallback
+
+    return _wav_content_type(audio_bytes)
+
+
+def _text_from_recognition(data: dict) -> str:
+    """Extract display text from simple or detailed Azure STT JSON."""
+    text = str(data.get("DisplayText", "")).strip()
+    if text:
+        return text
+    nbest = data.get("NBest")
+    if isinstance(nbest, list):
+        for item in nbest:
+            if isinstance(item, dict):
+                candidate = str(item.get("Display") or item.get("Lexical") or "").strip()
+                if candidate:
+                    return candidate
+    return ""
+
+
+def _recognition_result_to_text(data: dict, *, partial: bool) -> str:
+    status = str(data.get("RecognitionStatus", "")).strip()
+    if status == "Success":
+        text = _text_from_recognition(data)
+        if text:
+            return text
+        if partial:
+            return ""
+        raise HTTPException(status_code=400, detail="no speech detected")
+
+    if status in ("NoMatch", "InitialSilenceTimeout"):
+        if partial:
+            return ""
+        raise HTTPException(status_code=400, detail="no speech detected — try again")
+
+    detail = str(data.get("DisplayText") or status or "recognition failed")
+    raise HTTPException(status_code=400, detail=detail)
 
 
 def transcribe_audio(
@@ -66,6 +130,7 @@ def transcribe_audio(
     *,
     filename: str = "recording.wav",
     content_type: Optional[str] = None,
+    partial: bool = False,
 ) -> str:
     import dev_mode
 
@@ -89,7 +154,7 @@ def transcribe_audio(
     url = _stt_url(locale)
     headers = {
         "Ocp-Apim-Subscription-Key": _speech_key(),
-        "Content-Type": _guess_content_type(filename, content_type),
+        "Content-Type": _guess_content_type(filename, content_type, audio_bytes),
         "Accept": "application/json",
     }
 
@@ -111,15 +176,4 @@ def transcribe_audio(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail="Azure STT returned invalid JSON") from exc
 
-    status = str(data.get("RecognitionStatus", "")).strip()
-    if status == "Success":
-        text = str(data.get("DisplayText", "")).strip()
-        if text:
-            return text
-        raise HTTPException(status_code=400, detail="no speech detected")
-
-    if status in ("NoMatch", "InitialSilenceTimeout"):
-        raise HTTPException(status_code=400, detail="no speech detected — try again")
-
-    detail = str(data.get("DisplayText") or status or "recognition failed")
-    raise HTTPException(status_code=400, detail=detail)
+    return _recognition_result_to_text(data, partial=partial)

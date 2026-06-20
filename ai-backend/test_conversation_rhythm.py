@@ -65,6 +65,13 @@ class ConversationRhythmTests(unittest.TestCase):
         hint = rhythm.monologue_interrupt_turn_hint(msg, jumped_in=True)
         self.assertIn("jumped in", hint.lower())
 
+    def test_simple_acknowledgment_detected(self):
+        for msg in ("OK.", "okay", "yeah", "got it", "cool"):
+            self.assertTrue(rhythm.is_simple_acknowledgment(msg), msg=msg)
+        self.assertFalse(rhythm.is_simple_acknowledgment("OK but why?"))
+        hint = rhythm.acknowledgment_turn_hint("OK.")
+        self.assertIn("don't therapize", hint.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -884,6 +884,7 @@ async def transcribe(
             audio_bytes,
             filename=filename,
             content_type=file.content_type,
+            partial=partial,
         )
         if not partial:
             session_log.log_stt(text, filename=filename)

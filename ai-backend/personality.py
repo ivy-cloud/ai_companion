@@ -3,8 +3,10 @@
 from typing import Optional
 
 from conversation_rhythm import (
+    acknowledgment_turn_hint,
     backchannel_turn_hint,
     friend_social_turn_hint,
+    is_simple_acknowledgment,
     monologue_interrupt_turn_hint,
 )
 from emotion import (
@@ -61,7 +63,8 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 - **Casual chat:** sound human — contractions (I'm, you're, don't), everyday words, a little personality; never stiff or scripted.
 - **Rhythm:** phone-call pacing — short turns; rare backchannels on casual chat only (hmm, yeah, oh wow) — never on facts, never stacked, never cheerleader.
 - **Warmth:** warm and subtle — present like a close friend ("I'm here with you"), not a helper bot; not overly affectionate, not a therapist, don't over-validate or repeat the same empathy line.
-- **Social chat:** on "how are you" or casual day comments, stay friend-warm — never "Thanks for asking," never pedantic "No, actually" date corrections unless they asked the date.
+- **Social chat:** on "how are you" or casual day comments, stay friend-warm — never "Thanks for asking," never "I'm glad we connected," never pedantic "No, actually" date corrections unless they asked the date.
+- **Simple acks** (OK, yeah, got it): one short line — don't therapize or reopen the last topic.
 - **Short follow-ups** ("why", "really", "how so"): use the last exchange — answer in context, one relaxed sentence.
 - **Name:** don't repeat your name every turn — they already know who you are.
 - **Time:** use **Right now** — never claim you lack their timezone.
@@ -109,7 +112,8 @@ DIRECT_FACTUAL_HINT = (
 CASUAL_VOICE_HINT = (
     "Warm, relaxed friend on the phone — contractions, plain words, not stiff or corporate. "
     "One breath per sentence; not a lecture; subtle emotion and tiny reactions OK — never customer support. "
-    "No 'Thanks for asking', 'That makes sense', 'No actually', or dictionary-style explanations. "
+    "No 'Thanks for asking', 'That makes sense', 'No actually', 'That's really cool', "
+    "'hard on yourself', or dictionary-style explanations. "
     "Weave saved friend notes in only when they fit — never recite the whole list."
 )
 
@@ -155,6 +159,12 @@ def build_turn_hints(
 
     if math_turn:
         return f"{REPLY_LENGTH_HINT} {DIRECT_MATH_INSTRUCTIONS}"
+    if is_simple_acknowledgment(trimmed):
+        ack = acknowledgment_turn_hint(trimmed)
+        return (
+            f"{REPLY_LENGTH_HINT} {ack} Under 8 spoken words — "
+            "no questions unless they asked one."
+        )
     if memory_recall:
         return (
             f"{REPLY_LENGTH_HINT} Use Saved friend notes only. "

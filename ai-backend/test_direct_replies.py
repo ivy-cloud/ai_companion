@@ -299,6 +299,42 @@ class DirectReplyTests(unittest.TestCase):
         self.assertNotIn("thanks for asking", polished)
         self.assertNotIn("that makes sense", polished)
 
+    def test_polish_strips_cheerleader_and_therapist(self):
+        cases = (
+            (
+                "You're born in January, nineteen seventy nine. That's really cool!",
+                ("really cool", "that's really cool"),
+            ),
+            (
+                "You're being a bit hard on yourself, calling yourself boring! "
+                "What's making you feel that way today?",
+                ("hard on yourself", "what's making you feel", "calling yourself"),
+            ),
+            (
+                "I'm glad we connected - how's your day going so far?",
+                ("glad we connected", "how's your day going"),
+            ),
+            (
+                "You said you were born in nineteen seventy nine, right?",
+                ("you said you were",),
+            ),
+        )
+        for raw, banned in cases:
+            polished = polish_for_speech(raw).lower()
+            for phrase in banned:
+                self.assertNotIn(phrase, polished, msg=raw)
+
+    def test_simple_ack_turn_hint(self):
+        from conversation_rhythm import acknowledgment_turn_hint, is_simple_acknowledgment
+
+        self.assertTrue(is_simple_acknowledgment("OK."))
+        self.assertTrue(is_simple_acknowledgment("yeah"))
+        hints = build_turn_hints("OK.")
+        self.assertIn("Simple ack", hints)
+        self.assertIn("don't therapize", hints.lower())
+        self.assertNotIn("curious", hints.lower())
+        self.assertEqual(acknowledgment_turn_hint("OK."), acknowledgment_turn_hint("yeah"))
+
     def test_casual_day_turn_hint(self):
         hints = build_turn_hints("Alright, today is Friday.")
         self.assertIn("calendar police", hints.lower())
