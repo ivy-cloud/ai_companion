@@ -207,14 +207,20 @@ export const METER_SPEECH_LEVEL_DB = -74;
  */
 export const SILENCE_DROP_FROM_PEAK_DB = 6;
 
-/** Sustained user speech before companion gently jumps in (ms). */
-export const INTERRUPT_USER_SPEECH_MS = 30_000;
+/** Sustained user speech before companion gently jumps in (ms). Friend-like, not passive. */
+export const INTERRUPT_USER_SPEECH_MS = 20_000;
 
 /** Minimum speech before companion interrupt — avoids cutting in on brief noise. */
-export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 3_500;
+export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 2_800;
 
-/** Brief spoken ack when companion interrupts a long monologue. */
-export const COMPANION_INTERRUPT_ACKS = ['Hang on—', 'Hold on—', 'Wait—'] as const;
+/** Brief spoken ack when companion interrupts a long monologue (friend energy). */
+export const COMPANION_INTERRUPT_ACKS = [
+  'Wait wait—',
+  'Oh— hang on—',
+  'Okay okay—',
+  'Can I jump in?',
+  'Oh wait—',
+] as const;
 
 /** Pick a stable interrupt ack from speech duration (same monologue → same phrase). */
 export function pickCompanionInterruptAck(speechMs: number): string {
@@ -232,13 +238,14 @@ export function shouldCompanionInterruptUser(
 ): boolean {
   if (speechMs < MIN_SPEECH_BEFORE_INTERRUPT_MS) return false;
   let thresholdMs = INTERRUPT_USER_SPEECH_MS;
+  const words = liveTranscript?.trim().split(/\s+/).filter(Boolean).length ?? 0;
   if (options?.backendHint) {
-    thresholdMs = Math.min(thresholdMs, 10_000);
-  } else if (liveTranscript?.trim()) {
-    const words = liveTranscript.trim().split(/\s+/).filter(Boolean).length;
-    if (words >= 35) {
-      thresholdMs = Math.min(thresholdMs, 14_000);
-    }
+    thresholdMs = Math.min(thresholdMs, 7_000);
+  }
+  if (words >= 45) {
+    thresholdMs = Math.min(thresholdMs, 6_000);
+  } else if (words >= 22) {
+    thresholdMs = Math.min(thresholdMs, 9_000);
   }
   if (speechMs < thresholdMs) return false;
   if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) return false;

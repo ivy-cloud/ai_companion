@@ -12,6 +12,7 @@ from emotion import (
 )
 from human_speech import (
     CONVERSATIONAL_STYLE_RULES,
+    FRIEND_VOICE_RULES,
     MAX_REPLY_SENTENCES,
     MAX_REPLY_WORDS,
     SPOKEN_DELIVERY_RULES,
@@ -42,6 +43,8 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 {CHAT_MEMORY_RULES}
 
 {CONVERSATIONAL_STYLE_RULES}
+
+{FRIEND_VOICE_RULES}
 
 {SPOKEN_DELIVERY_RULES}
 
@@ -95,8 +98,8 @@ DIRECT_FACTUAL_HINT = (
 )
 
 CASUAL_VOICE_HINT = (
-    "Warm, relaxed phone voice — contractions, plain words, not stiff or corporate. "
-    "One breath per sentence; not a lecture; subtle emotion only — never customer support. "
+    "Warm, relaxed friend on the phone — contractions, plain words, not stiff or corporate. "
+    "One breath per sentence; not a lecture; subtle emotion and tiny reactions OK — never customer support. "
     "Weave saved friend notes in only when they fit — never recite the whole list."
 )
 
@@ -127,6 +130,7 @@ def build_turn_hints(
     memory_recall: bool = False,
     factual: bool = False,
     emotion_hint: Optional[EmotionHint] = None,
+    companion_jumped_in: bool = False,
 ) -> str:
     mood = ""
     if emotion_hint and not factual and not math_turn and not memory_recall:
@@ -167,6 +171,8 @@ def build_turn_hints(
     curiosity = ""
     think_through = ""
     journal = ""
+    active_listen = ""
+    friend_reaction = ""
     silence = ""
     try:
         import companion_moments
@@ -190,14 +196,20 @@ def build_turn_hints(
         journal = companion_moments.journal_reflection_hint(trimmed, casual=True)
         if journal:
             journal = f" {journal}"
+        active_listen = companion_moments.active_listening_turn_hint(trimmed, casual=True)
+        if active_listen:
+            active_listen = f" {active_listen}"
+        friend_reaction = companion_moments.friend_reaction_turn_hint(trimmed, casual=True)
+        if friend_reaction:
+            friend_reaction = f" {friend_reaction}"
     except Exception:
         pass
     if emotion_hint and not factual and not math_turn and not memory_recall:
         silence = silence_comfort_turn_hint(trimmed, emotion_hint)
         if silence:
             silence = f" {silence}"
-    her_hints = f"{continuity}{curiosity}{think_through}{journal}{silence}"
-    monologue = monologue_interrupt_turn_hint(trimmed)
+    her_hints = f"{continuity}{curiosity}{think_through}{journal}{active_listen}{friend_reaction}{silence}"
+    monologue = monologue_interrupt_turn_hint(trimmed, jumped_in=companion_jumped_in)
     if monologue:
         monologue = f" {monologue}"
     short = trimmed.strip().lower().rstrip("?!.")

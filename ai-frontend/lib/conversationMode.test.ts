@@ -259,7 +259,7 @@ test('defer barge-in while STT commit in flight', () => {
 });
 
 test('companion interrupt timing constants bounded', () => {
-  assert.ok(INTERRUPT_USER_SPEECH_MS >= 25_000 && INTERRUPT_USER_SPEECH_MS <= 40_000);
+  assert.ok(INTERRUPT_USER_SPEECH_MS >= 18_000 && INTERRUPT_USER_SPEECH_MS <= 25_000);
   assert.ok(MIN_SPEECH_BEFORE_INTERRUPT_MS >= MIN_SPEECH_MS);
   assert.ok(MAX_UTTERANCE_MS > INTERRUPT_USER_SPEECH_MS);
 });
@@ -272,19 +272,22 @@ test('shouldCompanionInterruptUser: sustained speech only', () => {
 
 test('shouldCompanionInterruptUser: backend hint lowers threshold', () => {
   assert.equal(
-    shouldCompanionInterruptUser(9_999, null, { backendHint: true }),
+    shouldCompanionInterruptUser(6_999, null, { backendHint: true }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(10_000, null, { backendHint: true }),
+    shouldCompanionInterruptUser(7_000, null, { backendHint: true }),
     true,
   );
 });
 
 test('shouldCompanionInterruptUser: long live transcript lowers threshold', () => {
-  const long = Array.from({ length: 36 }, (_, i) => `word${i}`).join(' ');
-  assert.equal(shouldCompanionInterruptUser(13_999, long), false);
-  assert.equal(shouldCompanionInterruptUser(14_000, long), true);
+  const medium = Array.from({ length: 23 }, (_, i) => `word${i}`).join(' ');
+  assert.equal(shouldCompanionInterruptUser(8_999, medium), false);
+  assert.equal(shouldCompanionInterruptUser(9_000, medium), true);
+  const long = Array.from({ length: 46 }, (_, i) => `word${i}`).join(' ');
+  assert.equal(shouldCompanionInterruptUser(5_999, long), false);
+  assert.equal(shouldCompanionInterruptUser(6_000, long), true);
 });
 
 test('shouldCompanionInterruptUser: patient pacing blocks interrupt', () => {

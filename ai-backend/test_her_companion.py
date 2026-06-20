@@ -95,6 +95,14 @@ class HerCompanionTests(unittest.TestCase):
             hint = personality.build_turn_hints("just chilling tonight")
         self.assertIn("Saved note", hint)
 
+    def test_build_turn_hints_can_include_friend_reaction(self) -> None:
+        msg = "I tried that new ramen place downtown and it was incredible honestly"
+        with patch.object(
+            companion_moments, "friend_reaction_turn_hint", return_value=" Friend reaction: test."
+        ):
+            hint = personality.build_turn_hints(msg)
+        self.assertIn("Friend reaction", hint)
+
 
 if __name__ == "__main__":
     unittest.main()

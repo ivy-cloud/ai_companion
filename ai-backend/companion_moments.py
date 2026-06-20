@@ -140,7 +140,7 @@ def _fresh_opening_line(resolved: ResolvedClock) -> str:
     elif band == "evening":
         tail = " How was your day?"
     else:
-        tail = " I'm here if you want to talk."
+        tail = " What's on your mind tonight?"
     line = f"{lead}{tail}"
     if len(line) > 220:
         line = f"{lead} I'm here if you want to talk."
@@ -327,6 +327,50 @@ def journal_reflection_hint(message: str, *, casual: bool) -> str:
     return (
         f"Journal echo OK once: something they shared — {val}. "
         "Only if this chat touches it; soft 'I remember when you mentioned…' — no probing."
+    )
+
+
+def active_listening_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Pi / Her-style active listening — occasionally echo a word or phrase they used.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if len(text.split()) < 10:
+        return ""
+    if not _stable_roll(text, "active_listen", 0.09):
+        return ""
+
+    return (
+        "Active listening: if it fits naturally, echo one short phrase they used "
+        "(e.g. 'that interview tomorrow' / 'the lake') — shows you heard them; "
+        "one nod only, not parroting the whole message."
+    )
+
+
+def friend_reaction_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Her-style friend reactions — tiny opinion or shared moment, not advice.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if len(text.split()) < 7:
+        return ""
+    if _VENT_THINK_THROUGH.search(text):
+        return ""
+    if not _stable_roll(text, "friend_reaction", 0.08):
+        return ""
+
+    return (
+        "Friend reaction: one brief human reaction if it fits — "
+        "honest tiny take (that's wild / I'd be nervous too / I love that) — "
+        "not cheerleader, not fixing, not 'great question'."
     )
 
 

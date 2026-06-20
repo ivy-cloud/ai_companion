@@ -46,11 +46,13 @@ export type ChatRequestBody = {
   timezone?: string;
   proactive?: boolean;
   thread_beat?: string;
+  companion_interrupt?: boolean;
 };
 
 export type ChatRequestOptions = {
   proactive?: boolean;
   threadBeat?: string;
+  companionInterrupt?: boolean;
 };
 
 function buildChatRequestBody(
@@ -62,6 +64,7 @@ function buildChatRequestBody(
   if (timezone) body.timezone = timezone;
   if (options?.proactive) body.proactive = true;
   if (options?.threadBeat) body.thread_beat = options.threadBeat;
+  if (options?.companionInterrupt) body.companion_interrupt = true;
   return JSON.stringify(body);
 }
 

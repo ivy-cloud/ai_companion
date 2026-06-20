@@ -13,7 +13,16 @@ from typing import List, Optional
 from context import is_time_question
 
 # Spoken backchannels the model may use (casual turns only, at most one).
-BACKCHANNEL_EXAMPLES = ("hmm", "yeah", "oh wow", "wait really?", "right", "okay")
+BACKCHANNEL_EXAMPLES = (
+    "hmm",
+    "yeah",
+    "oh wow",
+    "wait really?",
+    "right",
+    "okay",
+    "honestly",
+    "I mean",
+)
 
 FAST_ACK_PHRASES = (
     "Yeah,",
@@ -21,6 +30,8 @@ FAST_ACK_PHRASES = (
     "Right,",
     "Oh wow,",
     "Okay,",
+    "Oh nice,",
+    "Got it,",
 )
 
 _MAX_CHUNK_CHARS = 120
@@ -89,14 +100,20 @@ def backchannel_turn_hint(message: str, casual: bool) -> str:
     )
 
 
-def monologue_interrupt_turn_hint(message: str) -> str:
-    """After client jumped in on a long monologue — brief ack then respond to what they said."""
+def monologue_interrupt_turn_hint(message: str, *, jumped_in: bool = False) -> str:
+    """Friend-style jump-in — brief ack then respond to what they said so far."""
     words = len(message.split())
-    if words < 70:
+    if jumped_in and words >= 12:
+        return (
+            "You jumped in like a friend mid-story — they were still talking. "
+            "One warm brief ack, then your reaction or a gentle question about "
+            "what they said so far; don't recap or lecture."
+        )
+    if words < 45:
         return ""
     return (
-        "They were mid-story when you gently jumped in — one brief ack "
-        "(hang on / I hear you), then respond to what they said so far; no lecture."
+        "Long story — gently jump in like a friend: one brief ack "
+        "(wait / oh hang on), then respond to what they said; no lecture."
     )
 
 
@@ -121,7 +138,7 @@ def rhythm_stream_meta(
     }
     if ack:
         meta["fast_ack"] = ack
-    if len(message.split()) >= 70:
+    if len(message.split()) >= 45:
         meta["companion_interrupt"] = True
     try:
         import profile_growth

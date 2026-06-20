@@ -1605,7 +1605,7 @@ export default function ChatScreen() {
           companionInterruptHint:
             rhythmMetaRef.current?.companion_interrupt === true ||
             liveTranscriptRef.current.trim().split(/\s+/).filter(Boolean).length >=
-              35,
+              22,
         });
         conversationMeterStateRef.current = tick.state;
         publishVoiceMeterLevel(status.metering);
@@ -4696,7 +4696,9 @@ export default function ChatScreen() {
       quietListenRetryUsedRef.current = false;
       voiceSendLockRef.current = false;
       clearListenCommitUi();
-      const sent = await sendMessage(fullTranscript);
+      const sent = await sendMessage(fullTranscript, {
+        companionInterrupt: options?.meterMeta?.companionInterrupt === true,
+      });
       if (!sent) {
         voiceLog('send_after_stt_skipped', {
           phase: voicePhaseRef.current,
@@ -4895,6 +4897,7 @@ export default function ChatScreen() {
       proactive?: boolean;
       threadBeat?: string;
       skipUserBubble?: boolean;
+      companionInterrupt?: boolean;
     },
   ): Promise<boolean> => {
     const isProactive = sendOptions?.proactive === true;
@@ -5253,7 +5256,9 @@ export default function ChatScreen() {
         wearablesChatHeaders(),
         isProactive
           ? { proactive: true, threadBeat: sendOptions?.threadBeat }
-          : undefined,
+          : sendOptions?.companionInterrupt
+            ? { companionInterrupt: true }
+            : undefined,
       );
 
       const ttsReply =

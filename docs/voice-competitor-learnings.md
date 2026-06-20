@@ -6,6 +6,7 @@ Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendo
 - [hume-voice-learnings.md](./hume-voice-learnings.md)
 - [gemini-live-learnings.md](./gemini-live-learnings.md)
 - [pi-inflection-learnings.md](./pi-inflection-learnings.md) — companion tone/UX (not voice stack)
+- [her-voice-learnings.md](./her-voice-learnings.md) — Samantha / Sesame friend voice patterns
 
 ## Stack comparison
 
@@ -22,6 +23,8 @@ Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendo
 | **Multimodal** | Text + voice | Voice (+ vision in app) | Voice (+ optional CLM tools) | Audio + video + text |
 | **Typical voice-to-voice** | **1.5–4s** (good ≤1.5s) | **~0.3–1.5s** class | Sub-second target | Sub-second target (native audio) |
 | **Phone echo strategy** | Half-duplex, 150ms cooldown, barge-in monitor | Server echo modeling | Partner/SDK dependent | Continuous stream + client AEC |
+
+**Sesame (Maya/Miles)** — separate CSM speech model ([her-voice-learnings.md](./her-voice-learnings.md)): breaths, disfluency, mood-from-voice; Jessica uses Azure TTS + text emotion proxies until Phase 5.
 
 ## Companion tone — Pi vs realtime voice vendors
 
@@ -85,6 +88,7 @@ Realtime APIs (ChatGPT, Hume, Gemini) aim for **sub-1s voice-to-voice**; Jessica
 - Latency targets + tier logging (`voice_to_voice_tier`, `listen_ready_tier` in `turn_summary`)
 - ChatGPT UX pass (partial STT, barge-in, Opening mic…, voice_to_voice_ms)
 - Pi companion tone (curious openers, think-through vents, what/how curiosity, compliment bans)
+- Her / friend voice pass (active listening, friend reactions, pitch variance, FRIEND_VOICE_RULES) — see [her-voice-learnings.md](./her-voice-learnings.md)
 - Hume-inspired: patient silence (1600ms distress), barge-in 750ms, reply-aware emotion, empathic listen copy — see [hume-voice-learnings.md](./hume-voice-learnings.md)
 
 ### Deferred

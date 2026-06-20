@@ -89,6 +89,7 @@ class ChatRequest(BaseModel):
     timezone: Optional[str] = None  # IANA from the phone, e.g. America/New_York
     proactive: bool = False
     thread_beat: Optional[str] = None
+    companion_interrupt: bool = False  # Jessica jumped in mid-user monologue
 
 
 class TtsRequest(BaseModel):
@@ -160,6 +161,7 @@ def build_chat_context(
     hits: Optional[list] = None,
     *,
     clock=None,
+    companion_jumped_in: bool = False,
 ) -> ChatContext:
     trimmed = latest_user_message.strip()
     if len(trimmed) > memory.MAX_MESSAGE_CHARS:
@@ -220,7 +222,7 @@ def build_chat_context(
 
     user_content = (
         f"{user_content}\n\n"
-        f"({build_turn_hints(trimmed, math_turn=math_turn, memory_recall=memory_recall, factual=factual, emotion_hint=emotion_hint)})"
+        f"({build_turn_hints(trimmed, math_turn=math_turn, memory_recall=memory_recall, factual=factual, emotion_hint=emotion_hint, companion_jumped_in=companion_jumped_in)})"
     )
 
     return ChatContext(
@@ -399,6 +401,7 @@ def stream_chat_events(
     audio_source: Optional[str] = None,
     proactive: bool = False,
     thread_beat: Optional[str] = None,
+    companion_jumped_in: bool = False,
 ) -> Generator[str, None, None]:
     trimmed = user_message.strip()
     clock = resolve_clock(client_timezone)
@@ -643,9 +646,13 @@ def stream_chat_events(
                     chat_topic=chat_topic,
                 )
             else:
-                context = build_chat_context(trimmed, web_block, hits, clock=clock)
+                context = build_chat_context(
+                    trimmed, web_block, hits, clock=clock, companion_jumped_in=companion_jumped_in
+                )
         else:
-            context = build_chat_context(trimmed, web_block, hits, clock=clock)
+            context = build_chat_context(
+                trimmed, web_block, hits, clock=clock, companion_jumped_in=companion_jumped_in
+            )
 
         collected: List[str] = []
         for piece in llm_provider.stream_chat_text(
@@ -816,6 +823,7 @@ def chat(body: ChatRequest, request: Request):
             audio_source=audio_source,
             proactive=body.proactive,
             thread_beat=body.thread_beat,
+            companion_jumped_in=body.companion_interrupt,
         ),
         media_type="application/x-ndjson",
         headers={

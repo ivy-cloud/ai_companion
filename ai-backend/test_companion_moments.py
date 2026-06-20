@@ -175,6 +175,30 @@ class CompanionMomentsTests(unittest.TestCase):
                 self.assertIn("shared", hint.lower())
         self.assertTrue(found)
 
+    def test_active_listening_hint_substantive(self) -> None:
+        msg = (
+            "I went to the park and sat by the lake for a while thinking about work"
+        )
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.active_listening_turn_hint(msg, casual=True)
+        self.assertIn("Active listening", hint)
+        self.assertIn("echo", hint.lower())
+
+    def test_friend_reaction_skips_vent(self) -> None:
+        msg = (
+            "I've been so stressed about this job interview tomorrow "
+            "and I don't know if I'm ready at all"
+        )
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.friend_reaction_turn_hint(msg, casual=True)
+        self.assertEqual(hint, "")
+
+    def test_friend_reaction_on_casual_share(self) -> None:
+        msg = "I tried that new ramen place downtown and it was incredible honestly"
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.friend_reaction_turn_hint(msg, casual=True)
+        self.assertIn("Friend reaction", hint)
+
 
 if __name__ == "__main__":
     unittest.main()

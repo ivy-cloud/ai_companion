@@ -50,15 +50,20 @@ class ConversationRhythmTests(unittest.TestCase):
         self.assertTrue(meta.get("stream_tts"))
 
     def test_long_monologue_sets_companion_interrupt_meta(self):
-        long_msg = " ".join(["word"] * 80)
+        long_msg = " ".join(["word"] * 50)
         meta = rhythm.rhythm_stream_meta(long_msg, factual=False)
         self.assertTrue(meta.get("companion_interrupt"))
 
     def test_monologue_interrupt_turn_hint(self):
-        long_msg = " ".join(["yeah"] * 75)
+        long_msg = " ".join(["yeah"] * 50)
         hint = rhythm.monologue_interrupt_turn_hint(long_msg)
-        self.assertIn("jumped in", hint.lower())
+        self.assertIn("friend", hint.lower())
         self.assertEqual(rhythm.monologue_interrupt_turn_hint("short message"), "")
+
+    def test_monologue_interrupt_jumped_in_hint(self):
+        msg = " ".join(["word"] * 15)
+        hint = rhythm.monologue_interrupt_turn_hint(msg, jumped_in=True)
+        self.assertIn("jumped in", hint.lower())
 
 
 if __name__ == "__main__":

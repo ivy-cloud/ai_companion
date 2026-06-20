@@ -121,6 +121,10 @@ _FRUSTRATED = re.compile(
 # ALL-CAPS words (≥3 letters) — energy proxy when STT preserves casing.
 _CAPS_WORD = re.compile(r"\b[A-Z]{3,}\b")
 
+_NEUTRAL_PITCH = frozenset(
+    {"", "0st", "+0st", "medium", "default", "neutral", "x-medium"},
+)
+
 
 def voice_supports_express(voice: str) -> bool:
     return voice.strip().lower() in _VOICE_SUPPORTS_EXPRESS
@@ -166,6 +170,27 @@ def prosody_rate_for_hint(hint: Optional[EmotionHint], base_rate: str) -> str:
     return base_rate
 
 
+def prosody_pitch_for_hint(hint: Optional[EmotionHint], base_pitch: str) -> str:
+    """
+    Nudge SSML pitch for friend-like expressiveness (Her: pitch variance reads human).
+    Warm/excited → slightly brighter; sympathetic/gentle → slightly softer.
+    """
+    p = (base_pitch or "").strip().lower()
+    if p in _NEUTRAL_PITCH or not hint or hint == "neutral":
+        return base_pitch
+    if not re.match(r"^[+-]?\d+(\.\d+)?st$", base_pitch.strip(), re.I):
+        base_pitch = "-0.5st"
+    try:
+        val = float(base_pitch.rstrip("st"))
+    except ValueError:
+        return base_pitch
+    if hint in ("sympathetic", "gentle"):
+        return f"{val - 0.15:.2f}st".rstrip("0").rstrip(".")
+    if hint in ("warm", "excited"):
+        return f"{val + 0.12:.2f}st".rstrip("0").rstrip(".")
+    return base_pitch
+
+
 def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
     if hint == "sympathetic":
         return (
@@ -180,7 +205,8 @@ def emotion_turn_hint_for_llm(hint: EmotionHint) -> str:
     if hint == "warm":
         return (
             "Warm, engaged friend — natural warmth, not flat or corporate. "
-            "Stay with them; don't pivot to fixing or coaching unless they ask."
+            "Stay with them; don't pivot to fixing or coaching unless they ask. "
+            "Tiny reactions OK (that's wild, I love that, wait really?) — one at most."
         )
     return ""
 
@@ -257,7 +283,10 @@ def conversation_tone_llm_hint(user_message: str, base_hint: EmotionHint) -> str
         return "Frustrated — calm and direct; fix or clarify without defensiveness."
 
     if _PLAYFUL.search(msg):
-        return "Playful, light — teasing OK if it fits; stay brief, not performative."
+        return (
+            "Playful friend energy — light teasing or laughing with them OK; "
+            "stay brief, not performative or try-hard."
+        )
     if _CURIOUS.search(msg) or msg.rstrip("?!.").lower() in {"why", "how", "really"}:
         return "Curious, engaged — one short follow-up OK; not interview-y."
     if _THOUGHTFUL.search(msg):
