@@ -10,6 +10,11 @@ import web_search
 
 
 class WebSearchRoutingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import memory
+
+        memory.clear()
+
     def test_weather_phrases_trigger_search(self):
         for msg in (
             "what is the weather tonight",
@@ -85,6 +90,31 @@ class WebSearchRoutingTests(unittest.TestCase):
             hint = web_search._location_hint_from_context()
             queries = web_search.build_search_queries("weather tonight", location_hint=hint)
         self.assertTrue(any("Seattle" in q for q in queries), queries)
+
+    def test_should_answer_from_chat_first_wh_question(self):
+        import memory
+
+        memory.clear()
+        memory.append_exchange("Tell me about Paris.", "The Eiffel Tower is iconic.")
+        self.assertTrue(memory.should_answer_from_chat_first("What is the capital of France?"))
+        self.assertFalse(web_search.needs_live_web_lookup("What is the capital of France?"))
+        self.assertFalse(web_search.should_search("What is the capital of France?"))
+
+    def test_explicit_lookup_triggers_web(self):
+        self.assertTrue(web_search.needs_live_web_lookup("Can you look up the score?"))
+        self.assertTrue(web_search.should_search("Can you look up the score?"))
+
+    def test_chat_first_blocks_search_with_history(self):
+        import memory
+
+        memory.clear()
+        memory.append_exchange("We were talking about the World Cup.", "Yeah, wild games.")
+        self.assertTrue(memory.should_answer_from_chat_first("who won last game"))
+        self.assertFalse(web_search.should_search("who won last game"))
+
+    def test_default_mode_is_smart(self):
+        with patch.dict("os.environ", {"WEB_SEARCH_MODE": ""}, clear=False):
+            self.assertEqual(web_search.search_mode(), "smart")
 
 
 if __name__ == "__main__":

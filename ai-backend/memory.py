@@ -170,6 +170,62 @@ def current_topic_summary() -> Optional[str]:
     return last[:80] if last else None
 
 
+_REFERENCES_CHAT = re.compile(
+    r"\b(?:"
+    r"you said|you just said|what you said|what you meant|"
+    r"earlier|before|we were talking|that thing|remember when|"
+    r"last time|you mentioned|from what you|based on what|"
+    r"like you said|when you said|back to what"
+    r")\b",
+    re.I,
+)
+
+
+def should_answer_from_chat_first(message: str) -> bool:
+    """
+    Prefer recent chat over web lookup — follow-ups, confusion, social chat,
+    or general questions answerable from the thread.
+    """
+    text = message.strip()
+    if not text or not _history:
+        return False
+
+    from context import is_casual_day_comment, is_social_checkin
+    from web_search import is_conversational_confusion, is_factual_question, needs_live_web_lookup
+
+    # Weather, scores, headlines, explicit lookup — never chat-only.
+    if needs_live_web_lookup(text):
+        return False
+
+    if is_ambiguous_follow_up(text):
+        return True
+    if is_conversational_confusion(text):
+        return True
+    if is_social_checkin(text) or is_casual_day_comment(text):
+        return True
+    if _REFERENCES_CHAT.search(text):
+        return True
+    # General WH questions without live-web signals — history first, no search.
+    if is_factual_question(text):
+        return True
+    return False
+
+
+def chat_first_turn_hint(message: str) -> str:
+    if not should_answer_from_chat_first(message):
+        return ""
+    topic = current_topic_summary()
+    if topic:
+        return (
+            f"Chat-first: use recent messages about «{topic}» before any fact check. "
+            "Friend voice — not a search recap."
+        )
+    return (
+        "Chat-first: answer from recent messages if you can — "
+        "friend voice, not a search recap."
+    )
+
+
 def continuity_follow_up_turn_hint(message: str) -> str:
     """Turn hint when a short follow-up refers to the ongoing thread."""
     if not is_ambiguous_follow_up(message):
@@ -196,6 +252,8 @@ def should_keep_history_for_turn(
     """Whether recent exchanges stay in the LLM message list for this turn."""
     if math_turn or profile_turn:
         return False
+    if should_answer_from_chat_first(message):
+        return bool(_history)
     if factual and not is_ambiguous_follow_up(message):
         return False
     return bool(_history)

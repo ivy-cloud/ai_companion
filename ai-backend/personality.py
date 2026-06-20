@@ -26,6 +26,7 @@ from identity import (
     FACTUAL_ACCURACY_RULES,
     MEMORY_HONESTY_RULES,
     UNCERTAINTY_RULES,
+    WEB_SYNTHESIS_RULES,
     build_identity_rules,
 )
 
@@ -45,6 +46,8 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 {UNCERTAINTY_RULES}
 
 {CHAT_MEMORY_RULES}
+
+{WEB_SYNTHESIS_RULES}
 
 {CONVERSATIONAL_STYLE_RULES}
 
@@ -99,7 +102,8 @@ DIRECT_MATH_INSTRUCTIONS = (
 )
 
 DIRECT_FACTUAL_HINT = (
-    "Direct answer only. Do not mention current time, date, or saved friend notes unless asked."
+    "Direct answer in your own words — digest any fact check, never read snippets aloud. "
+    "Do not mention current time, date, or saved friend notes unless asked."
 )
 
 CASUAL_VOICE_HINT = (
@@ -165,10 +169,12 @@ def build_turn_hints(
         import memory as conv_memory
 
         follow = conv_memory.continuity_follow_up_turn_hint(trimmed)
-        if follow:
-            follow = f" {follow}"
+        chat_first = conv_memory.chat_first_turn_hint(trimmed)
+        extra = " ".join(x for x in (follow, chat_first) if x).strip()
+        if extra:
+            extra = f" {extra}"
         return (
-            f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT}{follow} "
+            f"{REPLY_LENGTH_HINT} {DIRECT_FACTUAL_HINT}{extra} "
             f"{backchannel_turn_hint(trimmed, casual=False)}"
         )
     rhythm = backchannel_turn_hint(trimmed, casual=True)
@@ -225,13 +231,16 @@ def build_turn_hints(
     short = trimmed.strip().lower().rstrip("?!.")
     import memory as conv_memory
 
+    chat_first = conv_memory.chat_first_turn_hint(trimmed)
+    if chat_first:
+        chat_first = f" {chat_first}"
     ambiguous = conv_memory.is_ambiguous_follow_up(trimmed)
     if short in _SHORT_FOLLOW_UPS or len(trimmed.split()) <= 2 or ambiguous:
         continuity = conv_memory.continuity_follow_up_turn_hint(trimmed)
         if continuity:
             continuity = f" {continuity}"
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{continuity} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{chat_first}{continuity} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{chat_first} {rhythm}"

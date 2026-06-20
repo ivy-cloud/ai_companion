@@ -108,7 +108,8 @@ _GREETINGS = frozenset(
 
 
 def search_mode() -> str:
-    return os.environ.get("WEB_SEARCH_MODE", "always").strip().lower()
+    raw = os.environ.get("WEB_SEARCH_MODE", "smart").strip().lower()
+    return raw if raw else "smart"
 
 
 def is_enabled() -> bool:
@@ -167,7 +168,7 @@ def is_factual_question(message: str) -> bool:
         return False
     if _COMPANION_OR_APP.search(lower):
         return False
-    if _CONVERSATIONAL_CONFUSION.match(lower):
+    if is_conversational_confusion(text):
         return False
     if re.match(
         r"^how (?:are you|you doing|is it going|have you been|was your|did your)\b",
@@ -195,10 +196,53 @@ def asks_about_current(message: str) -> bool:
     )
 
 
+_EXPLICIT_WEB = re.compile(
+    r"\b(?:"
+    r"look(?:\s+it)?\s+up|search(?:\s+(?:for|online|the web))?|"
+    r"google|check online|find online|on the internet"
+    r")\b",
+    re.I,
+)
+
+_LIVE_DATA = re.compile(
+    r"\b(?:"
+    r"current|today'?s?|tonight'?s?|latest|live|right now|as of now|"
+    r"this (?:morning|afternoon|evening|week|weekend)"
+    r")\b",
+    re.I,
+)
+
+
+def is_conversational_confusion(message: str) -> bool:
+    lower = message.strip().lower().rstrip("?").strip()
+    return bool(_CONVERSATIONAL_CONFUSION.match(lower))
+
+
+def needs_live_web_lookup(message: str) -> bool:
+    """
+    Clear signals that only the open web can answer — not chat history alone.
+    """
+    text = message.strip()
+    lower = _normalize_question_stem(text)
+    if _EXPLICIT_WEB.search(lower):
+        return True
+    if _WORLD_FACT.search(lower):
+        return True
+    if is_weather_question(text):
+        return True
+    if _LIVE_DATA.search(lower) and (
+        _WORLD_FACT.search(lower)
+        or re.search(r"\b(?:news|headline|score|price|who is|who's|who won)\b", lower)
+    ):
+        return True
+    return False
+
+
 def should_search(message: str) -> bool:
     if not is_enabled():
         return False
 
+    import memory
     from companion import is_companion_identity_turn
     from context import is_time_question
 
@@ -214,22 +258,22 @@ def should_search(message: str) -> bool:
     lower = text.lower().rstrip("?").strip()
     if lower in _GREETINGS:
         return False
-    if _CONVERSATIONAL_CONFUSION.match(lower):
+    if is_conversational_confusion(text):
         return False
     if _COMPANION_OR_APP.search(lower):
         return False
+    if memory.should_answer_from_chat_first(text):
+        return False
 
     mode = search_mode()
+    if mode in ("off", "false", "0", "disabled", "none"):
+        return False
     if mode == "always":
-        return is_factual_question(text) or asks_about_current(text)
-
+        return needs_live_web_lookup(text) or is_factual_question(text)
     if mode == "questions":
-        return is_factual_question(text)
-
-    if mode == "smart":
-        return is_factual_question(text) or asks_about_current(text)
-
-    return False
+        return is_factual_question(text) and needs_live_web_lookup(text)
+    # smart (default): live-web signals only
+    return needs_live_web_lookup(text)
 
 
 def rewrite_for_search(message: str) -> str:
@@ -585,19 +629,20 @@ def format_for_prompt(
 
     if contextual_follow_up:
         history_line = (
-            "Use recent chat above to interpret what they mean by shorthand — "
-            "then answer from these sources."
+            "Answer from recent chat first if it already covers this — "
+            "only then use these notes. Do NOT read snippets aloud."
         )
     else:
         history_line = (
-            "Answer from these sources only. Ignore earlier chat turns about facts — they may be wrong."
+            "Internal notes from a quick check — digest into your own words; "
+            "never quote titles, numbers, or list sources."
         )
 
     lines = [
-        "## Live web lookup (fetched seconds ago)\n",
+        "## Fact check (internal — synthesize, do not recite)\n",
         f"Question: {query}",
         history_line,
-        "Do not use training memory if it conflicts with these notes.",
+        "Say it like you already know it — friend on the phone, not a newsreader.",
     ]
     for i, hit in enumerate(hits, 1):
         lines.append(f"{i}. {hit['title'][:200]} — {hit['snippet'][:700]}")

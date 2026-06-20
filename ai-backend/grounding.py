@@ -11,18 +11,16 @@ import llm_provider
 
 from web_search import SearchHit
 
-_GROUNDING_SYSTEM = """Answer using ONLY the numbered sources below.
+_GROUNDING_SYSTEM = """Extract the accurate answer from the numbered sources below.
 
-Spoken delivery (this will be read aloud):
-- One or two short sentences. Under 15 words when possible.
-- Sound natural spoken: plain words, few commas, no semicolons, no parentheses, no markdown.
-- No long clauses — one idea per sentence.
+This is an INTERNAL fact digest — not spoken aloud verbatim.
 
 Rules:
 - Use only source facts. No outside knowledge.
 - If sources conflict, prefer "current", "today", or the newest year.
-- If sources don't answer it: reply exactly INSUFFICIENT
-- No preamble, lists, or formal tone."""
+- One or two short plain sentences. Under 20 words when possible.
+- No lists, markdown, "according to", or source numbers in the answer.
+- If sources don't answer it: reply exactly INSUFFICIENT"""
 
 
 def _format_sources(hits: List[SearchHit], max_items: int = 8) -> str:

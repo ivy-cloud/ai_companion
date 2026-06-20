@@ -90,6 +90,10 @@ BANNED_PHRASES = (
     "it can also mean",
     "not that i remember",
     "in casual conversations when",
+    "according to",
+    "search results",
+    "the lookup shows",
+    "based on my search",
 )
 
 MAX_REPLY_WORDS = 45

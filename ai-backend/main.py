@@ -168,17 +168,25 @@ def build_chat_context(
         trimmed = trimmed[: memory.MAX_MESSAGE_CHARS] + "…"
 
     ambiguous_follow_up = memory.is_ambiguous_follow_up(trimmed)
-    chat_topic = memory.current_topic_summary() if ambiguous_follow_up else None
+    chat_first = memory.should_answer_from_chat_first(trimmed)
+    chat_topic = memory.current_topic_summary() if (ambiguous_follow_up or chat_first) else None
 
     if web_block is None or hits is None:
-        web_block, hits = web_search.lookup_with_hits(
-            trimmed,
-            clock=clock,
-            chat_topic=chat_topic,
-        )
+        if not chat_first and web_search.should_search(trimmed):
+            web_block, hits = web_search.lookup_with_hits(
+                trimmed,
+                clock=clock,
+                chat_topic=chat_topic,
+            )
+        else:
+            web_block, hits = None, []
+
     math_turn = is_simple_math_question(trimmed)
+    has_web = web_search.has_usable_hits(hits or [])
     factual = math_turn or (
-        web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
+        has_web
+        and web_search.is_factual_question(trimmed)
+        and not chat_first
     )
     profile_turn = profile.is_user_profile_turn(trimmed)
     memory_recall = profile_turn
@@ -200,15 +208,16 @@ def build_chat_context(
         user_content = f"{trimmed}\n\n{DIRECT_MATH_INSTRUCTIONS}"
     elif factual and web_block:
         topic_prefix = ""
-        if ambiguous_follow_up and chat_topic:
+        if (ambiguous_follow_up or chat_first) and chat_topic:
             topic_prefix = (
-                f"Recent conversation topic (resolve their follow-up in this context): "
+                f"Recent conversation (answer from this first if it fits): "
                 f"{chat_topic}\n\n"
             )
         user_content = (
-            f"{topic_prefix}{web_block}\n\n"
+            f"{topic_prefix}Fact check (internal — digest into your own words, do not recite):\n"
+            f"{web_block}\n\n"
             f"They asked: {trimmed}\n\n"
-            "Answer using only the live web lookup above.\n\n"
+            "Say it like you already know it — brief friend on the phone, not a newsreader.\n\n"
             f"{COMPANION_REPLY_INSTRUCTIONS}"
         )
 
@@ -226,7 +235,12 @@ def build_chat_context(
     )
 
     return ChatContext(
-        system={"role": "system", "content": build_system_prompt(trimmed, web_block, clock=clock)},
+        system={
+            "role": "system",
+            "content": build_system_prompt(
+                trimmed, web_block if factual else None, clock=clock
+            ),
+        },
         history=history,
         latest_user={"role": "user", "content": user_content},
         trimmed_latest=trimmed,
@@ -253,7 +267,9 @@ def build_grounded_chat_context(
         )
     user_content = (
         f"{topic_prefix}They asked: {trimmed}\n\n"
-        f"Accurate answer (keep these facts correct):\n{grounded_fact}\n\n"
+        f"Facts you looked up (internal — weave in naturally, do NOT read as a list):\n"
+        f"{grounded_fact}\n\n"
+        "Say it like you already know it — brief friend on the phone.\n\n"
         f"{COMPANION_REPLY_INSTRUCTIONS}\n\n"
         f"({build_turn_hints(trimmed, factual=True)})"
     )
@@ -615,13 +631,20 @@ def stream_chat_events(
             return
 
         ambiguous_follow_up = memory.is_ambiguous_follow_up(trimmed)
-        chat_topic = memory.current_topic_summary() if ambiguous_follow_up else None
-        web_block, hits = web_search.lookup_with_hits(
-            trimmed,
-            clock=clock,
-            chat_topic=chat_topic,
+        chat_first = memory.should_answer_from_chat_first(trimmed)
+        chat_topic = memory.current_topic_summary() if (ambiguous_follow_up or chat_first) else None
+        web_block, hits = (None, [])
+        if not chat_first and web_search.should_search(trimmed):
+            web_block, hits = web_search.lookup_with_hits(
+                trimmed,
+                clock=clock,
+                chat_topic=chat_topic,
+            )
+        use_grounding = (
+            not chat_first
+            and web_search.is_factual_question(trimmed)
+            and web_search.has_usable_hits(hits)
         )
-        use_grounding = web_search.is_factual_question(trimmed) and web_search.has_usable_hits(hits)
         grounded: Optional[str] = None
         math_turn = is_simple_math_question(trimmed)
         profile_turn = profile.is_user_profile_turn(trimmed)
