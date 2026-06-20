@@ -38,6 +38,8 @@ class MemoryContinuityTests(unittest.TestCase):
         self.assertTrue(memory.is_ambiguous_follow_up("last game today"))
         self.assertTrue(memory.is_ambiguous_follow_up("who won"))
         self.assertTrue(memory.is_ambiguous_follow_up("what about that"))
+        self.assertTrue(memory.is_ambiguous_follow_up("What are you talking about?"))
+        self.assertTrue(memory.is_ambiguous_follow_up("What do you mean?"))
 
     def test_ambiguous_follow_up_false_without_history(self) -> None:
         self.assertFalse(memory.is_ambiguous_follow_up("last game today"))

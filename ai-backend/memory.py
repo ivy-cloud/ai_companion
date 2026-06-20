@@ -102,7 +102,17 @@ _AMBIGUOUS_SHORT = re.compile(
     r"last\s+\w+\s+today\b|"
     r"the\s+(?:game|match|score|result)\b|"
     r"and\s+(?:the|that)\b|"
-    r"how\s+(?:did|was)\s+(?:that|it)\b"
+    r"how\s+(?:did|was)\s+(?:that|it)\b|"
+    r"what(?:'s| is| are) (?:that|this|it)\b|"
+    r"what (?:are|were) you (?:talking|going on) about\b|"
+    r"what do you mean\b|"
+    r"what did you (?:mean|say)\b|"
+    r"what was that\b|"
+    r"say that again\b|"
+    r"what are you saying\b|"
+    r"why would you say\b|"
+    r"^huh\b|"
+    r"^sorry,? what\b"
     r")",
     re.I,
 )

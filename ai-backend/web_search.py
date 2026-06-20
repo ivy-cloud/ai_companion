@@ -55,8 +55,31 @@ _COMPANION_OR_APP = re.compile(
     r"(?:voice|audio) (?:is )?(?:low|quiet|bad)|too quiet|"
     r"don't recall|can't remember|won't remember|forget(?:ting)?|"
     r"pause(?:s|d)? between|gap between|suck(?:s|ing)? (?:in|on|at)|"
-    r"bug(?:gy)?|broken|not working|doesn't work"
+    r"bug(?:gy)?|broken|not working|doesn't work|"
+    r"(?:you )?(?:can|could) speak|speak(?:ing)? more|sound(?:s|ed)? (?:better|different|weird|off)|"
+    r"(?:more )?(?:fluent(?:ly)?|clear(?:ly)?|natural(?:ly)?|human)\b"
     r")\b",
+    re.I,
+)
+
+# Confusion / pushback about what the companion just said — not a world-fact lookup.
+_CONVERSATIONAL_CONFUSION = re.compile(
+    r"(?:"
+    r"^what(?:'s| is| are) (?:that|this|it|going on)\??\s*$|"
+    r"^what(?:'s| is| are) (?:that|this|it) (?:about|mean)\??\s*$|"
+    r"^what (?:are|were) you (?:talking|going on) about\??\s*$|"
+    r"^what do you mean(?: by that)?\??\s*$|"
+    r"^what did you (?:mean|say|just say)\??\s*$|"
+    r"^what does that mean\??\s*$|"
+    r"^what was that\??\s*$|"
+    r"^say that again\??\s*$|"
+    r"^what are you saying\??\s*$|"
+    r"^why would you say (?:that|this)\??\s*$|"
+    r"^huh\??\s*$|"
+    r"^come again\??\s*$|"
+    r"^sorry,? what\??\s*$|"
+    r"^what\??\s*$"
+    r")",
     re.I,
 )
 
@@ -144,6 +167,8 @@ def is_factual_question(message: str) -> bool:
         return False
     if _COMPANION_OR_APP.search(lower):
         return False
+    if _CONVERSATIONAL_CONFUSION.match(lower):
+        return False
     if re.match(
         r"^how (?:are you|you doing|is it going|have you been|was your|did your)\b",
         lower,
@@ -160,8 +185,11 @@ def asks_about_current(message: str) -> bool:
     lower = message.lower()
     return bool(
         re.search(
-            r"\b(?:current|today|tonight|tomorrow|now|right now|latest|"
-            r"this year|this morning|this afternoon|this evening|at the moment)\b",
+            r"\b(?:"
+            r"current|today|tonight|tomorrow|latest|"
+            r"this year|this morning|this afternoon|this evening|at the moment|"
+            r"right now|as of now|what now|for now|from now|until now"
+            r")\b",
             lower,
         )
     )
@@ -185,6 +213,10 @@ def should_search(message: str) -> bool:
 
     lower = text.lower().rstrip("?").strip()
     if lower in _GREETINGS:
+        return False
+    if _CONVERSATIONAL_CONFUSION.match(lower):
+        return False
+    if _COMPANION_OR_APP.search(lower):
         return False
 
     mode = search_mode()

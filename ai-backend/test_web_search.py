@@ -41,6 +41,31 @@ class WebSearchRoutingTests(unittest.TestCase):
             web_search.is_factual_question("Want to grab coffee later?"),
         )
 
+    def test_confusion_follow_up_skips_search(self):
+        for msg in (
+            "What are you talking about?",
+            "What do you mean?",
+            "What was that?",
+            "Say that again?",
+            "Huh?",
+        ):
+            with self.subTest(msg=msg):
+                self.assertFalse(web_search.is_factual_question(msg), msg)
+                self.assertFalse(web_search.should_search(msg), msg)
+
+    def test_voice_feedback_skips_search(self):
+        msg = "I feel like you now can speak more fluent than before."
+        self.assertFalse(web_search.is_factual_question(msg), msg)
+        self.assertFalse(web_search.should_search(msg), msg)
+
+    def test_bare_now_in_sentence_not_current(self):
+        self.assertFalse(
+            web_search.asks_about_current(
+                "I feel like you now can speak more clearly than before."
+            )
+        )
+        self.assertTrue(web_search.asks_about_current("what time is it right now"))
+
     def test_weather_query_uses_location_hint(self):
         clock = ResolvedClock(
             zone=ZoneInfo("America/Los_Angeles"),
