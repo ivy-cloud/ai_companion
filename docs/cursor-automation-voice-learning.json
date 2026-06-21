@@ -1,0 +1,26 @@
+{
+  "name": "Jessica voice learning",
+  "description": "Daily scan of phone session logs for AI-like Jessica replies; update friend voice rules when high-confidence.",
+  "workflow": {
+    "triggers": [
+      {
+        "cron": {
+          "cron": "0 2 * * *"
+        }
+      }
+    ],
+    "actions": [],
+    "prompts": [
+      "You are improving Jessica's friend voice in the ai_companion repo (ivy-cloud/ai_companion).\n\n## Steps\n1. Run the daily learning script:\n   cd ai-backend && .venv/bin/python ../scripts/daily_voice_learning.py\n2. Read the new section in docs/voice-learning-journal.md and recent ai-backend/data/session_log.jsonl turns.\n3. For high-confidence patterns only, update:\n   - ai-backend/human_speech.py (BANNED_PHRASES, FRIEND_VOICE_RULES, polish_for_speech)\n   - ai-backend/companion_moments.py (vent routing, session openers)\n   - ai-backend/personality.py (turn hints)\n4. Run tests:\n   cd ai-backend && .venv/bin/python -m unittest test_her_companion test_direct_replies test_conversation_rhythm test_memory -v\n5. Append findings to docs/voice-learning-journal.md if you made rule changes.\n\n## Constraints\n- Friend voice only — no assistant, therapist, or cheerleader patterns.\n- Do NOT commit unless the user has configured this automation to commit.\n- Do NOT auto-edit human_speech.py for low-confidence journal suggestions.\n- Reference docs/natural-human-chat.md for phone test checklist after changes."
+    ],
+    "model": "",
+    "agentOptions": {
+      "skipInstall": false
+    },
+    "memoryEnabled": true,
+    "gitConfig": {
+      "repo": "ivy-cloud/ai_companion",
+      "branch": "main"
+    }
+  }
+}

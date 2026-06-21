@@ -318,6 +318,19 @@ class DirectReplyTests(unittest.TestCase):
                 "You said you were born in nineteen seventy nine, right?",
                 ("you said you were",),
             ),
+            (
+                "It's never too late for anything! What's on your mind?",
+                ("never too late",),
+            ),
+            (
+                "You've got this! Everything happens for a reason.",
+                ("you've got this", "everything happens for a reason"),
+            ),
+            (
+                "It's super late, so maybe wind down a bit? "
+                "You could grab a drink, listen to some calm music, or just chill.",
+                ("grab a drink", "listen to some calm music", "wind down a bit"),
+            ),
         )
         for raw, banned in cases:
             polished = polish_for_speech(raw).lower()
@@ -332,6 +345,7 @@ class DirectReplyTests(unittest.TestCase):
         hints = build_turn_hints("OK.")
         self.assertIn("Simple ack", hints)
         self.assertIn("don't therapize", hints.lower())
+        self.assertIn("distress", hints.lower())
         self.assertNotIn("curious", hints.lower())
         self.assertEqual(acknowledgment_turn_hint("OK."), acknowledgment_turn_hint("yeah"))
 

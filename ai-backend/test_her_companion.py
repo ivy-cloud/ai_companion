@@ -101,6 +101,16 @@ class HerCompanionTests(unittest.TestCase):
             hint = personality.build_turn_hints("just chilling tonight")
         self.assertIn("Saved note", hint)
 
+    def test_build_turn_hints_includes_vent_on_incomplete(self) -> None:
+        msg = "Jessica, I feel like it's too late for."
+        hint = personality.build_turn_hints(msg)
+        self.assertIn("Vent", hint)
+
+    def test_build_turn_hints_advice_seeking_on_plan_question(self) -> None:
+        msg = "What should I do now?"
+        hint = personality.build_turn_hints(msg)
+        self.assertIn("asked what to do", hint.lower())
+
     def test_build_turn_hints_can_include_friend_reaction(self) -> None:
         msg = "I tried that new ramen place downtown and it was incredible honestly"
         with patch.object(

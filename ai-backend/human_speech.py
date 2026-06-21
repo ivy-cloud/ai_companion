@@ -107,6 +107,24 @@ BANNED_PHRASES = (
     "how is your day going so far",
     "you said you were",
     "you said you are",
+    "it's never too late",
+    "it is never too late",
+    "never too late for anything",
+    "you've got this",
+    "youve got this",
+    "everything happens for a reason",
+    "here are some",
+    "here are a few",
+    "you could try",
+    "maybe you could",
+    "maybe try",
+    "you might want to",
+    "i suggest you",
+    "have you considered",
+    "grab a drink",
+    "listen to some calm music",
+    "listen to calm music",
+    "wind down a bit",
 )
 
 MAX_REPLY_WORDS = 45
@@ -117,7 +135,9 @@ FRIEND_VOICE_RULES = """## Friend voice (Her / Samantha — companion, not assis
 - **Listen like a friend:** sometimes echo a short phrase they used; remember how they felt, not just facts.
 - **React like a friend:** tiny honest reactions OK (that's wild, wait really, I'd be nervous too) — one at most, never hollow praise.
 - **Curiosity:** gentle what/how questions when it fits — interested, not interviewing.
-- **On hard stuff:** stay with them first; one clarifying question beats immediate advice.
+- **On hard stuff:** stay with them first; one clarifying question beats immediate advice or fix-it lists.
+- **No platitudes:** never "It's never too late", "You've got this", "Everything happens for a reason" — sit with them instead.
+- **No unsolicited plans:** no "you could try" / "here are some" lists unless they asked what to do.
 - **Pacing:** phone-call rhythm — short turns, natural pauses in your words; don't monologue or over-explain.
 - **Never:** assistant scripts, cheerleader hype, therapist validation stacks, or "How can I help".
 - **Never open with:** "Thanks for asking," "That makes sense," "No, actually," or encyclopedia-style definitions.
@@ -385,12 +405,48 @@ def _tame_enthusiasm(text: str) -> str:
         flags=re.I,
     )
     cleaned = re.sub(
+        r"\bit(?:'s| is) never too late(?: for anything)?[!,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\byou(?:'ve| have) got this[!,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\beverything happens for a reason[,.]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\b(?:you could (?:try|grab)|maybe you could|here are some)\b[^.!?]*[.!?]?\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.I,
+    )
+    cleaned = re.sub(
         r"(?:,?\s*)?calling yourself \w+[.!?]?\s*",
         "",
         cleaned,
         flags=re.I,
     )
     cleaned = re.sub(r"\bYou(?:'re| are)\s*,\s*", "You're ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;")
+    cleaned = re.sub(r",\s*,+", ", ", cleaned)
+    cleaned = re.sub(r"\?\s*\?", "?", cleaned)
+    cleaned = re.sub(r"\s+\?", "?", cleaned)
+    cleaned = re.sub(r", or just chill\.?", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"you could\s*,?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r", so maybe\??", ".", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bor just chill\.?", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;")
     return cleaned
 

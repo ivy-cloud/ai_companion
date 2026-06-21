@@ -114,6 +114,7 @@ CASUAL_VOICE_HINT = (
     "One breath per sentence; not a lecture; subtle emotion and tiny reactions OK — never customer support. "
     "No 'Thanks for asking', 'That makes sense', 'No actually', 'That's really cool', "
     "'hard on yourself', or dictionary-style explanations. "
+    "No unsolicited fix-it lists ('grab a drink', 'listen to calm music') unless they asked what to do. "
     "Weave saved friend notes in only when they fit — never recite the whole list."
 )
 
@@ -196,6 +197,7 @@ def build_turn_hints(
     continuity = ""
     curiosity = ""
     think_through = ""
+    vent = ""
     journal = ""
     active_listen = ""
     friend_reaction = ""
@@ -216,6 +218,9 @@ def build_turn_hints(
         curiosity = companion_moments.curiosity_turn_hint(trimmed, casual=True)
         if curiosity:
             curiosity = f" {curiosity}"
+        vent = companion_moments.vent_turn_hint(trimmed, casual=True)
+        if vent:
+            vent = f" {vent}"
         think_through = companion_moments.think_through_turn_hint(trimmed, casual=True)
         if think_through:
             think_through = f" {think_through}"
@@ -234,7 +239,7 @@ def build_turn_hints(
         silence = silence_comfort_turn_hint(trimmed, emotion_hint)
         if silence:
             silence = f" {silence}"
-    her_hints = f"{continuity}{curiosity}{think_through}{journal}{active_listen}{friend_reaction}{silence}"
+    her_hints = f"{continuity}{curiosity}{vent}{think_through}{journal}{active_listen}{friend_reaction}{silence}"
     monologue = monologue_interrupt_turn_hint(trimmed, jumped_in=companion_jumped_in)
     if monologue:
         monologue = f" {monologue}"

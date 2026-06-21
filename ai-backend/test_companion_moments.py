@@ -99,6 +99,12 @@ class CompanionMomentsTests(unittest.TestCase):
                 self.assertIn("curious", hint.lower())
         self.assertTrue(found)
 
+    def test_think_through_hint_on_incomplete_vent(self) -> None:
+        msg = "Jessica, I feel like it's too late for."
+        hint = companion_moments.vent_turn_hint(msg, casual=True)
+        self.assertIn("Vent", hint)
+        self.assertIn("never too late", hint.lower())
+
     def test_think_through_hint_on_substantive_vent(self) -> None:
         msg = (
             "I've been so stressed about this job interview tomorrow "
@@ -106,7 +112,7 @@ class CompanionMomentsTests(unittest.TestCase):
         )
         with patch.object(companion_moments, "_stable_roll", return_value=True):
             hint = companion_moments.think_through_turn_hint(msg, casual=True)
-        self.assertIn("Think-through", hint)
+        self.assertIn("Think-with", hint)
         self.assertIn("what/how", hint.lower())
 
     def test_think_through_skips_brief(self) -> None:
@@ -116,17 +122,22 @@ class CompanionMomentsTests(unittest.TestCase):
             )
         self.assertEqual(hint, "")
 
+    def test_advice_seeking_detected(self) -> None:
+        self.assertTrue(companion_moments.is_advice_seeking("What should I do now?"))
+        self.assertFalse(companion_moments.is_advice_seeking("I feel like it's too late."))
+
     def test_session_opening_curious_tail(self) -> None:
         profile.learn_from_user_message("My name is Alex.")
         line = companion_moments.session_opening_line(resolve_clock("UTC"), force=True)
         self.assertIsNotNone(line)
         assert line is not None
         self.assertNotIn("It's ", line)
+        self.assertNotIn("how's your day going", line.lower())
         self.assertTrue(
-            "morning" in line.lower()
-            or "up to" in line.lower()
-            or "how was" in line.lower()
+            "on your mind" in line.lower()
+            or "going on" in line.lower()
             or "here" in line.lower()
+            or "remember" in line.lower()
         )
 
     def test_session_opening_resume_no_name_intro(self) -> None:

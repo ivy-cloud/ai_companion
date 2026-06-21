@@ -56,7 +56,8 @@ def acknowledgment_turn_hint(message: str) -> str:
         return ""
     return (
         "Simple ack — one short relaxed line back (Cool. / Got it. / Nice.). "
-        "Match their energy; don't therapize, coach, or dig into the last topic."
+        "Match their energy; do not interpret their ack as distress. "
+        "Don't therapize, coach, or dig into the last topic."
     )
 
 

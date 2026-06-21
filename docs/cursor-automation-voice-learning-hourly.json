@@ -1,0 +1,26 @@
+{
+  "name": "Jessica voice learning (every 2h)",
+  "description": "Cloud agent pass every 2 hours — scan session logs, apply high-confidence friend-voice fixes, rotate competitor doc review. Pair with local idle learning on the Mac.",
+  "workflow": {
+    "triggers": [
+      {
+        "cron": {
+          "cron": "0 */2 * * *"
+        }
+      }
+    ],
+    "actions": [],
+    "prompts": [
+      "You are improving Jessica's friend voice in ai_companion (ivy-cloud/ai_companion).\n\nThis runs every 2 hours — keep passes small and focused.\n\n## Steps\n1. Run: cd ai-backend && .venv/bin/python ../scripts/daily_voice_learning.py --hours 6 --deep\n2. Read docs/voice-learning-journal.md (latest entry) and ai-backend/data/session_log.jsonl.\n3. Read one doc from docs/*-learnings.md or docs/natural-human-chat.md — note gaps vs human_speech.py.\n4. Apply HIGH-CONFIDENCE fixes only:\n   - ai-backend/human_speech.py\n   - ai-backend/companion_moments.py\n   - ai-backend/personality.py\n   - ai-backend/conversation_rhythm.py\n5. Run: cd ai-backend && .venv/bin/python -m unittest test_her_companion test_direct_replies test_conversation_rhythm test_memory -v\n6. Append a one-line note to docs/voice-learning-journal.md if you changed rules.\n\n## Constraints\n- Friend voice only — no assistant/therapist/cheerleader.\n- Do NOT commit unless explicitly configured.\n- Skip if journal shows no new findings and no doc gaps."
+    ],
+    "model": "",
+    "agentOptions": {
+      "skipInstall": false
+    },
+    "memoryEnabled": true,
+    "gitConfig": {
+      "repo": "ivy-cloud/ai_companion",
+      "branch": "fix/conversation-voice-ux"
+    }
+  }
+}

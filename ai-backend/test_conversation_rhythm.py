@@ -71,6 +71,7 @@ class ConversationRhythmTests(unittest.TestCase):
         self.assertFalse(rhythm.is_simple_acknowledgment("OK but why?"))
         hint = rhythm.acknowledgment_turn_hint("OK.")
         self.assertIn("don't therapize", hint.lower())
+        self.assertIn("distress", hint.lower())
 
 
 if __name__ == "__main__":

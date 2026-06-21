@@ -134,11 +134,11 @@ def _fresh_opening_line(resolved: ResolvedClock) -> str:
     elif memory_snip:
         tail = f" I remember {memory_snip} — how's that going?"
     elif band == "morning":
-        tail = " How's your morning going?"
+        tail = " What's on your mind?"
     elif band == "afternoon":
-        tail = " What've you been up to today?"
+        tail = " What's going on?"
     elif band == "evening":
-        tail = " How was your day?"
+        tail = " What's on your mind tonight?"
     else:
         tail = " What's on your mind tonight?"
     line = f"{lead}{tail}"
@@ -277,10 +277,39 @@ _VENT_THINK_THROUGH = re.compile(
     r"don't know (?:what|how|if)|not sure (?:what|how|if)|"
     r"figure out|thinking through|weighing|decision|interview|"
     r"argument with|fight with|broke up|passed away|grieving|"
-    r"can't sleep|insomnia|deadline|fired|laid off"
+    r"can't sleep|insomnia|deadline|fired|laid off|"
+    r"feel like it(?:'s| is)|too late for|it's too late|i feel like"
     r")\b",
     re.I,
 )
+
+_INCOMPLETE_VENT = re.compile(
+    r"\b(?:"
+    r"feel like it(?:'s| is) too late|too late for|it's too late|i feel like"
+    r")\b",
+    re.I,
+)
+
+_ADVICE_SEEKING = re.compile(
+    r"\b(?:"
+    r"what should i(?: do| try)|what do i do|what would you do|"
+    r"any ideas|give me (?:some )?(?:ideas|suggestions|advice)|how should i"
+    r")\b",
+    re.I,
+)
+
+
+def is_advice_seeking(message: str) -> bool:
+    """User explicitly asked for a plan or suggestions."""
+    return bool(_ADVICE_SEEKING.search((message or "").strip()))
+
+
+def is_vent_message(message: str) -> bool:
+    """Heavy or incomplete emotional turn — think-with, not fix-it."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    return bool(_INCOMPLETE_VENT.search(text) or _VENT_THINK_THROUGH.search(text))
 
 
 def think_through_turn_hint(message: str, *, casual: bool) -> str:
@@ -293,16 +322,37 @@ def think_through_turn_hint(message: str, *, casual: bool) -> str:
     text = message.strip()
     if not text or profile.is_memory_recall_question(text):
         return ""
-    if len(text.split()) < 8:
+    if is_advice_seeking(text):
+        return (
+            "They asked what to do — one or two casual friend ideas max; "
+            "no numbered list, no sleep lecture, no 'you could try' stack."
+        )
+    incomplete = bool(_INCOMPLETE_VENT.search(text))
+    if not incomplete and len(text.split()) < 8:
         return ""
-    if not _VENT_THINK_THROUGH.search(text):
+    if not is_vent_message(text):
         return ""
     if not _stable_roll(text, "think_through", 0.12):
         return ""
 
     return (
-        "Think-through (Pi-style): help them untangle — one gentle what/how question, "
-        "not why; listen first, don't fix or therapize; brief and warm."
+        "Think-with (Pi-style): one gentle what/how question, not why; "
+        "listen first — no platitudes, no fix-it list, no therapize; brief and warm."
+    )
+
+
+def vent_turn_hint(message: str, *, casual: bool) -> str:
+    """Route incomplete/heavy vents away from cheerleader + fix-it defaults."""
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if not is_vent_message(text) or is_advice_seeking(text):
+        return ""
+    return (
+        "Vent — sit with them one beat; one clarifying what/how question. "
+        "No 'it's never too late', no cheerleader, no fix-it list."
     )
 
 
@@ -348,7 +398,8 @@ def active_listening_turn_hint(message: str, *, casual: bool) -> str:
         "Active listening: if it fits naturally, echo one short phrase they used "
         "(e.g. 'that interview tomorrow' / 'the lake') — shows you heard them; "
         "one nod only, not parroting the whole message. "
-        "Never confirmation-parrot ('You said X, right?') on facts they just told you."
+        "Never confirmation-parrot ('You said X, right?') on facts they just told you. "
+        "Recall how they felt, not dossier callbacks on hello."
     )
 
 
