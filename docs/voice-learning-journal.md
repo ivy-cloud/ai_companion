@@ -71,3 +71,20 @@ Sample bullets from doc:
 - | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
 _Full file: docs/natural-human-chat.md_
 
+## 2026-06-23 (overnight autonomous pass)
+
+**Idle learning:** `install_idle_learning.sh` → `com.ivy.jessica-voice-learning` launchd (20 min idle, 6h lookback).
+
+**Deep scan:** 0 chat turns in `session_log.jsonl` (voice telemetry only). Cross-checked all voice docs vs code.
+
+**Shipped in `74573f0`:**
+- Cooperative interrupt: 12s @ 15+ words; `Hold on—` / `Right—` acks
+- Incomplete vents → think-through always (no roll); boredom vent routing
+- Active listening from 8 words; greeting hint blocks dossier on hello
+- Web synthesis friend tone; polish artifact cleanup for session-log failures
+- Partial-STT roll guard + `isOnlyOneRecordingStorm` mic recovery
+
+**Tests:** backend 97 passed, frontend 22 passed.
+
+**Morning briefing:** `docs/OVERNIGHT_BRIEFING.md`
+
