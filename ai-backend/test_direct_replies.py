@@ -10,6 +10,7 @@ from context import (
     companion_time_reply,
     format_today_anchor,
     is_casual_day_comment,
+    is_greeting,
     is_simple_math_question,
     is_social_checkin,
     is_this_year_age_question,
@@ -352,6 +353,44 @@ class DirectReplyTests(unittest.TestCase):
     def test_casual_day_turn_hint(self):
         hints = build_turn_hints("Alright, today is Friday.")
         self.assertIn("calendar police", hints.lower())
+
+    def test_greeting_turn_hint(self):
+        hints = build_turn_hints("Hello, Jessica.")
+        self.assertIn("Greeting", hints)
+        self.assertIn("dossier", hints.lower())
+
+    def test_greeting_turn_hint(self):
+        self.assertTrue(is_greeting("Hello, Jessica King."))
+        self.assertTrue(is_greeting("Hey"))
+        self.assertFalse(is_greeting("Hello, how are you doing today?"))
+        hints = build_turn_hints("Hello, Jessica King.")
+        self.assertIn("Greeting", hints)
+        self.assertIn("glad we connected", hints.lower())
+
+    def test_polish_cleanup_leaves_speakable_text(self):
+        cases = (
+            (
+                "You're born in January, nineteen seventy nine. That's really cool!",
+                ("really cool",),
+            ),
+            (
+                "It's never too late for anything! What's on your mind?",
+                ("never too late", "for anything"),
+            ),
+        )
+        toxic_only = (
+            "I'm glad we connected - how's your day going so far?",
+            "You said you were born in nineteen seventy nine, right?",
+            "You're being a bit hard on yourself! What's making you feel that way today?",
+        )
+        for raw, banned in cases:
+            polished = polish_for_speech(raw)
+            self.assertGreater(len(polished), 2, msg=raw)
+            for phrase in banned:
+                self.assertNotIn(phrase, polished.lower(), msg=raw)
+        for raw in toxic_only:
+            polished = polish_for_speech(raw)
+            self.assertEqual(polished, "", msg=raw)
 
 
 if __name__ == "__main__":

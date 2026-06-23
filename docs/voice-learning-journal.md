@@ -44,3 +44,30 @@ Auto-appended by `scripts/daily_voice_learning.py`. Review before editing `human
 
 **Suggested rule additions (review first):**
 - Re-run phone test checklist in `docs/natural-human-chat.md` after next live session
+
+## 2026-06-23
+
+**Scan:** 0 chat turn(s) in `session_log.jsonl` (500 voice/STT events only; no `user`/`reply` pairs). Deep pass reviewed `natural-human-chat.md`.
+
+**Code applied this pass:**
+- `_cleanup_polish_artifacts()` — fixes broken TTS after banned-phrase stripping (orphan `for anything`, dossier `born in … right?`, `-?` junk)
+- `polish_for_speech` no longer falls back to raw toxic text when strip empties the reply
+- Longer `never too late for anything` ban ordered before shorter `it's never too late` match
+- `is_greeting()` + greeting turn hint — curious friend hello, no dossier callback on bare hello
+- Re-ran `daily_voice_learning.py --hours 0 --deep` — no new session-log findings
+
+**Next:** Re-run phone test checklist in `natural-human-chat.md` after next live session.
+
+## 2026-06-23
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `natural-human-chat.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Practical synthesis for Jessica's friend voice. **We cannot watch every movie or scrape all podcasts** — this doc triangulates conversation-analysis research, realistic film dialogue craft, voice-AI competitor learnings, and our own session logs.
+- **Related:** [her-voice-learnings.md](./her-voice-learnings.md), [voice-competitor-learnings.md](./voice-competitor-learnings.md), [pi-inflection-learnings.md](./pi-inflection-learnings.md), `ai-backend/human_speech.py` (`FRIEND_VOICE_RULES`).
+- 
+- | Source | What it actually tells us |
+- |--------|---------------------------|
+- | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
+_Full file: docs/natural-human-chat.md_
+

@@ -107,9 +107,9 @@ BANNED_PHRASES = (
     "how is your day going so far",
     "you said you were",
     "you said you are",
+    "never too late for anything",
     "it's never too late",
     "it is never too late",
-    "never too late for anything",
     "you've got this",
     "youve got this",
     "everything happens for a reason",
@@ -451,10 +451,39 @@ def _tame_enthusiasm(text: str) -> str:
     return cleaned
 
 
+def _cleanup_polish_artifacts(text: str) -> str:
+    """Remove broken fragments left after banned-phrase stripping."""
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"\bfor anything[!.]?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(
+        r"\bborn in [^,.!?]+,?\s*right\??",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"\bYou(?:'re| are) that way today\??",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\bthat way today\??", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bYou(?:'re| are)\s*!\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^\s*[-–—]\s*\??", "", cleaned)
+    cleaned = re.sub(r"\.\s*[!?.]+", ".", cleaned)
+    cleaned = re.sub(r"^[!?.\s-]+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,;-.!?")
+    return cleaned
+
+
 def polish_for_speech(text: str) -> str:
-    cleaned = trim_for_voice(
-        _strip_robot_self_denials(
-            _tame_enthusiasm(_strip_assistant_tone(_strip_markdown(text.strip())))
+    cleaned = _cleanup_polish_artifacts(
+        trim_for_voice(
+            _strip_robot_self_denials(
+                _tame_enthusiasm(_strip_assistant_tone(_strip_markdown(text.strip())))
+            )
         )
     )
     cleaned = re.sub(r"…+", ".", cleaned)
@@ -476,4 +505,4 @@ def polish_for_speech(text: str) -> str:
         flags=re.I,
     )
     cleaned = normalize_for_speech(cleaned)
-    return cleaned or text.strip()
+    return cleaned

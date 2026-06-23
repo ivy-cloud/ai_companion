@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   IDLE_LISTEN_RECOVERY_MS,
+  isOnlyOneRecordingStorm,
+  ONLY_ONE_STORM_COOLDOWN_MS,
   LISTEN_OPEN_GRACE_MS,
   LISTEN_PAUSED_STUCK_MS,
   LISTEN_RETRY_MS,
@@ -34,8 +36,10 @@ import {
   hasIncompleteThoughtEnding,
   SEMANTIC_TURN_EXTENSION_MS,
   isMeterSpeech,
+  isOnlyOneRecordingStorm,
   isSilenceForEndDetection,
   isSpeechLevel,
+  ONLY_ONE_STORM_COOLDOWN_MS,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
@@ -128,6 +132,13 @@ test('listen open grace: no force-idle while mic is still opening', () => {
 
 test('listen open grace: recording present is never forced idle', () => {
   assert.equal(shouldForceIdleListeningWithoutRecording(10_000, true), false);
+});
+
+test('onlyOne recording storm detection', () => {
+  assert.equal(isOnlyOneRecordingStorm(0, 0), false);
+  assert.equal(isOnlyOneRecordingStorm(1, 100), false);
+  assert.equal(isOnlyOneRecordingStorm(2, 1000), true);
+  assert.equal(isOnlyOneRecordingStorm(3, ONLY_ONE_STORM_COOLDOWN_MS + 1), false);
 });
 
 test('listen paused stuck: waits for idle recovery threshold', () => {
@@ -300,6 +311,9 @@ test('shouldCompanionInterruptUser: long live transcript lowers threshold', () =
   const medium = Array.from({ length: 23 }, (_, i) => `word${i}`).join(' ');
   assert.equal(shouldCompanionInterruptUser(8_999, medium), false);
   assert.equal(shouldCompanionInterruptUser(9_000, medium), true);
+  const steady = Array.from({ length: 16 }, (_, i) => `word${i}`).join(' ');
+  assert.equal(shouldCompanionInterruptUser(11_999, steady), false);
+  assert.equal(shouldCompanionInterruptUser(12_000, steady), true);
   const long = Array.from({ length: 46 }, (_, i) => `word${i}`).join(' ');
   assert.equal(shouldCompanionInterruptUser(5_999, long), false);
   assert.equal(shouldCompanionInterruptUser(6_000, long), true);

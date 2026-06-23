@@ -58,6 +58,8 @@ import {
   PHASE_OSCILLATION_COOLDOWN_MS,
   PHASE_OSCILLATION_MAX_FLIPS,
   PHASE_OSCILLATION_WINDOW_MS,
+  isOnlyOneRecordingStorm,
+  POST_TTS_ECHO_GRACE_MS,
   POST_TTS_LISTEN_COOLDOWN_MS,
   PROACTIVE_IDLE_MS,
   PROACTIVE_MAX_PER_SESSION,
@@ -385,6 +387,9 @@ export default function ChatScreen() {
   const phaseFlipTimesRef = useRef<number[]>([]);
   const lastWatchdogRecoveryAtRef = useRef(0);
   const conversationListenRetryCountRef = useRef(0);
+  const consecutiveOnlyOneFailuresRef = useRef(0);
+  const lastOnlyOneFailureAtRef = useRef(0);
+  const echoGraceUntilRef = useRef(0);
   const listenMeterBlockedSinceRef = useRef<number | null>(null);
   const phaseOscillationCooldownUntilRef = useRef(0);
   const conversationMeterTickInFlightRef = useRef(false);
@@ -1818,6 +1823,14 @@ export default function ChatScreen() {
       return;
     }
 
+    const onlyOneStorm = isOnlyOneRecordingStorm(
+      consecutiveOnlyOneFailuresRef.current,
+      Date.now() - lastOnlyOneFailureAtRef.current,
+    );
+    if (onlyOneStorm && conversationMicOpenInFlightRef.current) {
+      return;
+    }
+
     voiceLog('listen_paused_stuck', {
       reason,
       stuckMs,
@@ -1826,16 +1839,24 @@ export default function ChatScreen() {
       voiceSendLock: voiceSendLockRef.current,
       ttsBlocked: isTtsBlockingConversationListen(),
       listenGen: conversationListenGenRef.current,
+      onlyOneStorm,
+      onlyOneFailures: consecutiveOnlyOneFailuresRef.current,
     });
     clearConversationListenResumeTimer();
     voiceSendLockRef.current = false;
     chatInFlightRef.current = false;
     ensureUiUnlocked();
     await clearStaleTtsListenBlockers();
-    logVoiceState('watchdog_idle_reopen_listen', { stuckMs, reason });
+    await releaseAllActiveRecorders();
+    if (onlyOneStorm) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    logVoiceState('watchdog_idle_reopen_listen', { stuckMs, reason, onlyOneStorm });
     ensureListenChainRef.current = Promise.resolve();
-    resetConversationListenRetries();
-    scheduleConversationListen(0);
+    if (!onlyOneStorm) {
+      resetConversationListenRetries();
+    }
+    scheduleConversationListen(onlyOneStorm ? 600 : 0);
   };
 
   /** Unstick conversation mode after a missed interrupt / stale STT / failed listen transition. */
@@ -1845,6 +1866,10 @@ export default function ChatScreen() {
       voiceInputModeRef.current !== 'conversation' ||
       !voiceEnabledRef.current
     ) {
+      return;
+    }
+    if (partialSttRollInFlightRef.current) {
+      retryConversationListen(350);
       return;
     }
     const timing = voiceTurnTimingRef.current;
@@ -2078,7 +2103,6 @@ export default function ChatScreen() {
             return;
           }
         }
-        resetConversationListenRetries();
         voiceLog('schedule_listen_open', { delayMs });
         ensureConversationListening('scheduled_open');
       })();
@@ -2191,6 +2215,7 @@ export default function ChatScreen() {
         conversationSemanticExtensionUsedRef.current = false;
         clearLiveTranscript();
         resetConversationListenRetries();
+        consecutiveOnlyOneFailuresRef.current = 0;
         conversationMeterStateRef.current = createConversationMeterState();
         beginConversationListenMeter(listenGen);
         scheduleProactiveTurn();
@@ -2203,6 +2228,8 @@ export default function ChatScreen() {
         const onlyOne =
           raw.includes('Only one Recording') || raw.includes('one Recording object');
         if (onlyOne) {
+          consecutiveOnlyOneFailuresRef.current += 1;
+          lastOnlyOneFailureAtRef.current = Date.now();
           try {
             await stopPlayback();
             await releaseAllActiveRecorders();
@@ -2235,6 +2262,7 @@ export default function ChatScreen() {
               conversationSemanticExtensionUsedRef.current = false;
               clearLiveTranscript();
               resetConversationListenRetries();
+              consecutiveOnlyOneFailuresRef.current = 0;
               conversationMeterStateRef.current = createConversationMeterState();
               beginConversationListenMeter(listenGen);
               scheduleProactiveTurn();
@@ -2257,7 +2285,11 @@ export default function ChatScreen() {
           onlyOne,
         });
         setVoicePhaseTransition('idle');
-        retryConversationListen(onlyOne ? 400 : 500);
+        retryConversationListen(
+          onlyOne
+            ? Math.max(400, 200 * consecutiveOnlyOneFailuresRef.current)
+            : 500,
+        );
       }
     });
   };
@@ -2753,6 +2785,7 @@ export default function ChatScreen() {
   const isLikelyAssistantEcho = (transcript: string): boolean =>
     isLikelyAssistantEchoTranscript(transcript, lastAssistantTtsTextRef.current, {
       playbackActive: Boolean(activeSoundRef.current),
+      echoGraceUntilMs: echoGraceUntilRef.current,
       normalizeSpoken: (text) => prepareTextForSpeech(text).toLowerCase(),
       lastSentence: lastSentenceOf,
     });
@@ -3822,6 +3855,7 @@ export default function ChatScreen() {
 
       if (naturalFinish && isActiveSpeakGeneration(generation)) {
         markTtsPlaySettled(generation);
+        echoGraceUntilRef.current = Date.now() + POST_TTS_ECHO_GRACE_MS;
       }
 
       const played = sound;

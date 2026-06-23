@@ -77,3 +77,20 @@ test('echo: user speech after TTS is not suppressed', () => {
     false,
   );
 });
+
+test('echo: post-TTS grace catches near-exact tail echo', () => {
+  const assistant =
+    'I had a quiet morning. Would you like to hear about your sleep last night?';
+  assert.equal(
+    isLikelyAssistantEchoTranscript(
+      'would you like to hear about your sleep last night',
+      assistant,
+      {
+        playbackActive: false,
+        echoGraceUntilMs: Date.now() + 300,
+        lastSentence: (t) => t.split('.').pop()?.trim() ?? '',
+      },
+    ),
+    true,
+  );
+});

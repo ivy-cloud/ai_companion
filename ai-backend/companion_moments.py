@@ -143,7 +143,7 @@ def _fresh_opening_line(resolved: ResolvedClock) -> str:
         tail = " What's on your mind tonight?"
     line = f"{lead}{tail}"
     if len(line) > 220:
-        line = f"{lead} I'm here if you want to talk."
+        line = f"{lead} What's up?"
     return line
 
 
@@ -278,8 +278,17 @@ _VENT_THINK_THROUGH = re.compile(
     r"figure out|thinking through|weighing|decision|interview|"
     r"argument with|fight with|broke up|passed away|grieving|"
     r"can't sleep|insomnia|deadline|fired|laid off|"
-    r"feel like it(?:'s| is)|too late for|it's too late|i feel like"
+    r"feel like it(?:'s| is)|too late for|it's too late|i feel like|"
+    r"i(?:'m| am) (?:so )?bor(?:ed|ing)|(?:feel|feeling) (?:so )?bor(?:ed|ing)|bored-bored|feel boring"
     r")\b",
+    re.I,
+)
+
+_GREETING_TURN = re.compile(
+    r"^(?:"
+    r"hey|hi|hello|yo|sup|howdy|good (?:morning|evening|afternoon)|"
+    r"what(?:'s| is) up|whats up"
+    r")(?:\s+[\w][\w'-]{0,24})?[.!?]*$",
     re.I,
 )
 
@@ -297,6 +306,40 @@ _ADVICE_SEEKING = re.compile(
     r")\b",
     re.I,
 )
+
+
+def is_greeting_turn(message: str) -> bool:
+    """Bare hello / name check-in — friend opener, not dossier recap."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    stripped = re.sub(
+        r"(?:,?\s*)?(?:jessica|king)(?:\s+king)?[.!?]*\s*$",
+        "",
+        text,
+        flags=re.I,
+    ).strip()
+    if not stripped:
+        return True
+    if _GREETING_TURN.match(stripped):
+        return True
+    words = stripped.split()
+    return len(words) <= 2 and stripped.lower().rstrip(".!?") in (
+        "hey",
+        "hi",
+        "hello",
+        "yo",
+        "sup",
+    )
+
+
+def greeting_turn_hint(message: str, *, casual: bool) -> str:
+    if not casual or not is_greeting_turn(message):
+        return ""
+    return (
+        "Greeting — curious friend hello (Hey — what's up?). "
+        "No dossier callbacks, no 'glad we connected', no memory recap on hello."
+    )
 
 
 def is_advice_seeking(message: str) -> bool:
@@ -332,7 +375,7 @@ def think_through_turn_hint(message: str, *, casual: bool) -> str:
         return ""
     if not is_vent_message(text):
         return ""
-    if not _stable_roll(text, "think_through", 0.12):
+    if not incomplete and not _stable_roll(text, "think_through", 0.12):
         return ""
 
     return (
@@ -389,7 +432,7 @@ def active_listening_turn_hint(message: str, *, casual: bool) -> str:
     text = message.strip()
     if not text or profile.is_memory_recall_question(text):
         return ""
-    if len(text.split()) < 10:
+    if len(text.split()) < 8:
         return ""
     if not _stable_roll(text, "active_listen", 0.09):
         return ""

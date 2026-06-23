@@ -106,6 +106,7 @@ DIRECT_MATH_INSTRUCTIONS = (
 
 DIRECT_FACTUAL_HINT = (
     "Direct answer in your own words — digest any fact check, never read snippets aloud. "
+    "Friend on the phone, not newsreader — no 'according to', no source lists, no cheerleader after the fact. "
     "Do not mention current time, date, or saved friend notes unless asked."
 )
 
@@ -196,6 +197,7 @@ def build_turn_hints(
     moment = ""
     continuity = ""
     curiosity = ""
+    greeting = ""
     think_through = ""
     vent = ""
     journal = ""
@@ -218,6 +220,9 @@ def build_turn_hints(
         curiosity = companion_moments.curiosity_turn_hint(trimmed, casual=True)
         if curiosity:
             curiosity = f" {curiosity}"
+        greeting = companion_moments.greeting_turn_hint(trimmed, casual=True)
+        if greeting:
+            greeting = f" {greeting}"
         vent = companion_moments.vent_turn_hint(trimmed, casual=True)
         if vent:
             vent = f" {vent}"
@@ -239,7 +244,10 @@ def build_turn_hints(
         silence = silence_comfort_turn_hint(trimmed, emotion_hint)
         if silence:
             silence = f" {silence}"
-    her_hints = f"{continuity}{curiosity}{vent}{think_through}{journal}{active_listen}{friend_reaction}{silence}"
+    her_hints = (
+        f"{continuity}{curiosity}{greeting}{vent}{think_through}"
+        f"{journal}{active_listen}{friend_reaction}{silence}"
+    )
     monologue = monologue_interrupt_turn_hint(trimmed, jumped_in=companion_jumped_in)
     if monologue:
         monologue = f" {monologue}"

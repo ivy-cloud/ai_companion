@@ -210,6 +210,39 @@ class CompanionMomentsTests(unittest.TestCase):
             hint = companion_moments.friend_reaction_turn_hint(msg, casual=True)
         self.assertIn("Friend reaction", hint)
 
+    def test_greeting_turn_detection(self) -> None:
+        self.assertTrue(companion_moments.is_greeting_turn("Hello."))
+        self.assertTrue(companion_moments.is_greeting_turn("Hello, Jessica King."))
+        self.assertTrue(companion_moments.is_greeting_turn("Hey"))
+        self.assertFalse(companion_moments.is_greeting_turn("I feel like it's too late"))
+
+    def test_greeting_turn_hint(self) -> None:
+        hint = companion_moments.greeting_turn_hint("Hello, Jessica.", casual=True)
+        self.assertIn("Greeting", hint)
+        self.assertIn("dossier", hint.lower())
+
+    def test_boredom_routes_as_vent(self) -> None:
+        self.assertTrue(companion_moments.is_vent_message("I'm boring. January."))
+        hint = companion_moments.vent_turn_hint("I feel so bored tonight", casual=True)
+        self.assertIn("Vent", hint)
+
+    def test_think_through_always_on_incomplete_vent(self) -> None:
+        msg = "Jessica, I feel like it's too late for."
+        with patch.object(companion_moments, "_stable_roll", return_value=False):
+            hint = companion_moments.think_through_turn_hint(msg, casual=True)
+        self.assertIn("Think-with", hint)
+
+    def test_active_listening_eight_word_minimum(self) -> None:
+        msg = "Work was brutal today honestly three meetings back to back"
+        with patch.object(companion_moments, "_stable_roll", return_value=True):
+            hint = companion_moments.active_listening_turn_hint(msg, casual=True)
+        self.assertIn("Active listening", hint)
+        short = "Work was brutal today honestly"
+        self.assertEqual(
+            companion_moments.active_listening_turn_hint(short, casual=True),
+            "",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

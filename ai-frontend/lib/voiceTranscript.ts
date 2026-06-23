@@ -90,26 +90,39 @@ export function isLikelyAssistantEchoTranscript(
   assistantSpokenText: string,
   options: {
     playbackActive: boolean;
+    echoGraceUntilMs?: number;
+    nowMs?: number;
     normalizeSpoken?: (text: string) => string;
     lastSentence?: (text: string) => string;
   },
 ): boolean {
-  if (!options.playbackActive) return false;
+  const now = options.nowMs ?? Date.now();
+  const inPlayback = options.playbackActive;
+  const inGrace =
+    options.echoGraceUntilMs != null && now < options.echoGraceUntilMs;
+  if (!inPlayback && !inGrace) return false;
 
   const normalize = options.normalizeSpoken ?? ((t: string) => t.trim().toLowerCase());
   const heard = normalize(transcript);
   const spoken = normalize(assistantSpokenText);
   if (!heard || heard.length < 6 || !spoken) return false;
-  if (spoken.includes(heard) || heard.includes(spoken)) return true;
 
   const tailSource = options.lastSentence?.(assistantSpokenText) ?? '';
-  if (!tailSource) return false;
+  const tailNorm = tailSource ? normalize(tailSource) : '';
 
-  const tailNorm = normalize(tailSource);
-  if (tailNorm.includes(heard) || heard.includes(tailNorm)) return true;
+  if (inPlayback) {
+    if (spoken.includes(heard) || heard.includes(spoken)) return true;
+    if (!tailNorm) return false;
+    if (tailNorm.includes(heard) || heard.includes(tailNorm)) return true;
+    const heardWords = heard.split(/\s+/).filter((w) => w.length > 2);
+    const tailWords = new Set(tailNorm.split(/\s+/).filter((w) => w.length > 2));
+    const overlap = heardWords.filter((w) => tailWords.has(w)).length;
+    return heardWords.length >= 3 && overlap >= Math.min(4, heardWords.length);
+  }
 
-  const heardWords = heard.split(/\s+/).filter((w) => w.length > 2);
-  const tailWords = new Set(tailNorm.split(/\s+/).filter((w) => w.length > 2));
-  const overlap = heardWords.filter((w) => tailWords.has(w)).length;
-  return heardWords.length >= 3 && overlap >= Math.min(4, heardWords.length);
+  // Post-TTS grace — only near-exact tail echo, not real user speech.
+  if (tailNorm && (tailNorm.includes(heard) || heard.includes(tailNorm))) {
+    return heard.length >= 8;
+  }
+  return spoken.includes(heard) && heard.length >= 10;
 }

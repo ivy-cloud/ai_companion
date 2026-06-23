@@ -100,8 +100,23 @@ export const BARGE_IN_COOLDOWN_MS = 2000;
  * Listen is blocked while activeSound/drain/queue remain; STT echo uses
  * isLikelyAssistantEchoTranscript once the recorder is open.
  */
-/** Brief echo-decay window after TTS — barge-in monitor stays hot during playback. */
+/** Brief cooldown before scheduling listen after TTS ends (ms). */
 export const POST_TTS_LISTEN_COOLDOWN_MS = 150;
+
+/** Brief post-TTS window — mic may still pick up speaker tail before echo decay. */
+export const POST_TTS_ECHO_GRACE_MS = 400;
+
+/** iOS "Only one Recording" storm — suppress watchdog reset while failures cluster. */
+export const ONLY_ONE_STORM_COOLDOWN_MS = 5000;
+
+export function isOnlyOneRecordingStorm(
+  consecutiveFailures: number,
+  msSinceLastFailure: number,
+): boolean {
+  return (
+    consecutiveFailures >= 2 && msSinceLastFailure < ONLY_ONE_STORM_COOLDOWN_MS
+  );
+}
 
 /** Retry cadence when listen is temporarily blocked by TTS/drain/in-flight states. */
 export const LISTEN_RETRY_MS = 180;
@@ -236,7 +251,8 @@ export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 2_800;
 export const COMPANION_INTERRUPT_ACKS = [
   'Wait wait—',
   'Oh— hang on—',
-  'Okay okay—',
+  'Hold on—',
+  'Right—',
   'Can I jump in?',
   'Oh wait—',
 ] as const;
@@ -265,6 +281,8 @@ export function shouldCompanionInterruptUser(
     thresholdMs = Math.min(thresholdMs, 6_000);
   } else if (words >= 22) {
     thresholdMs = Math.min(thresholdMs, 9_000);
+  } else if (words >= 15) {
+    thresholdMs = Math.min(thresholdMs, 12_000);
   }
   if (speechMs < thresholdMs) return false;
   if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) return false;

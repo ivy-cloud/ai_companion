@@ -315,6 +315,23 @@ _SOCIAL_CHECKIN = re.compile(
 )
 
 
+_GREETING = re.compile(
+    r"^(?:"
+    r"hi|hey|hello|yo|sup|howdy|"
+    r"good (?:morning|afternoon|evening|night)"
+    r")(?:\s*,?\s*(?:jessica|king).*)?[.!?]*$",
+    re.I,
+)
+
+
+def is_greeting(message: str) -> bool:
+    """Bare hello/hi — curious friend opener, not assistant script."""
+    text = message.strip()
+    if not text:
+        return False
+    return bool(_GREETING.match(text))
+
+
 def is_casual_day_comment(message: str) -> bool:
     """User stating the day casually — not asking what day it is."""
     text = message.strip()

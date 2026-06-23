@@ -127,14 +127,15 @@ def monologue_interrupt_turn_hint(message: str, *, jumped_in: bool = False) -> s
     words = len(message.split())
     if jumped_in and words >= 12:
         return (
-            "You jumped in like a friend mid-story — they were still talking. "
-            "One warm brief ack, then your reaction or a gentle question about "
-            "what they said so far; don't recap or lecture."
+            "You jumped in like a friend mid-story — cooperative interrupt only. "
+            "One warm brief ack (wait / oh hang on / right), then react to what "
+            "they said so far — echo a phrase or ask one gentle what/how; "
+            "don't recap, lecture, or change the subject."
         )
     if words < 45:
         return ""
     return (
-        "Long story — gently jump in like a friend: one brief ack "
+        "Long story — cooperative jump-in: one brief ack "
         "(wait / oh hang on), then respond to what they said; no lecture."
     )
 
@@ -143,12 +144,17 @@ def friend_social_turn_hint(message: str, *, casual: bool) -> str:
     """Anti-assistant nudge for social small talk and casual day comments."""
     if not casual:
         return ""
-    from context import is_casual_day_comment, is_social_checkin
+    from context import is_casual_day_comment, is_greeting, is_social_checkin
 
     text = message.strip()
     if not text:
         return ""
     parts: list[str] = []
+    if is_greeting(text):
+        parts.append(
+            "Greeting — curious friend hello (Hey — what's up?); "
+            "never 'glad we connected', dossier callback, or helper opener."
+        )
     if is_casual_day_comment(text):
         parts.append(
             "Casual day comment — friend vibe, not calendar police. "
@@ -182,7 +188,7 @@ def rhythm_stream_meta(
     }
     if ack:
         meta["fast_ack"] = ack
-    if len(message.split()) >= 45:
+    if len(message.split()) >= 28:
         meta["companion_interrupt"] = True
     try:
         import profile_growth
