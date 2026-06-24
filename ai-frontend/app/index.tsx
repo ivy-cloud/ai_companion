@@ -59,6 +59,8 @@ import {
   PHASE_OSCILLATION_MAX_FLIPS,
   PHASE_OSCILLATION_WINDOW_MS,
   isOnlyOneRecordingStorm,
+  recordingStormBackoffDelayMs,
+  shouldBlockWatchdogDuringRecordingStorm,
   POST_TTS_ECHO_GRACE_MS,
   POST_TTS_LISTEN_COOLDOWN_MS,
   PROACTIVE_IDLE_MS,
@@ -899,7 +901,23 @@ export default function ChatScreen() {
     return false;
   };
 
+  const getRecordingStormState = () => {
+    const msSince = Date.now() - lastOnlyOneFailureAtRef.current;
+    const failures = consecutiveOnlyOneFailuresRef.current;
+    return {
+      failures,
+      msSince,
+      active: isOnlyOneRecordingStorm(failures, msSince),
+      blockWatchdog: shouldBlockWatchdogDuringRecordingStorm(failures, msSince),
+      backoffMs: recordingStormBackoffDelayMs(failures, msSince),
+    };
+  };
+
   const retryConversationListen = (minDelayMs = LISTEN_RETRY_MS) => {
+    const storm = getRecordingStormState();
+    if (storm.backoffMs > 0) {
+      minDelayMs = Math.max(minDelayMs, storm.backoffMs);
+    }
     if (!bumpConversationListenRetry()) {
       conversationMicOpenInFlightRef.current = false;
       setRecordingPrewarmBlocked(false);
@@ -1443,6 +1461,7 @@ export default function ChatScreen() {
     if (partialSttRollInFlightRef.current || listenChunkCommitInFlightRef.current) {
       return;
     }
+    if (getRecordingStormState().blockWatchdog) return;
     if (listenGen !== conversationListenGenRef.current) return;
     const rec = recordingRef.current;
     if (!rec || voicePhaseRef.current !== 'listening') return;
@@ -1455,8 +1474,12 @@ export default function ChatScreen() {
         if (!active || voicePhaseRef.current !== 'listening') return;
 
         const uri = await stopRecordingToUri(active);
+        recordingRef.current = null;
+        recordingStartedAtRef.current = 0;
         lastPartialSttAtRef.current = Date.now();
-        const newRec = await startConversationRecording();
+        const newRec = await startConversationRecording({
+          slotSettleMs: 120,
+        });
         if (
           listenGen !== conversationListenGenRef.current ||
           voicePhaseRef.current !== 'listening'
@@ -1498,7 +1521,14 @@ export default function ChatScreen() {
           message: err instanceof Error ? err.message : 'unknown',
         });
         recordingRef.current = null;
-        ensureConversationListening('partial_stt_roll_failed');
+        ensureListenChainRef.current = Promise.resolve();
+        conversationListenGenRef.current += 1;
+        const storm = getRecordingStormState();
+        if (storm.backoffMs > 0) {
+          scheduleConversationListen(storm.backoffMs);
+        } else {
+          ensureConversationListening('partial_stt_roll_failed');
+        }
       }
     } finally {
       partialSttRollInFlightRef.current = false;
@@ -1823,10 +1853,18 @@ export default function ChatScreen() {
       return;
     }
 
-    const onlyOneStorm = isOnlyOneRecordingStorm(
-      consecutiveOnlyOneFailuresRef.current,
-      Date.now() - lastOnlyOneFailureAtRef.current,
-    );
+    const storm = getRecordingStormState();
+    if (storm.blockWatchdog) {
+      voiceLog('listen_paused_storm_backoff', {
+        reason,
+        stuckMs,
+        failures: storm.failures,
+        backoffMs: storm.backoffMs,
+      });
+      return;
+    }
+
+    const onlyOneStorm = storm.active;
     if (onlyOneStorm && conversationMicOpenInFlightRef.current) {
       return;
     }
@@ -1849,14 +1887,14 @@ export default function ChatScreen() {
     await clearStaleTtsListenBlockers();
     await releaseAllActiveRecorders();
     if (onlyOneStorm) {
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await new Promise((resolve) => setTimeout(resolve, storm.backoffMs));
     }
     logVoiceState('watchdog_idle_reopen_listen', { stuckMs, reason, onlyOneStorm });
     ensureListenChainRef.current = Promise.resolve();
     if (!onlyOneStorm) {
       resetConversationListenRetries();
     }
-    scheduleConversationListen(onlyOneStorm ? 600 : 0);
+    scheduleConversationListen(onlyOneStorm ? storm.backoffMs : 0);
   };
 
   /** Unstick conversation mode after a missed interrupt / stale STT / failed listen transition. */
@@ -1870,6 +1908,16 @@ export default function ChatScreen() {
     }
     if (partialSttRollInFlightRef.current) {
       retryConversationListen(350);
+      return;
+    }
+    const storm = getRecordingStormState();
+    if (storm.active && conversationMicOpenInFlightRef.current) {
+      voiceLog('ensure_listen_storm_deferred', {
+        reason,
+        failures: storm.failures,
+        backoffMs: storm.backoffMs,
+      });
+      retryConversationListen(storm.backoffMs);
       return;
     }
     const timing = voiceTurnTimingRef.current;
@@ -2016,6 +2064,10 @@ export default function ChatScreen() {
     if (Date.now() < phaseOscillationCooldownUntilRef.current) {
       delayMs = Math.max(delayMs, LISTEN_RETRY_MAX_DELAY_MS);
     }
+    const storm = getRecordingStormState();
+    if (storm.backoffMs > 0) {
+      delayMs = Math.max(delayMs, storm.backoffMs);
+    }
     if (delayMs !== LISTEN_RETRY_MS && lastListenScheduleAtRef.current !== null) {
       const sinceLast = Date.now() - lastListenScheduleAtRef.current;
       if (sinceLast < MIN_SCHEDULE_LISTEN_MS) {
@@ -2154,6 +2206,8 @@ export default function ChatScreen() {
       stopConversationBargeIn();
       stopConversationMetering();
       await releaseAllActiveRecorders();
+      recordingRef.current = null;
+      recordingStartedAtRef.current = 0;
 
       if (voicePhaseRef.current === 'speaking' && !options?.resumeAfterInterrupt) {
         interruptAssistant({ keepConversationSession: true });
@@ -2183,8 +2237,13 @@ export default function ChatScreen() {
 
       try {
         await stopPlayback();
+        recordingRef.current = null;
+        recordingStartedAtRef.current = 0;
         await releaseAllActiveRecorders();
-        const recording = await startConversationRecording();
+        const storm = getRecordingStormState();
+        const recording = await startConversationRecording({
+          slotSettleMs: storm.failures > 0 ? Math.max(200, storm.backoffMs / 4) : 50,
+        });
         if (listenGen !== conversationListenGenRef.current || !conversationSessionRef.current) {
           await safeUnloadRecording(recording);
           retryConversationListen();
@@ -2230,14 +2289,25 @@ export default function ChatScreen() {
         if (onlyOne) {
           consecutiveOnlyOneFailuresRef.current += 1;
           lastOnlyOneFailureAtRef.current = Date.now();
+          const retryGen = ++conversationListenGenRef.current;
+          ensureListenChainRef.current = Promise.resolve();
+          conversationMicOpenInFlightRef.current = false;
+          const stormBackoff = recordingStormBackoffDelayMs(
+            consecutiveOnlyOneFailuresRef.current,
+            0,
+          );
           try {
             await stopPlayback();
             await releaseAllActiveRecorders();
+            recordingRef.current = null;
+            recordingStartedAtRef.current = 0;
             await discardPrewarm();
-            await new Promise((resolve) => setTimeout(resolve, 120));
-            const recording = await startConversationRecording();
+            await new Promise((resolve) => setTimeout(resolve, stormBackoff));
+            const recording = await startConversationRecording({
+              slotSettleMs: Math.max(250, stormBackoff / 2),
+            });
             if (
-              listenGen === conversationListenGenRef.current &&
+              retryGen === conversationListenGenRef.current &&
               conversationSessionRef.current
             ) {
               recordingRef.current = recording;
@@ -2264,7 +2334,7 @@ export default function ChatScreen() {
               resetConversationListenRetries();
               consecutiveOnlyOneFailuresRef.current = 0;
               conversationMeterStateRef.current = createConversationMeterState();
-              beginConversationListenMeter(listenGen);
+              beginConversationListenMeter(retryGen);
               scheduleProactiveTurn();
               if (micOpenAtRef.current !== null) {
                 voiceLog('listen_ready', {
@@ -2287,7 +2357,10 @@ export default function ChatScreen() {
         setVoicePhaseTransition('idle');
         retryConversationListen(
           onlyOne
-            ? Math.max(400, 200 * consecutiveOnlyOneFailuresRef.current)
+            ? recordingStormBackoffDelayMs(
+                consecutiveOnlyOneFailuresRef.current,
+                Date.now() - lastOnlyOneFailureAtRef.current,
+              )
             : 500,
         );
       }
@@ -4390,6 +4463,10 @@ export default function ChatScreen() {
         voiceInputModeRef.current === 'conversation' &&
         stuckMs > LISTENING_STUCK_MS
       ) {
+        const storm = getRecordingStormState();
+        if (storm.blockWatchdog) {
+          return;
+        }
         const noRecording = !recordingRef.current;
         const msInPhase = stuckMs;
         if (
@@ -4455,6 +4532,10 @@ export default function ChatScreen() {
           Boolean(conversationListenResumeTimerRef.current),
         )
       ) {
+        const storm = getRecordingStormState();
+        if (storm.blockWatchdog) {
+          return;
+        }
         const now = Date.now();
         if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
           return;
@@ -4471,6 +4552,10 @@ export default function ChatScreen() {
         !recordingRef.current &&
         shouldRecoverOpeningMicStuck(lastListenScheduleAtRef.current, Date.now())
       ) {
+        const storm = getRecordingStormState();
+        if (storm.blockWatchdog) {
+          return;
+        }
         const now = Date.now();
         if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
           return;

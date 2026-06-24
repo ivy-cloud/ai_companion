@@ -15,6 +15,9 @@ dist/
 web-build/
 *.tsbuildinfo
 
+# Voice learning runtime logs
+docs/voice-learning*.log
+
 # OS / IDE
 .DS_Store
 *.pem

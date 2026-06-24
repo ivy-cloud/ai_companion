@@ -3,6 +3,9 @@ import {
   IDLE_LISTEN_RECOVERY_MS,
   isOnlyOneRecordingStorm,
   ONLY_ONE_STORM_COOLDOWN_MS,
+  ONLY_ONE_STORM_MIN_RETRY_MS,
+  recordingStormBackoffDelayMs,
+  shouldBlockWatchdogDuringRecordingStorm,
   LISTEN_OPEN_GRACE_MS,
   LISTEN_PAUSED_STUCK_MS,
   LISTEN_RETRY_MS,
@@ -36,10 +39,8 @@ import {
   hasIncompleteThoughtEnding,
   SEMANTIC_TURN_EXTENSION_MS,
   isMeterSpeech,
-  isOnlyOneRecordingStorm,
   isSilenceForEndDetection,
   isSpeechLevel,
-  ONLY_ONE_STORM_COOLDOWN_MS,
   shouldForceIdleListeningWithoutRecording,
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
@@ -139,6 +140,23 @@ test('onlyOne recording storm detection', () => {
   assert.equal(isOnlyOneRecordingStorm(1, 100), false);
   assert.equal(isOnlyOneRecordingStorm(2, 1000), true);
   assert.equal(isOnlyOneRecordingStorm(3, ONLY_ONE_STORM_COOLDOWN_MS + 1), false);
+});
+
+test('recording storm backoff scales with failures', () => {
+  assert.equal(recordingStormBackoffDelayMs(0, 0), 0);
+  assert.ok(recordingStormBackoffDelayMs(2, 500) >= ONLY_ONE_STORM_MIN_RETRY_MS);
+  assert.ok(
+    recordingStormBackoffDelayMs(3, 100) >= ONLY_ONE_STORM_COOLDOWN_MS - 100,
+  );
+});
+
+test('watchdog blocked during recording storm', () => {
+  assert.equal(shouldBlockWatchdogDuringRecordingStorm(1, 100), false);
+  assert.equal(shouldBlockWatchdogDuringRecordingStorm(2, 1000), true);
+  assert.equal(
+    shouldBlockWatchdogDuringRecordingStorm(2, ONLY_ONE_STORM_COOLDOWN_MS),
+    false,
+  );
 });
 
 test('listen paused stuck: waits for idle recovery threshold', () => {

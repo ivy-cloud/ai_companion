@@ -276,6 +276,7 @@ _VENT_THINK_THROUGH = re.compile(
     r"stressed|overwhelmed|anxious|worried|scared|hard day|rough day|"
     r"don't know (?:what|how|if)|not sure (?:what|how|if)|"
     r"figure out|thinking through|weighing|decision|interview|"
+    r"failed (?:the|my|an?)|didn'?t get|got rejected|rejected (?:from|for)|flunked|"
     r"argument with|fight with|broke up|passed away|grieving|"
     r"can't sleep|insomnia|deadline|fired|laid off|"
     r"feel like it(?:'s| is)|too late for|it's too late|i feel like|"
@@ -295,6 +296,14 @@ _GREETING_TURN = re.compile(
 _INCOMPLETE_VENT = re.compile(
     r"\b(?:"
     r"feel like it(?:'s| is) too late|too late for|it's too late|i feel like"
+    r")\b",
+    re.I,
+)
+
+_SETBACK_NEWS = re.compile(
+    r"\b(?:"
+    r"failed (?:the|my|an?)|didn'?t get (?:the|it|in)|got rejected|"
+    r"rejected (?:from|for|me)|flunked|didn'?t pass|didn'?t make it"
     r")\b",
     re.I,
 )
@@ -371,10 +380,16 @@ def think_through_turn_hint(message: str, *, casual: bool) -> str:
             "no numbered list, no sleep lecture, no 'you could try' stack."
         )
     incomplete = bool(_INCOMPLETE_VENT.search(text))
+    setback = bool(_SETBACK_NEWS.search(text))
     if not incomplete and len(text.split()) < 8:
         return ""
-    if not is_vent_message(text):
+    if not is_vent_message(text) and not setback:
         return ""
+    if setback and not is_advice_seeking(text):
+        return (
+            "Setback news — brief honest reaction (Damn. / That's rough.) then one what/how "
+            "follow-up; no tips unless they asked what to do."
+        )
     if not incomplete and not _stable_roll(text, "think_through", 0.12):
         return ""
 

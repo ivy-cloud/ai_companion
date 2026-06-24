@@ -232,6 +232,13 @@ class CompanionMomentsTests(unittest.TestCase):
             hint = companion_moments.think_through_turn_hint(msg, casual=True)
         self.assertIn("Think-with", hint)
 
+    def test_think_through_setback_news(self) -> None:
+        msg = "I failed the interview today and I feel awful"
+        with patch.object(companion_moments, "_stable_roll", return_value=False):
+            hint = companion_moments.think_through_turn_hint(msg, casual=True)
+        self.assertIn("Setback news", hint)
+        self.assertIn("what/how", hint.lower())
+
     def test_active_listening_eight_word_minimum(self) -> None:
         msg = "Work was brutal today honestly three meetings back to back"
         with patch.object(companion_moments, "_stable_roll", return_value=True):

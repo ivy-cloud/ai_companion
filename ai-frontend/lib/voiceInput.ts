@@ -193,9 +193,11 @@ export async function discardPrewarm(): Promise<void> {
 }
 
 /** Free Expo's single prepared Recording slot before opening conversation mic. */
-export async function ensureRecordingSlotFree(): Promise<void> {
+export async function ensureRecordingSlotFree(waitMs = 50): Promise<void> {
   await discardPrewarm();
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
 }
 
 /** Start recording using prewarmed instance when available. */
@@ -206,10 +208,14 @@ const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
 
 /** Conversation mode: metering enabled for silence / speech detection.
  * Caller must hold the recording mutex (see startConversationListening). */
-export async function startConversationRecording(): Promise<Audio.Recording> {
+export async function startConversationRecording(options?: {
+  /** Extra settle time after releasing stale recorders (iOS storm recovery). */
+  slotSettleMs?: number;
+}): Promise<Audio.Recording> {
+  const slotSettleMs = options?.slotSettleMs ?? 50;
   return withTimeout(
     (async () => {
-      await ensureRecordingSlotFree();
+      await ensureRecordingSlotFree(slotSettleMs);
       await prepareForConversationListen();
       const recording = new Audio.Recording();
       await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);

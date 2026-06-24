@@ -107,9 +107,39 @@ export const POST_TTS_LISTEN_COOLDOWN_MS = 150;
 export const POST_TTS_ECHO_GRACE_MS = 400;
 
 /** iOS "Only one Recording" storm — suppress watchdog reset while failures cluster. */
-export const ONLY_ONE_STORM_COOLDOWN_MS = 5000;
+export const ONLY_ONE_STORM_COOLDOWN_MS = 12_000;
+
+/** Minimum retry gap after a single prepare failure (ms). */
+export const ONLY_ONE_STORM_MIN_RETRY_MS = 900;
 
 export function isOnlyOneRecordingStorm(
+  consecutiveFailures: number,
+  msSinceLastFailure: number,
+): boolean {
+  return (
+    consecutiveFailures >= 2 && msSinceLastFailure < ONLY_ONE_STORM_COOLDOWN_MS
+  );
+}
+
+/** Backoff before the next listen open while iOS still holds a stale Recording slot. */
+export function recordingStormBackoffDelayMs(
+  consecutiveFailures: number,
+  msSinceLastFailure: number,
+): number {
+  if (consecutiveFailures <= 0) return 0;
+  const remainingCooldown = ONLY_ONE_STORM_COOLDOWN_MS - msSinceLastFailure;
+  const failureScaled = ONLY_ONE_STORM_MIN_RETRY_MS * Math.min(consecutiveFailures, 8);
+  if (isOnlyOneRecordingStorm(consecutiveFailures, msSinceLastFailure)) {
+    return Math.max(ONLY_ONE_STORM_MIN_RETRY_MS, failureScaled, remainingCooldown);
+  }
+  if (consecutiveFailures >= 1 && remainingCooldown > 0) {
+    return Math.max(ONLY_ONE_STORM_MIN_RETRY_MS, remainingCooldown);
+  }
+  return Math.max(0, failureScaled);
+}
+
+/** Watchdog must not pile on schedule_listen while storm backoff is active. */
+export function shouldBlockWatchdogDuringRecordingStorm(
   consecutiveFailures: number,
   msSinceLastFailure: number,
 ): boolean {
