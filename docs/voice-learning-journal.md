@@ -228,3 +228,25 @@ Sample bullets from doc:
 - | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
 _Full file: docs/natural-human-chat.md_
 
+
+## 2026-06-24 (autonomous pass — iOS mic + setback voice)
+
+**Scan:** 0 chat turn(s) in `session_log.jsonl`. `daily_voice_learning.py --hours 0 --deep` — no new patterns.
+
+**iOS mic recovery (`listen_open_failed` storm):**
+- `ONLY_ONE_STORM_COOLDOWN_MS` 5s → 12s; `recordingStormBackoffDelayMs` + `shouldBlockWatchdogDuringRecordingStorm`
+- Watchdog idle/listening/opening-mic paths skip during storm backoff
+- `ensureConversationListening` defers when storm + mic open in flight; `schedule_listen` honors backoff
+- Discard stale `recordingRef` before prepare; `startConversationRecording({ slotSettleMs })` for iOS slot settle
+- Partial-STT roll blocked during storm; failure path schedules backoff instead of immediate reopen
+- Fixed inline only-one retry using fresh `retryGen` (was invalidated by gen bump)
+
+**Friend voice:**
+- Setback news (`failed interview`, `didn't get`, `rejected`) → always-on think-through hint (Damn / one what-how)
+
+**Hygiene:** `docs/voice-learning*.log` in `.gitignore`
+
+**Tests:** backend 98 passed, frontend 22 passed.
+
+**Phone retest:** Hello opener + incomplete vent after a multi-turn session (mic storm target).
+
