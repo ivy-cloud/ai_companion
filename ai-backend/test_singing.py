@@ -30,6 +30,29 @@ class SingingTests(unittest.TestCase):
     def test_non_song_request_returns_none(self) -> None:
         self.assertIsNone(singing.build_song_reply("Tell me a joke"))
 
+    def test_extracts_custom_topic(self) -> None:
+        self.assertEqual(singing.extract_song_topic("sing about my dog"), "dog")
+        self.assertEqual(
+            singing.extract_song_topic("birthday song for Alex"),
+            "Alex",
+        )
+
+    def test_should_use_llm_for_themed_song(self) -> None:
+        self.assertTrue(singing.should_use_llm_song("sing a song about the lake"))
+        self.assertTrue(singing.should_use_llm_song("birthday song for Jamie"))
+        self.assertFalse(singing.should_use_llm_song("sing me something chill"))
+        self.assertFalse(singing.should_use_llm_song('Sing "Shape of You" by Ed Sheeran'))
+
+    def test_singing_llm_hint_includes_topic(self) -> None:
+        hint = singing.singing_llm_turn_hint("sing about my dog")
+        self.assertIn("dog", hint.lower())
+        self.assertIn("original", hint.lower())
+
+    def test_generic_song_still_canned(self) -> None:
+        self.assertFalse(singing.should_use_llm_song("Can you sing me a lullaby?"))
+        reply = singing.build_song_reply("Can you sing me a lullaby?")
+        self.assertIsNotNone(reply)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -61,6 +61,37 @@ _MOOD_HINTS: list[tuple[str, str]] = [
     ("romantic", "tender"),
 ]
 
+_TOPIC_ABOUT = re.compile(
+    r"\b(?:"
+    r"(?:sing|write|make|rap)(?:\s+me)?(?:\s+a)?(?:\s+(?:song|rap|verse))?\s+about\s+(.+?)(?:[.!?]|$)|"
+    r"(?:song|rap|verse|lullaby)\s+about\s+(.+?)(?:[.!?]|$)|"
+    r"about\s+my\s+(.+?)(?:[.!?]|$)"
+    r")\b",
+    re.I,
+)
+
+_TOPIC_FOR = re.compile(
+    r"\b(?:"
+    r"(?:birthday|bday|wedding|anniversary|graduation|farewell|goodbye|welcome|"
+    r"retirement|promotion|valentine(?:'s)?)\s+song(?:\s+for\s+(.+?))?(?:[.!?]|$)|"
+    r"song\s+for\s+(.+?)(?:[.!?]|$)|"
+    r"sing\s+(?:to|for)\s+(.+?)(?:[.!?]|$)|"
+    r"dedicate(?:\s+a\s+song)?\s+to\s+(.+?)(?:[.!?]|$)"
+    r")\b",
+    re.I,
+)
+
+_GENERIC_ONLY = re.compile(
+    r"^(?:"
+    r"(?:can you |could you |please )?"
+    r"(?:sing|hum)(?:\s+me)?(?:\s+(?:something|anything|a\s+(?:song|tune|lullaby|verse)))?"
+    r"|(?:sing|hum)\s+(?:something|anything)"
+    r"|(?:drop|spit)\s+(?:a\s+)?(?:quick\s+)?(?:rap|verse|bars?)"
+    r"|make\s+me\s+a\s+(?:song|rap|tune)"
+    r")\.?$",
+    re.I,
+)
+
 
 @dataclass(frozen=True)
 class SingingIntent:
@@ -73,6 +104,90 @@ class SingingIntent:
 def is_song_request(message: str) -> bool:
     text = message.strip()
     return bool(text and _SING_INTENT.search(text))
+
+
+def extract_song_topic(message: str) -> str | None:
+    """Pull a custom theme, subject, or dedicatee from the request."""
+    text = message.strip()
+    if not text:
+        return None
+
+    for match in _TOPIC_ABOUT.finditer(text):
+        for group in match.groups():
+            if group:
+                topic = _clean_topic(group)
+                if topic:
+                    return topic
+
+    for match in _TOPIC_FOR.finditer(text):
+        groups = [g for g in match.groups() if g]
+        if groups:
+            topic = _clean_topic(groups[0])
+            if topic:
+                return topic
+        occasion = match.group(0).split()[0].lower()
+        if occasion in {"birthday", "bday", "wedding", "anniversary", "graduation"}:
+            return f"{occasion} song"
+
+    return None
+
+
+def _clean_topic(raw: str) -> str:
+    topic = raw.strip().strip("\"'")
+    topic = re.sub(r"^(?:my|our|the|a|an)\s+", "", topic, flags=re.I)
+    topic = re.sub(r"\s+", " ", topic).strip(" .,!?:;")
+    if len(topic) < 2 or len(topic) > 120:
+        return ""
+    return topic
+
+
+def should_use_llm_song(message: str) -> bool:
+    """
+    Personalized or themed songs → LLM with singing hint.
+    Generic quick asks and copyrighted-title fallback stay canned.
+    """
+    text = message.strip()
+    if not text or not is_song_request(text):
+        return False
+
+    intent = parse_singing_intent(text)
+    if not intent:
+        return False
+    if intent.copyrighted_request:
+        return False
+    if extract_song_topic(text):
+        return True
+    if _TOPIC_FOR.search(text):
+        return True
+    if _GENERIC_ONLY.match(text):
+        return False
+    return False
+
+
+def singing_llm_turn_hint(message: str) -> str:
+    """LLM hint for original lyrics tailored to their ask."""
+    intent = parse_singing_intent(message) or SingingIntent(
+        style="acoustic", mood="warm", include_chorus=False, copyrighted_request=False
+    )
+    topic = extract_song_topic(message)
+    style = intent.style
+    mood = intent.mood
+
+    parts = [
+        "Singing turn: write short **original** lyrics only — never copyrighted song lyrics.",
+        "Line breaks OK for chat; speak rhythmically with natural pauses between lines.",
+        f"Style: {style}; mood: {mood}.",
+    ]
+    if topic:
+        parts.append(f"Theme or dedicatee: {topic} — weave it in naturally.")
+    if intent.include_chorus:
+        parts.append("Include a short repeatable chorus or hook.")
+    if intent.copyrighted_request:
+        parts.append(
+            "They asked for a known song — same vibe only, brief original substitute."
+        )
+    parts.append("Keep it under ~8 lines; warm friend singing, not concert MC.")
+    return " ".join(parts)
 
 
 def parse_singing_intent(message: str) -> SingingIntent | None:

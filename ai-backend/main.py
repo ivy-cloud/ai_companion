@@ -554,6 +554,8 @@ def stream_chat_events(
         math_turn=math_turn,
         memory_recall=memory_recall,
     )
+    if singing.is_song_request(trimmed):
+        rhythm["singing"] = True
     yield _ndjson_line(
         {
             "start": True,
@@ -641,7 +643,9 @@ def stream_chat_events(
             yield from _canned(conflict_reply, "canned:memory_conflict")
             return
 
-        song_reply = singing.build_song_reply(trimmed)
+        song_reply = None
+        if singing.is_song_request(trimmed) and not singing.should_use_llm_song(trimmed):
+            song_reply = singing.build_song_reply(trimmed)
         if song_reply:
             song_lines = [line.strip() for line in song_reply.splitlines() if line.strip()]
             yield from _stream_canned_reply(
@@ -749,15 +753,26 @@ def stream_chat_events(
             memory_recall=profile.is_user_profile_turn(context.trimmed_latest),
             reply_text=speech_reply,
         )
+        song_turn = singing.is_song_request(context.trimmed_latest)
+        song_llm = song_turn and singing.should_use_llm_song(context.trimmed_latest)
+        if song_llm and not express_style:
+            express_style = emotion.express_style_for_singing(context.trimmed_latest)
+        lyric_lines = [line.strip() for line in display_reply.splitlines() if line.strip()]
         done_payload: dict = {
             "done": True,
             "reply": display_reply,
             "speech_reply": speech_reply,
             "emotion_hint": emotion_hint,
-            "speech_chunks": conversation_rhythm.speech_chunks_for_reply(speech_reply),
+            "speech_chunks": (
+                lyric_lines
+                if song_llm and len(lyric_lines) >= 2
+                else conversation_rhythm.speech_chunks_for_reply(speech_reply)
+            ),
         }
         if links:
             done_payload["links"] = links
+        if song_llm:
+            done_payload["singing"] = True
         proactive_beats = companion_thread.proactive_beats_for_stream()
         if proactive_beats:
             done_payload["proactive_beats"] = proactive_beats

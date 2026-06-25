@@ -152,6 +152,16 @@ def express_style_for_hint(hint: EmotionHint) -> str:
     return "friendly"
 
 
+def express_style_for_singing(message: str) -> str:
+    """TTS express-as for singing turns — brighter for hype, softer for lullabies."""
+    lower = (message or "").strip().lower()
+    if any(w in lower for w in ("lullaby", "sleep", "bedtime", "soft", "sad", "calm")):
+        return "hopeful"
+    if any(w in lower for w in ("love", "romantic", "miss you", "for you")):
+        return "friendly"
+    return "cheerful"
+
+
 def prosody_rate_for_hint(hint: Optional[EmotionHint], base_rate: str) -> str:
     """
     Nudge SSML rate to match conversational vibe (Hume-style prosody match).
