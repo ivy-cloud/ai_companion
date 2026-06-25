@@ -285,8 +285,8 @@ export const INTERRUPT_USER_SPEECH_MS = 20_000;
 export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 2_800;
 
 /**
- * Cooperative interrupt only at transition-relevance places (TRPs): brief clause pause
- * during a monologue — not mid-word continuous speech.
+ * Cooperative interrupt only at transition-relevance places (TRPs): sentence end,
+ * clause pause, or a clear between-phrase meter dip — never mid-clause.
  */
 /** Min pause at a sentence boundary (.!?) before cooperative interrupt. */
 export const INTERRUPT_CLAUSE_PAUSE_MIN_MS = 280;

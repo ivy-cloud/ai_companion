@@ -39,6 +39,8 @@ import {
   isTransitionRelevancePlace,
   INTERRUPT_CLAUSE_PAUSE_MIN_MS,
   INTERRUPT_CLAUSE_PAUSE_MAX_MS,
+  INTERRUPT_WEAK_TRP_PAUSE_MS,
+  INTERRUPT_METER_ONLY_PAUSE_MS,
   createConversationMeterState,
   hasIncompleteThoughtEnding,
   SEMANTIC_TURN_EXTENSION_MS,
@@ -313,74 +315,95 @@ test('companion interrupt timing constants bounded', () => {
 });
 
 test('shouldCompanionInterruptUser: sustained speech only at TRP pause', () => {
-  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  const sentencePause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  const clausePause = INTERRUPT_WEAK_TRP_PAUSE_MS;
+  const meterPause = INTERRUPT_METER_ONLY_PAUSE_MS;
   assert.equal(
-    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS - 1, null, { silenceMs: pause }),
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS - 1, null, {
+      silenceMs: meterPause,
+    }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, null, { silenceMs: pause }),
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, null, { silenceMs: sentencePause }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, null, { silenceMs: meterPause }),
     true,
   );
   assert.equal(
     shouldCompanionInterruptUser(MIN_SPEECH_BEFORE_INTERRUPT_MS - 1, null, {
-      silenceMs: pause,
+      silenceMs: meterPause,
     }),
     false,
   );
   assert.equal(
     shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'still talking mid', {
-      silenceMs: pause,
+      silenceMs: meterPause,
     }),
     false,
   );
   assert.equal(
     shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'long story so far,', {
-      silenceMs: pause,
+      silenceMs: sentencePause,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'long story so far,', {
+      silenceMs: clausePause,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'That was wild.', {
+      silenceMs: sentencePause,
     }),
     true,
   );
 });
 
 test('shouldCompanionInterruptUser: backend hint lowers threshold', () => {
-  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  const meterPause = INTERRUPT_METER_ONLY_PAUSE_MS;
   assert.equal(
-    shouldCompanionInterruptUser(6_999, null, { backendHint: true, silenceMs: pause }),
+    shouldCompanionInterruptUser(6_999, null, { backendHint: true, silenceMs: meterPause }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(7_000, null, { backendHint: true, silenceMs: pause }),
+    shouldCompanionInterruptUser(7_000, null, { backendHint: true, silenceMs: meterPause }),
     true,
   );
 });
 
 test('shouldCompanionInterruptUser: long live transcript lowers threshold', () => {
-  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  const sentencePause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  const clausePause = INTERRUPT_WEAK_TRP_PAUSE_MS;
   const medium = Array.from({ length: 23 }, (_, i) => `word${i}`).join(' ');
   assert.equal(
-    shouldCompanionInterruptUser(8_999, `${medium},`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(8_999, `${medium},`, { silenceMs: clausePause }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(9_000, `${medium},`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(9_000, `${medium},`, { silenceMs: clausePause }),
     true,
   );
   const steady = Array.from({ length: 16 }, (_, i) => `word${i}`).join(' ');
   assert.equal(
-    shouldCompanionInterruptUser(11_999, `${steady}.`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(11_999, `${steady}.`, { silenceMs: sentencePause }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(12_000, `${steady}.`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(12_000, `${steady}.`, { silenceMs: sentencePause }),
     true,
   );
   const long = Array.from({ length: 46 }, (_, i) => `word${i}`).join(' ');
   assert.equal(
-    shouldCompanionInterruptUser(5_999, `${long}.`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(5_999, `${long}.`, { silenceMs: sentencePause }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(6_000, `${long}.`, { silenceMs: pause }),
+    shouldCompanionInterruptUser(6_000, `${long}.`, { silenceMs: sentencePause }),
     true,
   );
 });
@@ -457,7 +480,7 @@ test('meter: companionInterrupt fires at clause pause not mid-speech', () => {
     silenceSince: pauseAt,
     lastSpeechAt: pauseAt - 1,
   };
-  const atTrp = tickConversationMeter(state, -60, pauseAt + INTERRUPT_CLAUSE_PAUSE_MIN_MS, {
+  const atTrp = tickConversationMeter(state, -60, pauseAt + INTERRUPT_WEAK_TRP_PAUSE_MS, {
     allowCompanionInterrupt: true,
     liveTranscript: 'long monologue here,',
   });
