@@ -28,6 +28,7 @@ from identity import (
     CHAT_PANEL_RULES,
     FACTUAL_ACCURACY_RULES,
     MEMORY_HONESTY_RULES,
+    SUPPORT_CHAT_RULES,
     UNCERTAINTY_RULES,
     WEB_SYNTHESIS_RULES,
     build_identity_rules,
@@ -57,6 +58,8 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 {CONVERSATIONAL_STYLE_RULES}
 
 {FRIEND_VOICE_RULES}
+
+{SUPPORT_CHAT_RULES}
 
 {SPOKEN_DELIVERY_RULES}
 
@@ -120,6 +123,11 @@ CASUAL_VOICE_HINT = (
     "'hard on yourself', or dictionary-style explanations. "
     "No unsolicited fix-it lists ('grab a drink', 'listen to calm music') unless they asked what to do. "
     "Weave saved friend notes in only when they fit — never recite the whole list."
+)
+
+SINGING_HINT = (
+    "Singing: short original lyrics — line breaks OK for chat display; speak rhythmically with pauses. "
+    "Never reproduce copyrighted lyrics; inspired-by vibe only if they named a hit song."
 )
 
 _SHORT_FOLLOW_UPS = frozenset(
@@ -196,6 +204,15 @@ def build_turn_hints(
     social = friend_social_turn_hint(trimmed, casual=True)
     if social:
         social = f" {social}"
+    voice_task = ""
+    try:
+        import voice_text_tasks
+
+        task_hint = voice_text_tasks.task_turn_hint(trimmed)
+        if task_hint:
+            voice_task = f" {task_hint}"
+    except Exception:
+        pass
     growth = ""
     moment = ""
     continuity = ""
@@ -203,11 +220,13 @@ def build_turn_hints(
     greeting = ""
     think_through = ""
     vent = ""
+    chat_skill = ""
     journal = ""
     active_listen = ""
     friend_reaction = ""
     silence = ""
     try:
+        import companion_chat_skills
         import companion_moments
         import profile_growth
 
@@ -232,6 +251,9 @@ def build_turn_hints(
         think_through = companion_moments.think_through_turn_hint(trimmed, casual=True)
         if think_through:
             think_through = f" {think_through}"
+        chat_skill = companion_chat_skills.chat_skill_turn_hint(trimmed, casual=True)
+        if chat_skill:
+            chat_skill = f" {chat_skill}"
         journal = companion_moments.journal_reflection_hint(trimmed, casual=True)
         if journal:
             journal = f" {journal}"
@@ -248,7 +270,7 @@ def build_turn_hints(
         if silence:
             silence = f" {silence}"
     her_hints = (
-        f"{continuity}{curiosity}{greeting}{vent}{think_through}"
+        f"{continuity}{curiosity}{greeting}{vent}{think_through}{chat_skill}"
         f"{journal}{active_listen}{friend_reaction}{silence}"
     )
     monologue = monologue_interrupt_turn_hint(trimmed, jumped_in=companion_jumped_in)
@@ -266,7 +288,7 @@ def build_turn_hints(
         if continuity:
             continuity = f" {continuity}"
         return (
-            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{chat_first}{continuity} {rhythm} "
+            f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{voice_task}{monologue}{social}{chat_first}{continuity} {rhythm} "
             "Short follow-up — answer from the last exchange in one or two casual sentences."
         )
-    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{monologue}{social}{chat_first} {rhythm}"
+    return f"{REPLY_LENGTH_HINT} {CASUAL_VOICE_HINT}{mood}{moment}{growth}{her_hints}{voice_task}{monologue}{social}{chat_first} {rhythm}"

@@ -11,13 +11,22 @@ from typing import Any, Literal, Optional
 
 import profile
 
-SkillId = Literal["bedtime_song", "pep_talk", "study_buddy", "sing_along"]
+SkillId = Literal[
+    "bedtime_song",
+    "pep_talk",
+    "study_buddy",
+    "sing_along",
+    "support_chat",
+    "grounding_buddy",
+]
 
 _SKILL_LABELS: dict[SkillId, str] = {
     "bedtime_song": "bedtime song",
     "pep_talk": "pep talk",
     "study_buddy": "study buddy",
     "sing_along": "sing along",
+    "support_chat": "support chat",
+    "grounding_buddy": "grounding buddy",
 }
 
 _SKILL_UNLOCK_COUNT = 2
@@ -59,6 +68,28 @@ _USAGE_SIGNALS: list[tuple[SkillId, re.Pattern[str]]] = [
             r"\b(?:"
             r"sing (?:me |a )|sing along|can you sing|"
             r"hum (?:a |me )|make up a song"
+            r")\b",
+            re.I,
+        ),
+    ),
+    (
+        "support_chat",
+        re.compile(
+            r"\b(?:"
+            r"stressed|stressful|rough day|hard day|sad|depressed|lonely|"
+            r"heartbroken|grieving|argument with|fight with|upset about|"
+            r"venting|need to talk|feeling (?:down|low|awful|terrible)"
+            r")\b",
+            re.I,
+        ),
+    ),
+    (
+        "grounding_buddy",
+        re.compile(
+            r"\b(?:"
+            r"panic(?: attack)?|panicking|anxious|anxiety|overwhelmed|"
+            r"can'?t breathe|spiraling|freaking out|too much right now|"
+            r"ground me|help me calm"
             r")\b",
             re.I,
         ),

@@ -119,6 +119,19 @@ class HerCompanionTests(unittest.TestCase):
             hint = personality.build_turn_hints(msg)
         self.assertIn("Friend reaction", hint)
 
+    def test_build_turn_hints_includes_support_chat_skill(self) -> None:
+        msg = "Had a fight with my sister and I'm still upset"
+        hint = personality.build_turn_hints(msg)
+        self.assertIn("reflect listen", hint.lower())
+
+    def test_support_chat_skill_unlock(self) -> None:
+        for _ in range(2):
+            profile_growth.record_usage_signals(
+                "I've had a rough day and need to talk about it"
+            )
+        hints = profile_growth.get_skill_hints()
+        self.assertIn("support chat", hints)
+
 
 if __name__ == "__main__":
     unittest.main()
