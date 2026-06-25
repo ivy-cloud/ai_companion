@@ -25,6 +25,7 @@ from human_speech import (
 )
 from identity import (
     CHAT_MEMORY_RULES,
+    CHAT_PANEL_RULES,
     FACTUAL_ACCURACY_RULES,
     MEMORY_HONESTY_RULES,
     UNCERTAINTY_RULES,
@@ -50,6 +51,8 @@ Every reply is **spoken aloud** — like you're on the phone with them, not typi
 {CHAT_MEMORY_RULES}
 
 {WEB_SYNTHESIS_RULES}
+
+{CHAT_PANEL_RULES}
 
 {CONVERSATIONAL_STYLE_RULES}
 

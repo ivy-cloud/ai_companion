@@ -8,6 +8,7 @@ import {
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -112,6 +113,7 @@ import {
   type RhythmMeta,
 } from '../lib/conversationOrchestration';
 import { streamChatMessage, type ChatStreamDoneMeta } from '../lib/chatStream';
+import { mergeChatLinks, type ChatLink } from '../lib/chatLinks';
 import {
   buildFinalTtsUtterances,
   commitPlayedChunk,
@@ -305,6 +307,7 @@ type ChatMessage = {
   text: string;
   streaming?: boolean;
   singing?: boolean;
+  links?: ChatLink[];
 };
 
 export default function ChatScreen() {
@@ -436,6 +439,8 @@ export default function ChatScreen() {
   const lastPlayedTtsKeyRef = useRef('');
   const rhythmMetaRef = useRef<RhythmMeta | null>(null);
   const serverSpeechChunksRef = useRef<string[] | null>(null);
+  const streamSpeechReplyRef = useRef<string | null>(null);
+  const streamLinksRef = useRef<ChatLink[]>([]);
   const currentReplyIsSingingRef = useRef(false);
   const voiceTurnTimingRef = useRef<VoiceTurnTiming | null>(null);
   const voiceTurnSummaryPendingRef = useRef(false);
@@ -5367,6 +5372,12 @@ export default function ChatScreen() {
             if (meta.speech_chunks?.length) {
               serverSpeechChunksRef.current = meta.speech_chunks;
             }
+            if (meta.speech_reply) {
+              streamSpeechReplyRef.current = meta.speech_reply;
+            }
+            if (meta.links?.length) {
+              streamLinksRef.current = meta.links;
+            }
             if (meta.proactive_beats?.length) {
               proactiveBeatsRef.current = meta.proactive_beats;
             }
@@ -5382,18 +5393,20 @@ export default function ChatScreen() {
             markVoiceTiming(voiceTurnTimingRef.current, 'stream_done');
             clearTurnNoResponseTimer();
             const rawReply = (reply || streamTtsRawRef.current || streamVoiceBufferRef.current).trim();
+            const ttsReply = (streamSpeechReplyRef.current || rawReply).trim();
             voiceLog('stream_on_done', {
               rawLen: rawReply.length,
-              singleClip: useSingleClipStreamTts(rawReply),
+              ttsLen: ttsReply.length,
+              singleClip: useSingleClipStreamTts(ttsReply),
               preview:
-                rawReply.length > 56 ? `${rawReply.slice(0, 53)}…` : rawReply,
+                ttsReply.length > 56 ? `${ttsReply.slice(0, 53)}…` : ttsReply,
             });
             logVoiceSnapshot('stream_on_done');
-            streamTtsRawRef.current = rawReply;
-            lastAssistantTtsTextRef.current = rawReply;
+            streamTtsRawRef.current = ttsReply;
+            lastAssistantTtsTextRef.current = ttsReply;
             if (
               streamTtsEnabledForTurn() &&
-              !useSingleClipStreamTts(rawReply)
+              !useSingleClipStreamTts(ttsReply)
             ) {
               feedIncrementalTtsFromStream(
                 turn,
@@ -5402,6 +5415,7 @@ export default function ChatScreen() {
               );
             }
             const displayReply = formatAssistantReply(rawReply);
+            const messageLinks = mergeChatLinks(streamLinksRef.current, displayReply);
             streamVoiceBufferRef.current = displayReply;
             pendingStreamTextRef.current = displayReply;
             clearStreamUiFlush();
@@ -5413,13 +5427,16 @@ export default function ChatScreen() {
                       text: displayReply,
                       streaming: false,
                       singing: currentReplyIsSingingRef.current,
+                      links: messageLinks.length ? messageLinks : undefined,
                     }
                   : message,
               ),
             );
             setIsStreaming(false);
             scrollToEnd(false);
-            replyForTts = rawReply;
+            streamSpeechReplyRef.current = null;
+            streamLinksRef.current = [];
+            replyForTts = ttsReply;
 
             if (!voiceEnabledRef.current && fromVoice) {
               setVoicePhaseTransition('idle');
@@ -5922,6 +5939,23 @@ export default function ChatScreen() {
                 {item.streaming && !item.text ? '…' : item.text}
                 {item.streaming && item.text ? ' ▋' : ''}
               </Text>
+              {item.role === 'assistant' && item.links?.length ? (
+                <View style={styles.linkRow}>
+                  {item.links.map((link) => (
+                    <Pressable
+                      key={link.url}
+                      style={styles.linkChip}
+                      onPress={() => {
+                        void Linking.openURL(link.url).catch(() => {});
+                      }}
+                    >
+                      <Text style={styles.linkChipText} numberOfLines={1}>
+                        {link.title}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
             </View>
           )}
           ListEmptyComponent={
@@ -6129,6 +6163,26 @@ const styles = StyleSheet.create({
   bubbleText: { fontSize: 16, lineHeight: 22 },
   userText: { color: '#ffffff' },
   assistantText: { color: '#000000' },
+  linkRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  linkChip: {
+    backgroundColor: '#eef4ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#c5d8f7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: '100%',
+  },
+  linkChipText: {
+    color: '#0056c7',
+    fontSize: 14,
+    fontWeight: '600',
+  },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',

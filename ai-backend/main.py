@@ -43,7 +43,7 @@ from context import (
     needs_clock_context,
     resolve_clock,
 )
-from human_speech import polish_for_speech
+from human_speech import polish_for_display, polish_for_speech
 from personality import (
     COMPANION_REPLY_INSTRUCTIONS,
     DIRECT_MATH_INSTRUCTIONS,
@@ -351,6 +351,35 @@ def _merge_log_extra(
     return merged
 
 
+def _finalize_replies(
+    raw_reply: str,
+    *,
+    polish: bool = True,
+    hits: Optional[list] = None,
+    user_message: str = "",
+) -> tuple[str, str, list]:
+    """Split raw LLM text into chat display vs spoken TTS, with optional link enrichment."""
+    if polish:
+        display_reply = polish_for_display(raw_reply)
+        speech_reply = polish_for_speech(raw_reply)
+    else:
+        stripped = raw_reply.strip()
+        display_reply = speech_reply = stripped
+
+    link_hits = hits or []
+    links = web_search.links_for_display(link_hits) if link_hits else []
+    if link_hits and user_message:
+        display_reply = web_search.enrich_display_with_links(
+            display_reply, link_hits, user_message
+        )
+
+    if not speech_reply:
+        speech_reply = "I don't have a reply right now. Please try again."
+    if not display_reply:
+        display_reply = speech_reply
+    return display_reply, speech_reply, links
+
+
 def _stream_canned_reply(
     trimmed: str,
     reply: str,
@@ -363,13 +392,17 @@ def _stream_canned_reply(
     singing_reply: bool = False,
     speech_chunks: Optional[list[str]] = None,
     log_extra: Optional[dict] = None,
+    hits: Optional[list] = None,
 ) -> Generator[str, None, None]:
     companion.try_learn_name_from_user(trimmed)
     profile.learn_from_user_message(trimmed)
     profile_growth.record_usage_signals(trimmed, route)
-    spoken_reply = polish_for_speech(reply) if polish_reply else reply.strip()
-    if not spoken_reply:
-        spoken_reply = "I don't have a reply right now. Please try again."
+    display_reply, spoken_reply, links = _finalize_replies(
+        reply,
+        polish=polish_reply,
+        hits=hits,
+        user_message=trimmed,
+    )
     memory.append_exchange(trimmed, spoken_reply)
     session_log.log_turn(
         trimmed,
@@ -383,12 +416,15 @@ def _stream_canned_reply(
         yield _ndjson_line({"text": piece})
     done_payload: dict = {
         "done": True,
-        "reply": spoken_reply,
+        "reply": display_reply,
+        "speech_reply": spoken_reply,
         "emotion_hint": emotion_hint,
         "speech_chunks": speech_chunks
         if speech_chunks is not None
         else conversation_rhythm.speech_chunks_for_reply(spoken_reply),
     }
+    if links:
+        done_payload["links"] = links
     if singing_reply:
         done_payload["singing"] = True
     if express_style:
@@ -454,20 +490,25 @@ def stream_chat_events(
                 yield _ndjson_line({"text": piece})
 
             raw_reply = "".join(collected).strip()
-            reply = polish_for_speech(raw_reply)
-            if not reply:
-                reply = "I'm still here with you."
+            display_reply, speech_reply, links = _finalize_replies(raw_reply)
+            if not speech_reply:
+                speech_reply = "I'm still here with you."
+            if not display_reply:
+                display_reply = speech_reply
 
-            memory.append_assistant_continuation(reply)
-            companion_thread.update_after_reply(context.trimmed_latest, reply)
+            memory.append_assistant_continuation(speech_reply)
+            companion_thread.update_after_reply(context.trimmed_latest, speech_reply)
             emotion_hint, express_style = _turn_emotion("", factual=False, memory_recall=False)
             done_payload: dict = {
                 "done": True,
-                "reply": reply,
+                "reply": display_reply,
+                "speech_reply": speech_reply,
                 "emotion_hint": emotion_hint,
-                "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+                "speech_chunks": conversation_rhythm.speech_chunks_for_reply(speech_reply),
                 "proactive": True,
             }
+            if links:
+                done_payload["links"] = links
             refreshed = companion_thread.proactive_beats_for_stream()
             if refreshed:
                 done_payload["proactive_beats"] = refreshed
@@ -475,7 +516,7 @@ def stream_chat_events(
                 done_payload["express_style"] = express_style
             session_log.log_turn(
                 context.trimmed_latest,
-                reply,
+                speech_reply,
                 route="llm:proactive",
                 **_turn_log_fields(started_at, clock, learn_at_start),
                 extra=audio_extra,
@@ -690,28 +731,33 @@ def stream_chat_events(
         raw_reply = companion.finalize_voice_reply(trimmed, raw_reply)
         raw_reply = companion.finalize_presence_reply(trimmed, raw_reply)
         raw_reply = companion.finalize_family_reply(trimmed, raw_reply)
-        reply = polish_for_speech(raw_reply)
-        if not reply:
-            reply = "I don't have a reply right now. Please try again."
+        display_reply, speech_reply, links = _finalize_replies(
+            raw_reply,
+            hits=hits,
+            user_message=context.trimmed_latest,
+        )
 
         # Facts: user turn only — never learn from assistant reply text.
         companion.try_learn_name_from_user(context.trimmed_latest)
         profile.learn_from_user_message(context.trimmed_latest)
-        memory.append_exchange(context.trimmed_latest, reply)
+        memory.append_exchange(context.trimmed_latest, speech_reply)
         if not context.factual_reply and not profile.is_user_profile_turn(context.trimmed_latest):
-            companion_thread.update_after_reply(context.trimmed_latest, reply)
+            companion_thread.update_after_reply(context.trimmed_latest, speech_reply)
         emotion_hint, express_style = _turn_emotion(
             context.trimmed_latest,
             factual=context.factual_reply,
             memory_recall=profile.is_user_profile_turn(context.trimmed_latest),
-            reply_text=reply,
+            reply_text=speech_reply,
         )
         done_payload: dict = {
             "done": True,
-            "reply": reply,
+            "reply": display_reply,
+            "speech_reply": speech_reply,
             "emotion_hint": emotion_hint,
-            "speech_chunks": conversation_rhythm.speech_chunks_for_reply(reply),
+            "speech_chunks": conversation_rhythm.speech_chunks_for_reply(speech_reply),
         }
+        if links:
+            done_payload["links"] = links
         proactive_beats = companion_thread.proactive_beats_for_stream()
         if proactive_beats:
             done_payload["proactive_beats"] = proactive_beats
@@ -720,7 +766,7 @@ def stream_chat_events(
         llm_route = "llm:grounded" if grounded else "llm"
         session_log.log_turn(
             context.trimmed_latest,
-            reply,
+            speech_reply,
             route=llm_route,
             **_turn_log_fields(started_at, clock, learn_at_start),
             extra=_merge_log_extra({"web_hits": len(hits) if hits else 0}, audio_extra),

@@ -700,6 +700,64 @@ def has_usable_hits(hits: List[SearchHit]) -> bool:
     return bool(hits)
 
 
+_LINK_SHARE = re.compile(
+    r"\b(?:"
+    r"link|links|url|website|web site|send me|share|"
+    r"how to|how do i|steps|step by step|recipe|directions|"
+    r"tutorial|guide|where (?:can|do) i (?:find|get|buy)"
+    r")\b",
+    re.I,
+)
+
+def user_wants_link_share(message: str) -> bool:
+    """User explicitly asked for links, steps, or how-to help."""
+    return bool(_LINK_SHARE.search(message.strip()))
+
+
+def links_for_display(hits: List[SearchHit], *, limit: int = 3) -> List[dict]:
+    """Top https links from search hits for tappable chat chips."""
+    links: List[dict] = []
+    seen: Set[str] = set()
+    for hit in hits:
+        url = str(hit.get("url", "")).strip()
+        if not url.startswith("https://"):
+            continue
+        key = url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        title = str(hit.get("title", "")).strip()
+        if not title or title.lower() == "summary":
+            title = url
+        links.append({"title": title[:120], "url": url})
+        if len(links) >= limit:
+            break
+    return links
+
+
+def enrich_display_with_links(
+    display: str,
+    hits: List[SearchHit],
+    user_message: str,
+) -> str:
+    """Append plain URLs to chat text when lookup ran or user asked for links."""
+    if not hits:
+        return display
+    links = links_for_display(hits)
+    if not links:
+        return display
+    if not (user_wants_link_share(user_message) or should_search(user_message)):
+        return display
+
+    text = display.strip()
+    missing = [link["url"] for link in links if link["url"] not in text]
+    if not missing:
+        return text
+    if text:
+        return f"{text}\n" + "\n".join(missing)
+    return "\n".join(missing)
+
+
 def status() -> dict:
     provider = "duckduckgo+wikipedia (live)"
     if os.environ.get("TAVILY_API_KEY", "").strip():

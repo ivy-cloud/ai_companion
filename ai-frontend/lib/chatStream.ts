@@ -20,10 +20,17 @@ export type ChatStreamStartMeta = {
   rhythm?: RhythmMeta;
 };
 
+export type ChatLink = {
+  title: string;
+  url: string;
+};
+
 export type ChatStreamDoneMeta = {
   emotion_hint?: string;
   express_style?: string;
   speech_chunks?: string[];
+  speech_reply?: string;
+  links?: ChatLink[];
   singing?: boolean;
   proactive?: boolean;
   proactive_beats?: string[];
@@ -32,7 +39,12 @@ export type ChatStreamDoneMeta = {
 type StreamEvent =
   | ({ start: true } & ChatStreamStartMeta)
   | { text: string }
-  | ({ done: true; reply: string } & ChatStreamDoneMeta)
+  | ({
+      done: true;
+      reply: string;
+      speech_reply?: string;
+      links?: ChatLink[];
+    } & ChatStreamDoneMeta)
   | { error: string };
 
 export type ChatStreamHandlers = StreamHandlers & {
@@ -111,6 +123,8 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
       if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
       if (event.express_style) meta.express_style = event.express_style;
       if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
+      if (event.speech_reply) meta.speech_reply = event.speech_reply;
+      if (event.links?.length) meta.links = event.links;
       if (event.singing) meta.singing = true;
       if (event.proactive) meta.proactive = true;
       if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
@@ -118,6 +132,8 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
         meta.emotion_hint ||
         meta.express_style ||
         meta.speech_chunks?.length ||
+        meta.speech_reply ||
+        meta.links?.length ||
         meta.singing ||
         meta.proactive ||
         meta.proactive_beats?.length
@@ -219,6 +235,8 @@ export function streamChatWithXHR(
           if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
           if (event.express_style) meta.express_style = event.express_style;
           if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
+          if (event.speech_reply) meta.speech_reply = event.speech_reply;
+          if (event.links?.length) meta.links = event.links;
           if (event.singing) meta.singing = true;
           if (event.proactive) meta.proactive = true;
           if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
@@ -226,6 +244,8 @@ export function streamChatWithXHR(
             meta.emotion_hint ||
             meta.express_style ||
             meta.speech_chunks?.length ||
+            meta.speech_reply ||
+            meta.links?.length ||
             meta.singing ||
             meta.proactive ||
             meta.proactive_beats?.length

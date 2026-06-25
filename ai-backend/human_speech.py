@@ -478,6 +478,53 @@ def _cleanup_polish_artifacts(text: str) -> str:
     return cleaned
 
 
+def _expand_markdown_links(text: str) -> str:
+    """Convert [label](url) to readable chat text with the URL visible."""
+    return re.sub(
+        r"\[([^\]]+)\]\((https?://[^\)]+)\)",
+        r"\1 — \2",
+        text,
+        flags=re.I,
+    )
+
+
+def _format_lists_for_display(text: str) -> str:
+    """Keep short bullet/numbered lists as separate lines for helper-style replies."""
+    lines: list[str] = []
+    list_count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        bullet = re.match(r"^[-*•]\s+(.+)", stripped)
+        numbered = re.match(r"^\d+[.)]\s+(.+)", stripped)
+        if (bullet or numbered) and list_count < 6:
+            item = (bullet or numbered).group(1).strip()  # type: ignore[union-attr]
+            lines.append(f"• {item}")
+            list_count += 1
+            continue
+        if stripped:
+            lines.append(stripped)
+    return "\n".join(lines) if lines else text
+
+
+def polish_for_display(text: str) -> str:
+    """Polish LLM reply for on-screen chat — keeps URLs and light list structure."""
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    cleaned = _expand_markdown_links(cleaned)
+    cleaned = re.sub(r"```[\s\S]*?```", " ", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = _format_lists_for_display(cleaned)
+    cleaned = _strip_assistant_tone(cleaned)
+    cleaned = _cleanup_polish_artifacts(cleaned)
+    cleaned = "\n".join(
+        " ".join(part.split()) for part in cleaned.splitlines() if part.strip()
+    )
+    return cleaned.strip()
+
+
 def polish_for_speech(text: str) -> str:
     cleaned = _cleanup_polish_artifacts(
         trim_for_voice(
