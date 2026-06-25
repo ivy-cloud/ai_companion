@@ -66,6 +66,13 @@ export function combineUtteranceTranscripts(
   return `${a} ${b}`.replace(/\s+/g, ' ').trim();
 }
 
+/** Whether to clear the partial utterance buffer when opening the listen mic. */
+export function shouldResetUtteranceBufferOnListenOpen(
+  preserveBufferedUtterance: boolean,
+): boolean {
+  return !preserveBufferedUtterance;
+}
+
 /** Minimum time above speech threshold before silence can trigger send. */
 export const MIN_SPEECH_MS = 350;
 
@@ -277,6 +284,37 @@ export const INTERRUPT_USER_SPEECH_MS = 20_000;
 /** Minimum speech before companion interrupt — avoids cutting in on brief noise. */
 export const MIN_SPEECH_BEFORE_INTERRUPT_MS = 2_800;
 
+/**
+ * Cooperative interrupt only at transition-relevance places (TRPs): brief clause pause
+ * during a monologue — not mid-word continuous speech.
+ */
+/** Min pause at a sentence boundary (.!?) before cooperative interrupt. */
+export const INTERRUPT_CLAUSE_PAUSE_MIN_MS = 280;
+
+/** Clause boundary (,;:) needs a longer breath — not a mid-thought comma flicker. */
+export const INTERRUPT_WEAK_TRP_PAUSE_MS = 420;
+
+/** No live caption — only interrupt on a clear between-phrase meter dip. */
+export const INTERRUPT_METER_ONLY_PAUSE_MS = 520;
+
+/** Below end-of-turn silence — companion jump-in, not full turn commit. */
+export const INTERRUPT_CLAUSE_PAUSE_MAX_MS = SILENCE_END_MS - 80;
+
+function endsAtSentenceBoundary(trimmed: string): boolean {
+  return /[.!?…]["']?\s*$/.test(trimmed);
+}
+
+function endsAtClauseBoundary(trimmed: string): boolean {
+  return /[,;:—–-]\s*$/.test(trimmed);
+}
+
+/** True when partial transcript sits at a grammatical boundary (TRP). */
+export function isTransitionRelevancePlace(liveTranscript?: string | null): boolean {
+  const trimmed = liveTranscript?.trim() ?? '';
+  if (!trimmed || hasIncompleteThoughtEnding(trimmed)) return false;
+  return endsAtSentenceBoundary(trimmed) || endsAtClauseBoundary(trimmed);
+}
+
 /** Brief spoken ack when companion interrupts a long monologue (friend energy). */
 export const COMPANION_INTERRUPT_ACKS = [
   'Wait wait—',
@@ -294,12 +332,13 @@ export function pickCompanionInterruptAck(speechMs: number): string {
 }
 
 /**
- * True when sustained speech exceeds interrupt threshold and patient pacing does not apply.
+ * True when sustained speech exceeds interrupt threshold at a TRP (clause pause or
+ * sentence boundary) — not during continuous speech without a micro-pause.
  */
 export function shouldCompanionInterruptUser(
   speechMs: number,
   liveTranscript?: string | null,
-  options?: { backendHint?: boolean },
+  options?: { backendHint?: boolean; silenceMs?: number },
 ): boolean {
   if (speechMs < MIN_SPEECH_BEFORE_INTERRUPT_MS) return false;
   let thresholdMs = INTERRUPT_USER_SPEECH_MS;
@@ -316,7 +355,25 @@ export function shouldCompanionInterruptUser(
   }
   if (speechMs < thresholdMs) return false;
   if (liveTranscript && wantsPatientTurnPacing(liveTranscript)) return false;
-  return true;
+
+  const silenceMs = options?.silenceMs ?? 0;
+  if (silenceMs > INTERRUPT_CLAUSE_PAUSE_MAX_MS) return false;
+
+  const trimmed = liveTranscript?.trim() ?? '';
+  if (trimmed) {
+    if (hasIncompleteThoughtEnding(trimmed)) return false;
+    if (endsAtSentenceBoundary(trimmed)) {
+      return silenceMs >= INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+    }
+    if (endsAtClauseBoundary(trimmed)) {
+      return silenceMs >= INTERRUPT_WEAK_TRP_PAUSE_MS;
+    }
+    // Mid-clause / mid-sentence — wait for a real TRP, never cut in.
+    return false;
+  }
+
+  // Meter-only (partial STT off): require a longer between-phrase dip.
+  return silenceMs >= INTERRUPT_METER_ONLY_PAUSE_MS;
 }
 
 /** Hard cap — force commit even without a clean silence gap (after companion interrupt window). */
@@ -468,20 +525,14 @@ export function tickConversationMeter(
       peakMetering,
     };
     const speechMs = now - speechStartedAt;
-    const companionInterrupt =
-      options?.allowCompanionInterrupt !== false &&
-      shouldCompanionInterruptUser(speechMs, options?.liveTranscript, {
-        backendHint: options?.companionInterruptHint === true,
-      });
-    const forceEnd = !companionInterrupt && speechMs >= MAX_UTTERANCE_MS;
-    const fired = companionInterrupt || forceEnd;
+    const forceEnd = speechMs >= MAX_UTTERANCE_MS;
     return {
       state: next,
       endSilence: forceEnd,
-      companionInterrupt,
+      companionInterrupt: false,
       inactive: false,
       quietVoiceTimeout: false,
-      speechDurationMs: fired ? speechMs : 0,
+      speechDurationMs: forceEnd ? speechMs : 0,
       silenceDurationMs: 0,
     };
   }
@@ -515,15 +566,22 @@ export function tickConversationMeter(
     speechMs >= MIN_SPEECH_MS &&
     silenceMs >= silenceEndMs;
   const forceEnd = speechMs >= MAX_UTTERANCE_MS;
-  const fired = endSilence || forceEnd;
+  const companionInterrupt =
+    options?.allowCompanionInterrupt !== false &&
+    !endSilence &&
+    shouldCompanionInterruptUser(speechMs, options?.liveTranscript, {
+      backendHint: options?.companionInterruptHint === true,
+      silenceMs,
+    });
+  const fired = endSilence || forceEnd || companionInterrupt;
 
   const anchor = state.lastSpeechAt ?? state.listenStartedAt;
   const inactive = now - anchor >= SESSION_INACTIVITY_MS;
 
   return {
     state: next,
-    endSilence: fired,
-    companionInterrupt: false,
+    endSilence: endSilence || forceEnd,
+    companionInterrupt,
     inactive,
     quietVoiceTimeout,
     speechDurationMs: fired ? speechMs : 0,

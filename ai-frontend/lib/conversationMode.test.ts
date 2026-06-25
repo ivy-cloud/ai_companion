@@ -35,6 +35,10 @@ import {
   canResumeConversationListen,
   shouldDeferBargeInForVoiceCommit,
   combineUtteranceTranscripts,
+  shouldResetUtteranceBufferOnListenOpen,
+  isTransitionRelevancePlace,
+  INTERRUPT_CLAUSE_PAUSE_MIN_MS,
+  INTERRUPT_CLAUSE_PAUSE_MAX_MS,
   createConversationMeterState,
   hasIncompleteThoughtEnding,
   SEMANTIC_TURN_EXTENSION_MS,
@@ -308,40 +312,120 @@ test('companion interrupt timing constants bounded', () => {
   assert.ok(MAX_UTTERANCE_MS > INTERRUPT_USER_SPEECH_MS);
 });
 
-test('shouldCompanionInterruptUser: sustained speech only', () => {
-  assert.equal(shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS - 1), false);
-  assert.equal(shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS), true);
-  assert.equal(shouldCompanionInterruptUser(MIN_SPEECH_BEFORE_INTERRUPT_MS - 1), false);
-});
-
-test('shouldCompanionInterruptUser: backend hint lowers threshold', () => {
+test('shouldCompanionInterruptUser: sustained speech only at TRP pause', () => {
+  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
   assert.equal(
-    shouldCompanionInterruptUser(6_999, null, { backendHint: true }),
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS - 1, null, { silenceMs: pause }),
     false,
   );
   assert.equal(
-    shouldCompanionInterruptUser(7_000, null, { backendHint: true }),
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, null, { silenceMs: pause }),
+    true,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(MIN_SPEECH_BEFORE_INTERRUPT_MS - 1, null, {
+      silenceMs: pause,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'still talking mid', {
+      silenceMs: pause,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'long story so far,', {
+      silenceMs: pause,
+    }),
+    true,
+  );
+});
+
+test('shouldCompanionInterruptUser: backend hint lowers threshold', () => {
+  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
+  assert.equal(
+    shouldCompanionInterruptUser(6_999, null, { backendHint: true, silenceMs: pause }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(7_000, null, { backendHint: true, silenceMs: pause }),
     true,
   );
 });
 
 test('shouldCompanionInterruptUser: long live transcript lowers threshold', () => {
+  const pause = INTERRUPT_CLAUSE_PAUSE_MIN_MS;
   const medium = Array.from({ length: 23 }, (_, i) => `word${i}`).join(' ');
-  assert.equal(shouldCompanionInterruptUser(8_999, medium), false);
-  assert.equal(shouldCompanionInterruptUser(9_000, medium), true);
+  assert.equal(
+    shouldCompanionInterruptUser(8_999, `${medium},`, { silenceMs: pause }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(9_000, `${medium},`, { silenceMs: pause }),
+    true,
+  );
   const steady = Array.from({ length: 16 }, (_, i) => `word${i}`).join(' ');
-  assert.equal(shouldCompanionInterruptUser(11_999, steady), false);
-  assert.equal(shouldCompanionInterruptUser(12_000, steady), true);
+  assert.equal(
+    shouldCompanionInterruptUser(11_999, `${steady}.`, { silenceMs: pause }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(12_000, `${steady}.`, { silenceMs: pause }),
+    true,
+  );
   const long = Array.from({ length: 46 }, (_, i) => `word${i}`).join(' ');
-  assert.equal(shouldCompanionInterruptUser(5_999, long), false);
-  assert.equal(shouldCompanionInterruptUser(6_000, long), true);
+  assert.equal(
+    shouldCompanionInterruptUser(5_999, `${long}.`, { silenceMs: pause }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(6_000, `${long}.`, { silenceMs: pause }),
+    true,
+  );
 });
 
 test('shouldCompanionInterruptUser: patient pacing blocks interrupt', () => {
   assert.equal(
-    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, "I'm really sad today"),
+    shouldCompanionInterruptUser(
+      INTERRUPT_USER_SPEECH_MS,
+      "I'm really sad today.",
+      { silenceMs: INTERRUPT_CLAUSE_PAUSE_MIN_MS },
+    ),
     false,
   );
+});
+
+test('shouldCompanionInterruptUser: no interrupt during continuous speech', () => {
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'still going strong', {
+      silenceMs: 0,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCompanionInterruptUser(INTERRUPT_USER_SPEECH_MS, 'done now.', {
+      silenceMs: SILENCE_END_MS,
+    }),
+    false,
+  );
+});
+
+test('transition relevance place detects clause and sentence ends', () => {
+  assert.equal(isTransitionRelevancePlace('long story so far,'), true);
+  assert.equal(isTransitionRelevancePlace('that is wild.'), true);
+  assert.equal(isTransitionRelevancePlace('I want to go and'), false);
+  assert.equal(isTransitionRelevancePlace(''), false);
+});
+
+test('utterance buffer preserved across semantic extension reopen', () => {
+  assert.equal(shouldResetUtteranceBufferOnListenOpen(true), false);
+  assert.equal(shouldResetUtteranceBufferOnListenOpen(false), true);
+});
+
+test('clause pause window sits below end-of-turn silence', () => {
+  assert.ok(INTERRUPT_CLAUSE_PAUSE_MIN_MS >= 200);
+  assert.ok(INTERRUPT_CLAUSE_PAUSE_MAX_MS < SILENCE_END_MS);
 });
 
 test('companion interrupt ack is stable per speech duration', () => {
@@ -351,41 +435,57 @@ test('companion interrupt ack is stable per speech duration', () => {
   assert.ok(COMPANION_INTERRUPT_ACKS.includes(a as (typeof COMPANION_INTERRUPT_ACKS)[number]));
 });
 
-test('meter: companionInterrupt fires on sustained speech', () => {
-  const t0 = 1000;
-  let state = createConversationMeterState(t0);
-  state = {
-    ...state,
+test('meter: companionInterrupt fires at clause pause not mid-speech', () => {
+  const t0 = 20_000;
+  const speechStartedAt = t0 - INTERRUPT_USER_SPEECH_MS;
+  let state = {
+    ...createConversationMeterState(speechStartedAt),
     sawSpeech: true,
-    speechStartedAt: t0,
+    speechStartedAt,
     silenceSince: null,
     peakMetering: -48,
+    lastSpeechAt: t0 - 1,
   };
-  const before = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS - 1, {
+  const midSpeech = tickConversationMeter(state, -48, t0, {
     allowCompanionInterrupt: true,
   });
-  assert.equal(before.companionInterrupt, false);
-  const fired = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS, {
+  assert.equal(midSpeech.companionInterrupt, false);
+
+  const pauseAt = t0;
+  state = {
+    ...state,
+    silenceSince: pauseAt,
+    lastSpeechAt: pauseAt - 1,
+  };
+  const atTrp = tickConversationMeter(state, -60, pauseAt + INTERRUPT_CLAUSE_PAUSE_MIN_MS, {
     allowCompanionInterrupt: true,
+    liveTranscript: 'long monologue here,',
   });
-  assert.equal(fired.companionInterrupt, true);
-  assert.equal(fired.endSilence, false);
-  assert.ok(fired.speechDurationMs >= INTERRUPT_USER_SPEECH_MS);
+  assert.equal(atTrp.companionInterrupt, true);
+  assert.equal(atTrp.endSilence, false);
+  assert.ok(atTrp.speechDurationMs >= INTERRUPT_USER_SPEECH_MS);
 });
 
 test('meter: companionInterrupt blocked during distress partial', () => {
   const t0 = 1000;
+  const pauseAt = t0 + MIN_SPEECH_MS;
   const state = {
     ...createConversationMeterState(t0),
     sawSpeech: true,
     speechStartedAt: t0,
-    silenceSince: null,
+    silenceSince: pauseAt,
     peakMetering: -48,
+    lastSpeechAt: pauseAt - 1,
   };
-  const fired = tickConversationMeter(state, -48, t0 + INTERRUPT_USER_SPEECH_MS, {
-    allowCompanionInterrupt: true,
-    liveTranscript: "I'm anxious about everything",
-  });
+  const fired = tickConversationMeter(
+    state,
+    -60,
+    pauseAt + INTERRUPT_CLAUSE_PAUSE_MIN_MS,
+    {
+      allowCompanionInterrupt: true,
+      liveTranscript: "I'm anxious about everything.",
+    },
+  );
   assert.equal(fired.companionInterrupt, false);
 });
 

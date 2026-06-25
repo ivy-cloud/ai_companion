@@ -13,8 +13,8 @@ from typing import Deque, List, Literal, Optional, TypedDict
 
 Role = Literal["user", "assistant"]
 
-# Keep recent 5–10 exchanges (8 ≈ middle of range)
-MAX_EXCHANGES = 8
+# Keep recent exchanges on disk — voice sessions need enough thread for continuity.
+MAX_EXCHANGES = 12
 MAX_MESSAGE_CHARS = 1200
 
 _BACKEND_DIR = Path(__file__).resolve().parent
@@ -254,7 +254,8 @@ def should_keep_history_for_turn(
         return False
     if should_answer_from_chat_first(message):
         return bool(_history)
-    if factual and not is_ambiguous_follow_up(message):
+    # Voice turns are often short clauses — keep thread unless a standalone factual lookup.
+    if factual and not is_ambiguous_follow_up(message) and len(message.split()) > 8:
         return False
     return bool(_history)
 

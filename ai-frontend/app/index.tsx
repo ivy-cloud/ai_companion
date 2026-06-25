@@ -80,6 +80,7 @@ import {
   shouldSecondChanceQuietListen,
   hasIncompleteThoughtEnding,
   combineUtteranceTranscripts,
+  shouldResetUtteranceBufferOnListenOpen,
   pickCompanionInterruptAck,
   resolveSilenceEndMs,
   tickConversationBargeIn,
@@ -455,6 +456,7 @@ export default function ChatScreen() {
   const turnNoResponseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Partial transcript held while semantic turn extension reopens the mic once. */
   const partialUtteranceBufferRef = useRef('');
+  const preserveUtteranceBufferRef = useRef(false);
   const liveTranscriptRef = useRef('');
   const lastPartialSttAtRef = useRef<number | null>(null);
   const partialSttRollInFlightRef = useRef(false);
@@ -494,6 +496,16 @@ export default function ChatScreen() {
     liveTranscriptRef.current = '';
     lastPartialSttAtRef.current = null;
     setLiveTranscript('');
+  };
+
+  const resetUtteranceBufferOnListenOpen = () => {
+    if (
+      shouldResetUtteranceBufferOnListenOpen(preserveUtteranceBufferRef.current)
+    ) {
+      partialUtteranceBufferRef.current = '';
+      conversationSemanticExtensionUsedRef.current = false;
+    }
+    preserveUtteranceBufferRef.current = false;
   };
 
   const ensureConversationBargeInDuringAssistant = () => {
@@ -2270,8 +2282,7 @@ export default function ChatScreen() {
         }
 
         conversationMicOpenInFlightRef.current = false;
-        partialUtteranceBufferRef.current = '';
-        conversationSemanticExtensionUsedRef.current = false;
+        resetUtteranceBufferOnListenOpen();
         clearLiveTranscript();
         resetConversationListenRetries();
         consecutiveOnlyOneFailuresRef.current = 0;
@@ -2328,8 +2339,7 @@ export default function ChatScreen() {
                 return;
               }
               conversationMicOpenInFlightRef.current = false;
-              partialUtteranceBufferRef.current = '';
-              conversationSemanticExtensionUsedRef.current = false;
+              resetUtteranceBufferOnListenOpen();
               clearLiveTranscript();
               resetConversationListenRetries();
               consecutiveOnlyOneFailuresRef.current = 0;
@@ -4849,6 +4859,7 @@ export default function ChatScreen() {
             transcript.length > 48 ? `${transcript.slice(0, 45)}…` : transcript,
           bufferLen: partialUtteranceBufferRef.current.length,
         });
+        preserveUtteranceBufferRef.current = true;
         voiceSendLockRef.current = false;
         clearListenCommitUi();
         setVoicePhaseTransition('idle', { reason: 'semantic_extend' });

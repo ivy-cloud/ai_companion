@@ -73,6 +73,19 @@ class MemoryContinuityTests(unittest.TestCase):
         )
         self.assertTrue(keep)
 
+    def test_should_keep_history_for_short_factual_voice_clause(self) -> None:
+        memory.append_exchange(
+            "I've been thinking about switching jobs.",
+            "Big move — what's pulling you that way?",
+        )
+        keep = memory.should_keep_history_for_turn(
+            "What's the weather in Boston?",
+            math_turn=False,
+            profile_turn=False,
+            factual=True,
+        )
+        self.assertTrue(keep)
+
     def test_should_not_keep_history_for_profile_turn(self) -> None:
         memory.append_exchange("I'm 47.", "Got it.")
         keep = memory.should_keep_history_for_turn(

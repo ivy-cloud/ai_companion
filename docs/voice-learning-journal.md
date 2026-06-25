@@ -250,3 +250,298 @@ _Full file: docs/natural-human-chat.md_
 
 **Phone retest:** Hello opener + incomplete vent after a multi-turn session (mic storm target).
 
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `natural-human-chat.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Practical synthesis for Jessica's friend voice. **We cannot watch every movie or scrape all podcasts** — this doc triangulates conversation-analysis research, realistic film dialogue craft, voice-AI competitor learnings, and our own session logs.
+- **Related:** [her-voice-learnings.md](./her-voice-learnings.md), [voice-competitor-learnings.md](./voice-competitor-learnings.md), [pi-inflection-learnings.md](./pi-inflection-learnings.md), `ai-backend/human_speech.py` (`FRIEND_VOICE_RULES`).
+- 
+- | Source | What it actually tells us |
+- |--------|---------------------------|
+- | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
+_Full file: docs/natural-human-chat.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `chatgpt-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed UX and latency patterns from ChatGPT Advanced Voice / Realtime API docs, mapped to the Jessica phone voice stack (Expo + Azure STT/TTS + Groq stream).
+- | Learning | Implementation |
+- |----------|----------------|
+- | **Always feel live** | Idle during post-TTS cooldown shows **Opening mic…** instead of Listening paused (`voiceFlow.ts`, `micOpeningHint` in `index.tsx`). |
+- | **Escape hatches** | **Done speaking** always visible while listening in conversation mode; **Mute / Unmute** during assistant TTS (`VoiceHero.tsx`). |
+- | **Semantic turn extension** | STT ending on trailing conjunctions/fillers (EN + ZH) reopens mic once and buffers partial text (`hasIncompleteThoughtEnding`, `processVoiceUtterance`). |
+_Full file: docs/chatgpt-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `gemini-live-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed patterns from [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api) docs (Jun 2026), mapped to Jessica (Expo + Azure STT/TTS + Groq stream).
+- Gemini Live is a **stateful WebSocket (WSS)** speech-to-speech stack — not a chain of STT → LLM → TTS. A **native audio model** (`gemini-live-2.5-flash-native-audio`, migrating to `gemini-3.1-flash-live-preview`) consumes continuous **16 kHz PCM** input and streams **24 kHz PCM** output in one session.
+- | Aspect | Gemini Live | Jessica (today) |
+- |--------|-------------|-----------------|
+- | Transport | WSS (WebRTC via partners: LiveKit, Pipecat, Fishjam) | REST + NDJSON stream + Azure TTS clips |
+- | Turn detection | **Server VAD** (configurable) or manual `activityStart`/`activityEnd` | Client silence meter + semantic incomplete-thought extension |
+_Full file: docs/gemini-live-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `her-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Her** (Samantha), **ChatGPT Advanced Voice**, **Sesame (Maya/Miles)**, **Hume EVI**, and **Pi** — mapped to Jessica's friend voice (Groq + Azure STT/TTS + Expo).
+- | Pattern | Samantha (film) | Why it matters |
+- |---------|-----------------|----------------|
+- | **Coherent persona** | Same warmth, curiosity, boundaries under stress | Users trust a *person*, not a mode switch |
+- | **Emotional memory** | Recalls how Theodore *felt*, not just facts | Continuity reads as caring, not retrieval |
+- | **Natural turn-taking** | Pauses signal listening and thought | Timing = empathy (not lag) |
+_Full file: docs/her-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `hume-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research from [Hume EVI docs](https://dev.hume.ai/docs/speech-to-speech-evi/overview), [turn detection](https://dev.hume.ai/docs/speech-to-speech-evi/configuration/turn-detection), [interruption](https://dev.hume.ai/docs/speech-to-speech-evi/configuration/interruption), and [EVI 3 blog](https://www.hume.ai/blog/introducing-evi-3), mapped to the Jessica phone stack (Expo + Azure STT/TTS + Groq stream).
+- | Layer | Hume EVI |
+- |-------|----------|
+- | **Architecture** | Single **speech-language model (SLM)** — same intelligence handles transcription, language, and speech in one autoregressive stream (T + V tokens). |
+- | **Transport** | Client WebSocket `wss://api.hume.ai/v0/evi` — `audio_input` up, `user_message` + `audio_output` + `assistant_end` down. |
+- | **Prosody / emotion** | Streaming **expression measures** (tune, rhythm, timbre) on user speech; SLM “acts out” replies with empathic tone — not word-by-word TTS. |
+_Full file: docs/hume-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `pi-inflection-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Pi** — Inflection's personal intelligence companion — mapped to the Jessica Her-style voice stack (Groq + Azure STT/TTS + Expo). Product-design learnings only; no Inflection API (consumer Pi availability varies by region; Inflection pivoted toward B2B/enterprise licensing via Microsoft Azure in 2024).
+- | Layer | Pi (Inflection) |
+- |-------|-----------------|
+- | **Positioning** | **Companion**, not assistant — "conversations, friendly advice, concise information in a natural, flowing style" |
+- | **Model** | Inflection-2.5 / Inflection-3 (proprietary); personality team + linguists + RLHF |
+- | **Architecture** | Text LLM + optional web search; **Call Pi** voice on mobile (six voices); not public speech-to-speech like Realtime/EVI |
+_Full file: docs/pi-inflection-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `voice-competitor-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendor:
+- [chatgpt-voice-learnings.md](./chatgpt-voice-learnings.md)
+- [hume-voice-learnings.md](./hume-voice-learnings.md)
+- [gemini-live-learnings.md](./gemini-live-learnings.md)
+- [pi-inflection-learnings.md](./pi-inflection-learnings.md) — companion tone/UX (not voice stack)
+- [her-voice-learnings.md](./her-voice-learnings.md) — Samantha / Sesame friend voice patterns
+_Full file: docs/voice-competitor-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `natural-human-chat.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Practical synthesis for Jessica's friend voice. **We cannot watch every movie or scrape all podcasts** — this doc triangulates conversation-analysis research, realistic film dialogue craft, voice-AI competitor learnings, and our own session logs.
+- **Related:** [her-voice-learnings.md](./her-voice-learnings.md), [voice-competitor-learnings.md](./voice-competitor-learnings.md), [pi-inflection-learnings.md](./pi-inflection-learnings.md), `ai-backend/human_speech.py` (`FRIEND_VOICE_RULES`).
+- 
+- | Source | What it actually tells us |
+- |--------|---------------------------|
+- | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
+_Full file: docs/natural-human-chat.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `chatgpt-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed UX and latency patterns from ChatGPT Advanced Voice / Realtime API docs, mapped to the Jessica phone voice stack (Expo + Azure STT/TTS + Groq stream).
+- | Learning | Implementation |
+- |----------|----------------|
+- | **Always feel live** | Idle during post-TTS cooldown shows **Opening mic…** instead of Listening paused (`voiceFlow.ts`, `micOpeningHint` in `index.tsx`). |
+- | **Escape hatches** | **Done speaking** always visible while listening in conversation mode; **Mute / Unmute** during assistant TTS (`VoiceHero.tsx`). |
+- | **Semantic turn extension** | STT ending on trailing conjunctions/fillers (EN + ZH) reopens mic once and buffers partial text (`hasIncompleteThoughtEnding`, `processVoiceUtterance`). |
+_Full file: docs/chatgpt-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `gemini-live-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed patterns from [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api) docs (Jun 2026), mapped to Jessica (Expo + Azure STT/TTS + Groq stream).
+- Gemini Live is a **stateful WebSocket (WSS)** speech-to-speech stack — not a chain of STT → LLM → TTS. A **native audio model** (`gemini-live-2.5-flash-native-audio`, migrating to `gemini-3.1-flash-live-preview`) consumes continuous **16 kHz PCM** input and streams **24 kHz PCM** output in one session.
+- | Aspect | Gemini Live | Jessica (today) |
+- |--------|-------------|-----------------|
+- | Transport | WSS (WebRTC via partners: LiveKit, Pipecat, Fishjam) | REST + NDJSON stream + Azure TTS clips |
+- | Turn detection | **Server VAD** (configurable) or manual `activityStart`/`activityEnd` | Client silence meter + semantic incomplete-thought extension |
+_Full file: docs/gemini-live-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `her-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Her** (Samantha), **ChatGPT Advanced Voice**, **Sesame (Maya/Miles)**, **Hume EVI**, and **Pi** — mapped to Jessica's friend voice (Groq + Azure STT/TTS + Expo).
+- | Pattern | Samantha (film) | Why it matters |
+- |---------|-----------------|----------------|
+- | **Coherent persona** | Same warmth, curiosity, boundaries under stress | Users trust a *person*, not a mode switch |
+- | **Emotional memory** | Recalls how Theodore *felt*, not just facts | Continuity reads as caring, not retrieval |
+- | **Natural turn-taking** | Pauses signal listening and thought | Timing = empathy (not lag) |
+_Full file: docs/her-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `hume-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research from [Hume EVI docs](https://dev.hume.ai/docs/speech-to-speech-evi/overview), [turn detection](https://dev.hume.ai/docs/speech-to-speech-evi/configuration/turn-detection), [interruption](https://dev.hume.ai/docs/speech-to-speech-evi/configuration/interruption), and [EVI 3 blog](https://www.hume.ai/blog/introducing-evi-3), mapped to the Jessica phone stack (Expo + Azure STT/TTS + Groq stream).
+- | Layer | Hume EVI |
+- |-------|----------|
+- | **Architecture** | Single **speech-language model (SLM)** — same intelligence handles transcription, language, and speech in one autoregressive stream (T + V tokens). |
+- | **Transport** | Client WebSocket `wss://api.hume.ai/v0/evi` — `audio_input` up, `user_message` + `audio_output` + `assistant_end` down. |
+- | **Prosody / emotion** | Streaming **expression measures** (tune, rhythm, timbre) on user speech; SLM “acts out” replies with empathic tone — not word-by-word TTS. |
+_Full file: docs/hume-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `pi-inflection-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Pi** — Inflection's personal intelligence companion — mapped to the Jessica Her-style voice stack (Groq + Azure STT/TTS + Expo). Product-design learnings only; no Inflection API (consumer Pi availability varies by region; Inflection pivoted toward B2B/enterprise licensing via Microsoft Azure in 2024).
+- | Layer | Pi (Inflection) |
+- |-------|-----------------|
+- | **Positioning** | **Companion**, not assistant — "conversations, friendly advice, concise information in a natural, flowing style" |
+- | **Model** | Inflection-2.5 / Inflection-3 (proprietary); personality team + linguists + RLHF |
+- | **Architecture** | Text LLM + optional web search; **Call Pi** voice on mobile (six voices); not public speech-to-speech like Realtime/EVI |
+_Full file: docs/pi-inflection-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `voice-competitor-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendor:
+- [chatgpt-voice-learnings.md](./chatgpt-voice-learnings.md)
+- [hume-voice-learnings.md](./hume-voice-learnings.md)
+- [gemini-live-learnings.md](./gemini-live-learnings.md)
+- [pi-inflection-learnings.md](./pi-inflection-learnings.md) — companion tone/UX (not voice stack)
+- [her-voice-learnings.md](./her-voice-learnings.md) — Samantha / Sesame friend voice patterns
+_Full file: docs/voice-competitor-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `natural-human-chat.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Practical synthesis for Jessica's friend voice. **We cannot watch every movie or scrape all podcasts** — this doc triangulates conversation-analysis research, realistic film dialogue craft, voice-AI competitor learnings, and our own session logs.
+- **Related:** [her-voice-learnings.md](./her-voice-learnings.md), [voice-competitor-learnings.md](./voice-competitor-learnings.md), [pi-inflection-learnings.md](./pi-inflection-learnings.md), `ai-backend/human_speech.py` (`FRIEND_VOICE_RULES`).
+- 
+- | Source | What it actually tells us |
+- |--------|---------------------------|
+- | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
+_Full file: docs/natural-human-chat.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `chatgpt-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed UX and latency patterns from ChatGPT Advanced Voice / Realtime API docs, mapped to the Jessica phone voice stack (Expo + Azure STT/TTS + Groq stream).
+- | Learning | Implementation |
+- |----------|----------------|
+- | **Always feel live** | Idle during post-TTS cooldown shows **Opening mic…** instead of Listening paused (`voiceFlow.ts`, `micOpeningHint` in `index.tsx`). |
+- | **Escape hatches** | **Done speaking** always visible while listening in conversation mode; **Mute / Unmute** during assistant TTS (`VoiceHero.tsx`). |
+- | **Semantic turn extension** | STT ending on trailing conjunctions/fillers (EN + ZH) reopens mic once and buffers partial text (`hasIncompleteThoughtEnding`, `processVoiceUtterance`). |
+_Full file: docs/chatgpt-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `gemini-live-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research-backed patterns from [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api) docs (Jun 2026), mapped to Jessica (Expo + Azure STT/TTS + Groq stream).
+- Gemini Live is a **stateful WebSocket (WSS)** speech-to-speech stack — not a chain of STT → LLM → TTS. A **native audio model** (`gemini-live-2.5-flash-native-audio`, migrating to `gemini-3.1-flash-live-preview`) consumes continuous **16 kHz PCM** input and streams **24 kHz PCM** output in one session.
+- | Aspect | Gemini Live | Jessica (today) |
+- |--------|-------------|-----------------|
+- | Transport | WSS (WebRTC via partners: LiveKit, Pipecat, Fishjam) | REST + NDJSON stream + Azure TTS clips |
+- | Turn detection | **Server VAD** (configurable) or manual `activityStart`/`activityEnd` | Client silence meter + semantic incomplete-thought extension |
+_Full file: docs/gemini-live-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `her-voice-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Her** (Samantha), **ChatGPT Advanced Voice**, **Sesame (Maya/Miles)**, **Hume EVI**, and **Pi** — mapped to Jessica's friend voice (Groq + Azure STT/TTS + Expo).
+- | Pattern | Samantha (film) | Why it matters |
+- |---------|-----------------|----------------|
+- | **Coherent persona** | Same warmth, curiosity, boundaries under stress | Users trust a *person*, not a mode switch |
+- | **Emotional memory** | Recalls how Theodore *felt*, not just facts | Continuity reads as caring, not retrieval |
+- | **Natural turn-taking** | Pauses signal listening and thought | Timing = empathy (not lag) |
+_Full file: docs/her-voice-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `pi-inflection-learnings.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Research on **Pi** — Inflection's personal intelligence companion — mapped to the Jessica Her-style voice stack (Groq + Azure STT/TTS + Expo). Product-design learnings only; no Inflection API (consumer Pi availability varies by region; Inflection pivoted toward B2B/enterprise licensing via Microsoft Azure in 2024).
+- | Layer | Pi (Inflection) |
+- |-------|-----------------|
+- | **Positioning** | **Companion**, not assistant — "conversations, friendly advice, concise information in a natural, flowing style" |
+- | **Model** | Inflection-2.5 / Inflection-3 (proprietary); personality team + linguists + RLHF |
+- | **Architecture** | Text LLM + optional web search; **Call Pi** voice on mobile (six voices); not public speech-to-speech like Realtime/EVI |
+_Full file: docs/pi-inflection-learnings.md_
+
+
+## 2026-06-24
+_No AI-like patterns in recent session_log turns._
+
+**Deep pass — review `natural-human-chat.md`** against `human_speech.py` / turn hints.
+Sample bullets from doc:
+- Practical synthesis for Jessica's friend voice. **We cannot watch every movie or scrape all podcasts** — this doc triangulates conversation-analysis research, realistic film dialogue craft, voice-AI competitor learnings, and our own session logs.
+- **Related:** [her-voice-learnings.md](./her-voice-learnings.md), [voice-competitor-learnings.md](./voice-competitor-learnings.md), [pi-inflection-learnings.md](./pi-inflection-learnings.md), `ai-backend/human_speech.py` (`FRIEND_VOICE_RULES`).
+- 
+- | Source | What it actually tells us |
+- |--------|---------------------------|
+- | **Conversation analysis (CA)** | Structure of real talk: turns, backchannels, repairs, overlaps — from recorded everyday + radio speech |
+_Full file: docs/natural-human-chat.md_
+
+
+## 2026-06-24 (voice memory + TRP interrupt)
+
+**Phone bugs:** Jessica only heard the last few words of a turn; cooperative interrupt fired mid-clause.
+
+**Root causes:**
+- Semantic turn extension buffered partial STT, then `partialUtteranceBufferRef` was cleared on mic reopen — only the tail was sent.
+- Companion interrupt fired on sustained speech with no micro-pause or clause boundary (not at TRPs).
+
+**Fixes:**
+- Preserve utterance buffer across semantic-extension listen reopen (`preserveUtteranceBufferRef`).
+- Gate cooperative interrupt on 250–920ms clause pause + sentence/clause punctuation (or meter-only pause when partial STT off); never mid-word.
+- Chat history window 8 → 12 exchanges; short factual voice clauses keep thread.
+
+**Tests:** `conversationMode.test.ts` TRP gating; `test_memory.py` short factual history keep.
