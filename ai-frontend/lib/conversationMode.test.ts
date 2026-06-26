@@ -51,6 +51,7 @@ import {
   shouldRecoverListeningMeterBlocked,
   shouldRecoverListenPausedStuck,
   shouldRecoverOpeningMicStuck,
+  nextListenOpenChainStartedAt,
   tickConversationMeter,
 } from './conversationMode.ts';
 
@@ -185,6 +186,12 @@ test('opening mic stuck: uses schedule timestamp not phase clock', () => {
 test('opening mic stuck constants bounded', () => {
   assert.equal(OPENING_MIC_STUCK_MS, 5500);
   assert.ok(MIC_OPEN_CHAIN_TIMEOUT_MS >= OPENING_MIC_STUCK_MS);
+});
+
+test('listen open chain timestamp preserved across backoff retries', () => {
+  const chainStart = 1000;
+  assert.equal(nextListenOpenChainStartedAt(null, 5000), 5000);
+  assert.equal(nextListenOpenChainStartedAt(chainStart, 9000), chainStart);
 });
 
 test('phase0: listen paused stuck constant after idle recovery', () => {

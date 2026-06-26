@@ -134,6 +134,27 @@ def _escape_and_break_sentences(cleaned: str) -> str:
     return inner
 
 
+_SINGING_LINE_PITCHES = ("+1.0st", "+1.4st", "+1.75st", "+1.25st", "+1.5st")
+
+
+def _escape_for_singing(cleaned: str, break_ms: int = 360) -> str:
+    """
+    Line-by-line SSML with alternating pitch lifts — closest we get with neural TTS
+  (not true note melody; see docs/singing-roadmap.md).
+    """
+    raw_lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+    if not raw_lines:
+        raw_lines = [cleaned.strip()]
+    if len(raw_lines) == 1:
+        raw_lines = [p.strip() for p in re.split(r"(?<=[,;])\s+", raw_lines[0]) if p.strip()]
+    chunks: list[str] = []
+    for i, line in enumerate(raw_lines):
+        pitch = _SINGING_LINE_PITCHES[i % len(_SINGING_LINE_PITCHES)]
+        escaped = _ssml_escape_text(line.rstrip(",;"))
+        chunks.append(f'<prosody pitch="{pitch}">{escaped}</prosody>')
+    return f'<break time="{break_ms}ms"/>'.join(chunks)
+
+
 _NEUTRAL_PITCH = frozenset(
     {"", "0st", "+0st", "medium", "default", "neutral", "x-medium"},
 )
@@ -407,6 +428,8 @@ def synthesize_speech(
     voice_gender: Optional[str] = None,
     express_style: Optional[str] = None,
     emotion_hint: Optional[str] = None,
+    singing: bool = False,
+    singing_context: Optional[str] = None,
 ) -> bytes:
     import dev_mode
 
@@ -429,6 +452,15 @@ def synthesize_speech(
 
     delivery = _delivery(voice_gender)
     rate, pitch, volume = _prosody_for_style(style, delivery)
+    sing_break_ms = 360
+
+    if singing:
+        from emotion import singing_prosody_params
+
+        params = singing_prosody_params(singing_context or cleaned)
+        rate = str(params["rate"])
+        pitch = str(params["pitch"])
+        sing_break_ms = int(params["break_ms"])
 
     voice = delivery.voice
     hint_norm = (emotion_hint or "").strip().lower() or None
@@ -446,7 +478,10 @@ def synthesize_speech(
     )
     if express_style and not normalize_express_style(express_style):
         use_express = False
-    escaped = _escape_and_break_sentences(cleaned)
+    if singing:
+        escaped = _escape_for_singing(cleaned, break_ms=sing_break_ms)
+    else:
+        escaped = _escape_and_break_sentences(cleaned)
     ssml = _build_ssml(
         voice,
         rate,

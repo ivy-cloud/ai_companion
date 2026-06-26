@@ -110,3 +110,71 @@ Pair **local idle** (journal + log scanning) with **cloud hourly** (agent edits 
 Import [cursor-automation-voice-learning.json](./cursor-automation-voice-learning.json) for a once-daily ~2:00 AM review of the full journal.
 
 Adjust timezone in the Automations editor after import.
+
+---
+
+## 20-hour improvement sprint
+
+Autonomous voice learning every **45 minutes** for **20 hours** — runs even while you use the Mac (`VOICE_LEARNING_SPRINT=1`). Hourly launchd passes also use sprint mode while `docs/.improvement-sprint.json` has a future `ends_at`.
+
+### Start (recommended — launchd, survives sleep)
+
+```bash
+chmod +x scripts/start_improvement_sprint.sh scripts/improvement_sprint_tick.sh
+./scripts/start_improvement_sprint.sh
+```
+
+This writes `docs/.improvement-sprint.json`, reinstalls idle learning (5 min threshold), and installs **45-minute launchd ticks** (`com.ivy.jessica-improvement-sprint`).
+
+### Resume an existing sprint
+
+If `ends_at` is still in the future but ticks stopped:
+
+```bash
+./scripts/install_improvement_sprint_launchd.sh
+./scripts/improvement_sprint_tick.sh   # optional immediate cycle
+```
+
+### Legacy long-runner (optional)
+
+`scripts/improvement_sprint.sh` loops with `sleep 2700` — can die if the Mac sleeps. Prefer launchd ticks above.
+
+```bash
+nohup ./scripts/improvement_sprint.sh >> docs/improvement-sprint.log 2>&1 &
+```
+
+### One cycle (manual)
+
+```bash
+ai-backend/.venv/bin/python scripts/improvement_sprint_cycle.py
+```
+
+Each cycle: `daily_voice_learning.py --hours 8 --deep --auto-apply` → if `human_speech.py` changed, run `unittest discover` → revert file on failure → append to [improvement-sprint-journal.md](./improvement-sprint-journal.md).
+
+### Monitor
+
+```bash
+tail -f docs/improvement-sprint.log
+cat docs/.improvement-sprint.json   # started_at, ends_at, cycles_run
+```
+
+### Stop early
+
+```bash
+launchctl bootout gui/$(id -u)/com.ivy.jessica-improvement-sprint
+rm -f ~/Library/LaunchAgents/com.ivy.jessica-improvement-sprint.plist
+# optional: reset idle threshold
+export VOICE_LEARNING_MIN_IDLE_SEC=1200 && ./scripts/install_idle_learning.sh
+```
+
+Remove or edit `docs/.improvement-sprint.json` so ticks skip after `ends_at` passes.
+
+```bash
+kill "$(cat docs/.improvement-sprint.pid)"
+rm -f docs/.improvement-sprint.pid
+```
+
+(Optionally restore 20 min idle: `VOICE_LEARNING_MIN_IDLE_SEC=1200 ./scripts/install_idle_learning.sh`)
+
+State: `docs/.improvement-sprint.json`, `docs/.improvement-sprint.pid` (runner only while active).
+

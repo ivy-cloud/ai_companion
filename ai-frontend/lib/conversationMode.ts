@@ -260,6 +260,17 @@ export function shouldRecoverOpeningMicStuck(
 }
 
 /**
+ * Stamp the start of a listen-open chain once — retries and storm backoff must not
+ * slide {@link shouldRecoverOpeningMicStuck} / the opening-mic watchdog.
+ */
+export function nextListenOpenChainStartedAt(
+  chainStartedAt: number | null,
+  nowMs: number,
+): number {
+  return chainStartedAt ?? nowMs;
+}
+
+/**
  * Expo metering is dBFS (negative). Above this ≈ speech; below ≈ silence.
  * Lower (more negative) picks up quieter speech at arm's length on phone mics;
  * also raises false triggers from room noise / HVAC — do not go below ~-62 without testing.

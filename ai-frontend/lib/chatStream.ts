@@ -32,6 +32,7 @@ export type ChatStreamDoneMeta = {
   speech_reply?: string;
   links?: ChatLink[];
   singing?: boolean;
+  singing_audio_url?: string;
   proactive?: boolean;
   proactive_beats?: string[];
 };
@@ -39,6 +40,7 @@ export type ChatStreamDoneMeta = {
 type StreamEvent =
   | ({ start: true } & ChatStreamStartMeta)
   | { text: string }
+  | { singing_generating: true }
   | ({
       done: true;
       reply: string;
@@ -49,7 +51,65 @@ type StreamEvent =
 
 export type ChatStreamHandlers = StreamHandlers & {
   onDoneMeta?: (meta: ChatStreamDoneMeta) => void;
+  onSingingGenerating?: () => void;
 };
+
+function buildDoneMeta(event: Extract<StreamEvent, { done: true }>): ChatStreamDoneMeta {
+  const meta: ChatStreamDoneMeta = {};
+  if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
+  if (event.express_style) meta.express_style = event.express_style;
+  if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
+  if (event.speech_reply) meta.speech_reply = event.speech_reply;
+  if (event.links?.length) meta.links = event.links;
+  if (event.singing) meta.singing = true;
+  if (event.singing_audio_url) meta.singing_audio_url = event.singing_audio_url;
+  if (event.proactive) meta.proactive = true;
+  if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
+  return meta;
+}
+
+function hasDoneMeta(meta: ChatStreamDoneMeta): boolean {
+  return Boolean(
+    meta.emotion_hint ||
+      meta.express_style ||
+      meta.speech_chunks?.length ||
+      meta.speech_reply ||
+      meta.links?.length ||
+      meta.singing ||
+      meta.singing_audio_url ||
+      meta.proactive ||
+      meta.proactive_beats?.length,
+  );
+}
+
+function dispatchStreamEvent(event: StreamEvent, handlers: StreamHandlers): string | null {
+  const streamHandlers = handlers as ChatStreamHandlers;
+  if ('start' in event && event.start) {
+    handlers.onStart?.({
+      timezone: event.timezone,
+      timezone_from_device: event.timezone_from_device,
+      rhythm: event.rhythm,
+    });
+  }
+  if ('singing_generating' in event && event.singing_generating) {
+    streamHandlers.onSingingGenerating?.();
+  }
+  if ('text' in event && event.text) {
+    handlers.onText(event.text);
+  }
+  if ('error' in event && event.error) {
+    handlers.onError(event.error);
+    throw new Error(event.error);
+  }
+  if ('done' in event && event.done) {
+    const meta = buildDoneMeta(event);
+    if (hasDoneMeta(meta)) {
+      streamHandlers.onDoneMeta?.(meta);
+    }
+    return handlers.onDone(event.reply);
+  }
+  return null;
+}
 
 const STREAM_TIMEOUT_MS = 180_000;
 
@@ -103,44 +163,12 @@ function processStreamEvents(events: StreamEvent[], handlers: StreamHandlers): s
   let full = '';
 
   for (const event of events) {
-    if ('start' in event && event.start) {
-      handlers.onStart?.({
-        timezone: event.timezone,
-        timezone_from_device: event.timezone_from_device,
-        rhythm: event.rhythm,
-      });
-    }
     if ('text' in event && event.text) {
       full += event.text;
-      handlers.onText(event.text);
     }
-    if ('error' in event && event.error) {
-      handlers.onError(event.error);
-      throw new Error(event.error);
-    }
-    if ('done' in event && event.done) {
-      const meta: ChatStreamDoneMeta = {};
-      if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
-      if (event.express_style) meta.express_style = event.express_style;
-      if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
-      if (event.speech_reply) meta.speech_reply = event.speech_reply;
-      if (event.links?.length) meta.links = event.links;
-      if (event.singing) meta.singing = true;
-      if (event.proactive) meta.proactive = true;
-      if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
-      if (
-        meta.emotion_hint ||
-        meta.express_style ||
-        meta.speech_chunks?.length ||
-        meta.speech_reply ||
-        meta.links?.length ||
-        meta.singing ||
-        meta.proactive ||
-        meta.proactive_beats?.length
-      ) {
-        (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
-      }
-      return handlers.onDone(event.reply || full);
+    const doneReply = dispatchStreamEvent(event, handlers);
+    if (doneReply !== null) {
+      return doneReply || full;
     }
   }
 
@@ -168,6 +196,8 @@ export function streamChatWithXHR(
     let full = '';
     let completed = false;
     let lastProgressAt = Date.now();
+    let singingGenerationActive = false;
+    const stallMs = () => (singingGenerationActive ? 150_000 : 45_000);
 
     const finish = (fn: () => void) => {
       signal?.removeEventListener('abort', onAbort);
@@ -190,7 +220,7 @@ export function streamChatWithXHR(
 
     const stallCheckId = setInterval(() => {
       if (completed) return;
-      if (Date.now() - lastProgressAt > 45_000) {
+      if (Date.now() - lastProgressAt > stallMs()) {
         xhr.abort();
         finish(() =>
           reject(new Error('Stream stalled — try again or check Ollama is running')),
@@ -206,18 +236,8 @@ export function streamChatWithXHR(
       buffer = rest;
 
       for (const event of events) {
-        if ('start' in event && event.start) {
-          handlers.onStart?.({
-            timezone: event.timezone,
-            timezone_from_device: event.timezone_from_device,
-            rhythm: event.rhythm,
-          });
-        }
-        if ('text' in event && event.text) {
-          if (!completed) {
-            full += event.text;
-            handlers.onText(event.text);
-          }
+        if ('text' in event && event.text && !completed) {
+          full += event.text;
         }
         if ('error' in event && event.error) {
           try {
@@ -228,28 +248,26 @@ export function streamChatWithXHR(
           finish(() => reject(new Error(event.error)));
           return;
         }
+        if ('singing_generating' in event && event.singing_generating) {
+          singingGenerationActive = true;
+          lastProgressAt = Date.now();
+          (handlers as ChatStreamHandlers).onSingingGenerating?.();
+        }
+        if ('start' in event && event.start) {
+          handlers.onStart?.({
+            timezone: event.timezone,
+            timezone_from_device: event.timezone_from_device,
+            rhythm: event.rhythm,
+          });
+        }
+        if ('text' in event && event.text && !completed) {
+          handlers.onText(event.text);
+        }
         if ('done' in event && event.done) {
           if (completed) return;
           completed = true;
-          const meta: ChatStreamDoneMeta = {};
-          if (event.emotion_hint) meta.emotion_hint = event.emotion_hint;
-          if (event.express_style) meta.express_style = event.express_style;
-          if (event.speech_chunks?.length) meta.speech_chunks = event.speech_chunks;
-          if (event.speech_reply) meta.speech_reply = event.speech_reply;
-          if (event.links?.length) meta.links = event.links;
-          if (event.singing) meta.singing = true;
-          if (event.proactive) meta.proactive = true;
-          if (event.proactive_beats?.length) meta.proactive_beats = event.proactive_beats;
-          if (
-            meta.emotion_hint ||
-            meta.express_style ||
-            meta.speech_chunks?.length ||
-            meta.speech_reply ||
-            meta.links?.length ||
-            meta.singing ||
-            meta.proactive ||
-            meta.proactive_beats?.length
-          ) {
+          const meta = buildDoneMeta(event);
+          if (hasDoneMeta(meta)) {
             (handlers as ChatStreamHandlers).onDoneMeta?.(meta);
           }
           const reply = handlers.onDone(event.reply || full);

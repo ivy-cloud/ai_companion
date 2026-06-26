@@ -26,7 +26,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>VOICE_LEARNING_MIN_IDLE_SEC</key>
-    <string>1200</string>
+    <string>REPO_MIN_IDLE_SEC</string>
     <key>VOICE_LEARNING_LOOKBACK_HOURS</key>
     <string>6</string>
   </dict>

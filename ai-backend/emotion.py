@@ -162,6 +162,23 @@ def express_style_for_singing(message: str) -> str:
     return "cheerful"
 
 
+def singing_prosody_params(message: str) -> dict[str, str | int]:
+    """
+    Slower rate + lifted pitch + longer pauses — Azure TTS cannot carry a real melody,
+    but this reads more like sung speech than flat conversation.
+    """
+    lower = (message or "").strip().lower()
+    if "lullaby" in lower or any(w in lower for w in ("sleep", "bedtime", "hush")):
+        return {"rate": "0.76", "pitch": "+0.75st", "break_ms": 480}
+    if "rap" in lower or "freestyle" in lower or "bars" in lower:
+        return {"rate": "0.94", "pitch": "+0.25st", "break_ms": 220}
+    if any(w in lower for w in ("hype", "energetic", "party", "dance")):
+        return {"rate": "0.90", "pitch": "+1.75st", "break_ms": 300}
+    if any(w in lower for w in ("sad", "soft", "calm", "gentle")):
+        return {"rate": "0.80", "pitch": "+0.5st", "break_ms": 420}
+    return {"rate": "0.84", "pitch": "+1.35st", "break_ms": 360}
+
+
 def prosody_rate_for_hint(hint: Optional[EmotionHint], base_rate: str) -> str:
     """
     Nudge SSML rate to match conversational vibe (Hume-style prosody match).

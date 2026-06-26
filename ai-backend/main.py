@@ -30,6 +30,7 @@ import profile_growth
 import realtime_voice
 import session_log
 import singing
+import singing_audio
 import stt
 import tts
 import web_search
@@ -98,6 +99,16 @@ class TtsRequest(BaseModel):
     voice_gender: Optional[str] = None  # female | male — app voice-tone picker
     express_style: Optional[str] = None  # Azure mstts:express-as (cheerful, friendly, …)
     emotion_hint: Optional[str] = None  # warm | sympathetic | excited | gentle | neutral
+    singing: bool = False  # line-chunked prosody — rhythmic speech, not true melody
+    singing_context: Optional[str] = None  # original user ask (lullaby vs rap presets)
+
+
+class SingingAudioRequest(BaseModel):
+    lyrics: str
+    style: str = "acoustic"
+    mood: str = "warm"
+    include_chorus: bool = False
+    user_message: Optional[str] = None
 
 
 class VoiceLogRequest(BaseModel):
@@ -351,6 +362,28 @@ def _merge_log_extra(
     return merged
 
 
+def _try_singing_audio_url(reply: str, user_message: str) -> Optional[str]:
+    """Generate sung audio via external API; None → frontend falls back to Azure TTS."""
+    if not singing_audio.is_enabled():
+        return None
+    lyrics = singing_audio.extract_lyrics_from_reply(reply)
+    if not lyrics:
+        return None
+    intent = singing.parse_singing_intent(user_message)
+    style = intent.style if intent else "acoustic"
+    mood = intent.mood if intent else "warm"
+    include_chorus = intent.include_chorus if intent else False
+    audio_id = singing_audio.generate_and_cache(
+        lyrics,
+        style=style,
+        mood=mood,
+        include_chorus=include_chorus,
+    )
+    if not audio_id:
+        return None
+    return f"/singing/audio/{audio_id}"
+
+
 def _finalize_replies(
     raw_reply: str,
     *,
@@ -427,6 +460,11 @@ def _stream_canned_reply(
         done_payload["links"] = links
     if singing_reply:
         done_payload["singing"] = True
+        if singing_audio.is_enabled():
+            yield _ndjson_line({"singing_generating": True})
+        audio_url = _try_singing_audio_url(spoken_reply, trimmed)
+        if audio_url:
+            done_payload["singing_audio_url"] = audio_url
     if express_style:
         done_payload["express_style"] = express_style
     yield _ndjson_line(done_payload)
@@ -773,6 +811,11 @@ def stream_chat_events(
             done_payload["links"] = links
         if song_llm:
             done_payload["singing"] = True
+            if singing_audio.is_enabled():
+                yield _ndjson_line({"singing_generating": True})
+            audio_url = _try_singing_audio_url(speech_reply, context.trimmed_latest)
+            if audio_url:
+                done_payload["singing_audio_url"] = audio_url
         proactive_beats = companion_thread.proactive_beats_for_stream()
         if proactive_beats:
             done_payload["proactive_beats"] = proactive_beats
@@ -886,6 +929,7 @@ def health(voice_gender: Optional[str] = None):
         "web_search": web_search.status(),
         "dev_mode": dev_mode.mock_status(),
         "session_log": session_log.status(),
+        "singing_audio": singing_audio.status(),
     }
 
 
@@ -927,9 +971,50 @@ def synthesize(body: TtsRequest):
         voice_gender=body.voice_gender,
         express_style=body.express_style,
         emotion_hint=body.emotion_hint,
+        singing=body.singing,
+        singing_context=body.singing_context,
     )
     media_type = "audio/wav" if dev_mode.mock_tts_enabled() else "audio/mpeg"
     return Response(content=audio, media_type=media_type)
+
+
+@app.post("/singing/audio")
+def generate_singing_audio(body: SingingAudioRequest):
+    """On-demand sung audio from lyrics + style (fallback if stream did not attach URL)."""
+    if not singing_audio.is_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Singing API not configured — set SINGING_API_KEY in ai-backend/.env",
+        )
+    lyrics = singing_audio.extract_lyrics_from_reply(body.lyrics)
+    if not lyrics:
+        raise HTTPException(status_code=400, detail="lyrics cannot be empty")
+    if body.user_message:
+        intent = singing.parse_singing_intent(body.user_message)
+        style = intent.style if intent else body.style
+        mood = intent.mood if intent else body.mood
+        include_chorus = intent.include_chorus if intent else body.include_chorus
+    else:
+        style, mood, include_chorus = body.style, body.mood, body.include_chorus
+    audio = singing_audio.generate_song_audio(
+        lyrics,
+        style=style,
+        mood=mood,
+        include_chorus=include_chorus,
+    )
+    if not audio:
+        raise HTTPException(status_code=502, detail="Singing generation failed")
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@app.get("/singing/audio/{audio_id}")
+def get_singing_audio(audio_id: str):
+    """Serve cached generated song audio from a prior /chat singing turn."""
+    cached = singing_audio.get_cached_audio(audio_id)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Singing audio not found or expired")
+    data, content_type = cached
+    return Response(content=data, media_type=content_type)
 
 
 @app.post("/stt")

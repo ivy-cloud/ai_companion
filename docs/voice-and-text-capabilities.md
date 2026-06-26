@@ -19,6 +19,8 @@ Voice is the primary mode — replies are spoken aloud. The chat panel shows the
 | **Lyrics / line breaks** | ✓ (chunked) | ✓ | ♪ prefix; one line per TTS chunk when possible |
 | Generic song / lullaby / rap | ✓ | ✓ | Canned original lyrics (fast) |
 | **Personalized song** | ✓ | ✓ | LLM original lyrics (topic, name, occasion) |
+| **In-tune melody / karaoke** | ✓* | ✓ | *With `SINGING_API_KEY` — see [singing-roadmap.md](./singing-roadmap.md) |
+| Learn singing from web / YouTube | — | — | Not possible with current stack |
 | Copyrighted song request | ✓ | ✓ | Canned “same vibe” fallback — no exact lyrics |
 | Poem / haiku | ✓ | ✓ | Line breaks in chat |
 | Short story | ✓ | ✓ | Spoken vignette |
@@ -37,26 +39,29 @@ Voice is the primary mode — replies are spoken aloud. The chat panel shows the
 
 ## Singing paths
 
-1. **Generic** — “sing me something”, “lullaby”, “quick rap” → canned original lines (`canned:singing`), ♪ in chat, line-chunked TTS.
-2. **Personalized** — “sing about my dog”, “birthday song for Alex” → LLM with `singing_llm_turn_hint()`, cheerful/hopeful express TTS, ♪ in done payload.
+1. **Generic** — “sing me something”, “lullaby”, “quick rap” → canned original lines (`canned:singing`), ♪ in chat, **generated music** when API configured, else line-chunked TTS.
+2. **Personalized** — “sing about my dog”, “birthday song for Alex” → LLM with `singing_llm_turn_hint()`, **music API** or cheerful TTS fallback, ♪ in done payload.
 3. **Copyrighted title** — “sing Shape of You” → canned safe fallback, never exact lyrics.
+
+**With `SINGING_API_KEY`:** backend calls Replicate MiniMax Music 2.6; app plays MP3 from `singing_audio_url`. **Without key:** rhythmic sung *speech* via Azure SSML. See [singing-roadmap.md](./singing-roadmap.md) for setup.
 
 ---
 
 ## How to test on your phone
 
 1. Start the app, open a voice session with Jessica.
-2. **Generic song:** “Sing me something chill” — should hear canned lyrics quickly; chat shows ♪ lines.
-3. **Personalized song:** “Sing a birthday song for Alex” — LLM original lyrics; warmer TTS style.
+2. **Generic song:** “Sing me something chill” — canned lyrics; with API key, hear generated music (~30–90 s after ♪ preparing song…).
+3. **Personalized song:** “Sing a birthday song for Alex” — LLM original lyrics + music when configured.
 4. **Copyright:** “Sing Shape of You by Ed Sheeran” — refuses exact lyrics, offers original vibe.
-5. **Chat links:** Ask “what’s the weather tonight?” — chat bubble should show a tappable HTTPS link; voice stays conversational.
-6. **Text helper:** “Help me text my friend I’m running late” — draft appears in chat; she reads a short version aloud.
-7. **Joke / poem:** “Tell me a joke about coffee” / “write a haiku about rain” — creative reply on both channels.
+5. **TTS fallback:** Remove `SINGING_API_KEY` — same asks use rhythmic Azure speech (no errors).
+6. **Chat links:** Ask “what’s the weather tonight?” — chat bubble should show a tappable HTTPS link; voice stays conversational.
+7. **Text helper:** “Help me text my friend I’m running late” — draft appears in chat; she reads a short version aloud.
+8. **Joke / poem:** “Tell me a joke about coffee” / “write a haiku about rain” — creative reply on both channels.
 
 Backend tests:
 
 ```bash
-cd ai-backend && python3 -m unittest test_singing test_voice_text_tasks test_chat_enrichment -v
+cd ai-backend && python3 -m unittest test_singing test_singing_audio test_voice_text_tasks test_chat_enrichment -v
 ```
 
 Full suite:

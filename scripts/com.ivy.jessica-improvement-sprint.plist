@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Improvement sprint tick — every 45 minutes while docs/.improvement-sprint.json ends_at is in the future.
+  Install: ./scripts/install_improvement_sprint_launchd.sh
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ivy.jessica-improvement-sprint</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPO_ROOT/scripts/improvement_sprint_tick.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>2700</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>REPO_ROOT/docs/improvement-sprint-launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPO_ROOT/docs/improvement-sprint-launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VOICE_LEARNING_SPRINT</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>
