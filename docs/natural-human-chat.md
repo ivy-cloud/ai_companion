@@ -14,6 +14,7 @@ Practical synthesis for Jessica's friend voice. **We cannot watch every movie or
 | **Podcasts / call-in** | Long-form casual interview rhythm; cooperative vs competitive interrupts |
 | **Film (Her, Before trilogy)** | *Curated* naturalism — rhythm and subtext of real talk, minus most mess |
 | **Voice AI (Sesame, Hume, Pi)** | Product patterns that *feel* human: latency, backchannels, brevity, boundaries |
+| **Voice AI market (2026)** | [voice-competitor-learnings.md](./voice-competitor-learnings.md) — ChatGPT, Gemini, Hume, Pi, Replika, Siri, Sesame |
 | **Our `session_log.jsonl`** | Where Jessica still slips into assistant/therapist/cheerleader |
 
 Real humans are messy. Good companion voice is **edited naturalism**: short turns, occasional disfluency, emotional fit — not verbatim transcription of ums and tangents.

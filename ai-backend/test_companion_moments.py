@@ -250,6 +250,21 @@ class CompanionMomentsTests(unittest.TestCase):
             "",
         )
 
+    def test_good_news_turn_hint(self) -> None:
+        hint = companion_moments.good_news_turn_hint(
+            "I got the promotion today!", casual=True
+        )
+        self.assertIn("Good news", hint)
+
+    def test_good_news_skips_heavy_vent(self) -> None:
+        msg = "I feel like it's too late for everything"
+        self.assertEqual(companion_moments.good_news_turn_hint(msg, casual=True), "")
+
+    def test_session_goodbye_avoids_glad_we_talked(self) -> None:
+        for _ in range(20):
+            line = companion_moments.session_goodbye_line(resolve_clock("UTC"))
+            self.assertNotIn("glad we talked", line.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

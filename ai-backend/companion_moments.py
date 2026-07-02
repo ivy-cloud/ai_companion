@@ -461,6 +461,36 @@ def active_listening_turn_hint(message: str, *, casual: bool) -> str:
     )
 
 
+_GOOD_NEWS = re.compile(
+    r"\b(?:"
+    r"won|passed|got the job|promotion|engaged|pregnant|baby|"
+    r"great news|good news|excited about|can't wait for|finally|"
+    r"so (?:happy|proud)|celebrate|landed the|accepted into"
+    r")\b",
+    re.I,
+)
+
+
+def good_news_turn_hint(message: str, *, casual: bool) -> str:
+    """
+    Replika / Pi pattern — celebrate wins and good moments, not only vents.
+    """
+    if not casual:
+        return ""
+    text = message.strip()
+    if not text or profile.is_memory_recall_question(text):
+        return ""
+    if not _GOOD_NEWS.search(text):
+        return ""
+    if _VENT_THINK_THROUGH.search(text):
+        return ""
+    return (
+        "Good news / win: match their energy briefly — one warm reaction "
+        "(oh nice / that's huge / love that for you) plus one curious what/how "
+        "about the win. No hollow praise ('so amazing!!!'). Hear the good stuff too."
+    )
+
+
 def friend_reaction_turn_hint(message: str, *, casual: bool) -> str:
     """
     Her-style friend reactions — tiny opinion or shared moment, not advice.
@@ -485,12 +515,12 @@ def friend_reaction_turn_hint(message: str, *, casual: bool) -> str:
 
 
 _GOODBYE_EVENING = (
-    "I'm glad we talked. Rest easy — I'll be here when you want me.",
-    "Good talking with you. Sleep well — I'm around.",
+    "Good talking with you. Rest easy — I'll be here when you want me.",
+    "Sleep well — I'm around when you want to talk.",
     "Take care tonight. I'm here whenever.",
 )
 _GOODBYE_DAY = (
-    "Glad we talked. I'm here whenever you want to pick this back up.",
+    "Good talking — I'm here whenever you want to pick this back up.",
     "Take care — talk soon.",
     "I'm around when you want me. Take care.",
 )

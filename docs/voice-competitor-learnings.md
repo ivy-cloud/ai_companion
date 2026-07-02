@@ -6,6 +6,8 @@ Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendo
 - [hume-voice-learnings.md](./hume-voice-learnings.md)
 - [gemini-live-learnings.md](./gemini-live-learnings.md)
 - [pi-inflection-learnings.md](./pi-inflection-learnings.md) — companion tone/UX (not voice stack)
+- [replika-companion-learnings.md](./replika-companion-learnings.md) — companion-first memory + voice/text parity
+- [siri-voice-learnings.md](./siri-voice-learnings.md) — Siri AI 2026 conversational UX
 - [her-voice-learnings.md](./her-voice-learnings.md) — Samantha / Sesame friend voice patterns
 
 ## Stack comparison
@@ -24,7 +26,52 @@ Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendo
 | **Typical voice-to-voice** | **1.5–4s** (good ≤1.5s) | **~0.3–1.5s** class | Sub-second target | Sub-second target (native audio) |
 | **Phone echo strategy** | Half-duplex, 150ms cooldown, barge-in monitor | Server echo modeling | Partner/SDK dependent | Continuous stream + client AEC |
 
-**Sesame (Maya/Miles)** — separate CSM speech model ([her-voice-learnings.md](./her-voice-learnings.md)): breaths, disfluency, mood-from-voice; Jessica uses Azure TTS + text emotion proxies until Phase 5.
+**Sesame (Maya/Miles)** — CSM contextual speech ([her-voice-learnings.md](./her-voice-learnings.md)): breaths, disfluency; Jessica uses Azure TTS + text emotion proxies until Phase 5.
+
+## Tonight's research sweep (Jun 2026)
+
+Full market pass — consumer voice assistants + companion apps + dev stacks.
+
+### Tier 1 — conversational voice (copy UX, not stack)
+
+| Product | Standout strength | Jessica action |
+|---------|-------------------|----------------|
+| **ChatGPT Voice** | Lowest latency feel; emotion + interrupt; deep reasoning | ✓ barge-in, partial STT, express-as; Phase 5 Realtime |
+| **Gemini Live** | Free voice tier; Search freshness; proactive audio (2.5) | ✓ web_search + links; proactive beats |
+| **Hume EVI 3** | Prosody-based end-of-turn; empathic tone match | ✓ TRP interrupts, emotion_hint, silence comfort |
+| **Pi** | Curious companion; think-through; voice for walks | ✓ openers, vent/think-through, curiosity hints |
+| **Sesame (Maya)** | Breaths, disfluency, contextual speech | Partial — SSML prosody; CSM deferred |
+| **Siri AI** | Cross-device history; pace/expressiveness sliders | ✓ resume openers; env prosody |
+| **Replika** | Long-term companion; hear good + hard | ✓ `good_news_turn_hint`; unified voice/chat memory |
+
+### Tier 2 — avoid their weaknesses
+
+| Product | Weakness | Jessica guard |
+|---------|----------|---------------|
+| **Replika voice** | Weaker than text; split memory | Single LLM + session_log for both channels |
+| **Alexa / Siri** | Command-and-control residue | Friend voice bans assistant openers |
+| **Generic TTS** | Flat karaoke lyrics | Replicate singing + singing SSML |
+
+### Tier 3 — builder stack (Phase 5 options)
+
+| Stack | Latency class | Notes |
+|-------|---------------|-------|
+| OpenAI Realtime | ~300ms–1.5s | ChatGPT parity |
+| Gemini Live WSS | Sub-second native audio | Affective dialog 2.5 |
+| Hume EVI WebSocket | ~300ms | Best empathic prosody |
+| Vapi + Deepgram + Cartesia | ~100–200ms TTS | Startup modular stack |
+| ElevenLabs Conv AI | ~75ms Flash | TTS-only layer |
+| Sesame CSM-1B | Contextual speech gen | Apache 2.0; needs separate LLM |
+
+### New docs this sweep
+
+- [replika-companion-learnings.md](./replika-companion-learnings.md)
+- [siri-voice-learnings.md](./siri-voice-learnings.md)
+
+### Code applied tonight
+
+- `good_news_turn_hint` — celebrate wins (Replika/Pi)
+- Session goodbye copy — removed "glad we talked" assistant phrasing
 
 ## Companion tone — Pi vs realtime voice vendors
 

@@ -218,6 +218,7 @@ def build_turn_hints(
     continuity = ""
     curiosity = ""
     greeting = ""
+    good_news = ""
     think_through = ""
     vent = ""
     chat_skill = ""
@@ -245,6 +246,9 @@ def build_turn_hints(
         greeting = companion_moments.greeting_turn_hint(trimmed, casual=True)
         if greeting:
             greeting = f" {greeting}"
+        good_news = companion_moments.good_news_turn_hint(trimmed, casual=True)
+        if good_news:
+            good_news = f" {good_news}"
         vent = companion_moments.vent_turn_hint(trimmed, casual=True)
         if vent:
             vent = f" {vent}"
@@ -270,7 +274,7 @@ def build_turn_hints(
         if silence:
             silence = f" {silence}"
     her_hints = (
-        f"{continuity}{curiosity}{greeting}{vent}{think_through}{chat_skill}"
+        f"{continuity}{curiosity}{greeting}{good_news}{vent}{think_through}{chat_skill}"
         f"{journal}{active_listen}{friend_reaction}{silence}"
     )
     monologue = monologue_interrupt_turn_hint(trimmed, jumped_in=companion_jumped_in)
