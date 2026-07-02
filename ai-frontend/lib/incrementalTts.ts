@@ -175,3 +175,18 @@ export function streamTtsAlreadyComplete(
   }
   return false;
 }
+
+/** Reply text the user actually heard when they interrupt mid-speech (Realtime truncate pattern). */
+export function heardReplyOnInterrupt(
+  fullReply: string,
+  state: IncrementalTtsState,
+): string {
+  const trimmed = fullReply.trim();
+  const spoken = state.spokenPrefix.trim();
+  if (!trimmed) return spoken || '…';
+  if (!spoken) return trimmed;
+  if (replyPrefixCoversFull(trimmed, spoken)) return trimmed;
+  const remainder = remainderAfterSpoken(trimmed, spoken);
+  if (remainder === null || remainder === '') return spoken;
+  return spoken;
+}

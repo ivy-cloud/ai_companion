@@ -34,6 +34,14 @@ FAST_ACK_PHRASES = (
     "Got it,",
 )
 
+# Spoken while fetching web facts — avoids dead air (OpenAI Realtime tool-call pattern).
+LOOKUP_ACK_PHRASES = (
+    "Hang on—",
+    "Let me check.",
+    "One sec—",
+    "Give me a sec—",
+)
+
 _MAX_CHUNK_CHARS = 120
 _MAX_CHUNK_SENTENCES = 2
 # Short replies: one Azure clip (no dead air between sentences).
@@ -103,6 +111,25 @@ def maybe_fast_ack(message: str, *, casual: bool) -> Optional[str]:
         FAST_ACK_PHRASES
     )
     return FAST_ACK_PHRASES[idx]
+
+
+def maybe_lookup_ack(
+    message: str,
+    *,
+    factual: bool,
+    math_turn: bool,
+    memory_recall: bool,
+) -> Optional[str]:
+    """Short spoken filler while web lookup runs — factual turns only."""
+    if not factual or math_turn or memory_recall:
+        return None
+    text = message.strip()
+    if len(text.split()) < 3:
+        return None
+    idx = int(hashlib.sha256(f"lookup:{text.lower()}".encode()).hexdigest()[:6], 16) % len(
+        LOOKUP_ACK_PHRASES
+    )
+    return LOOKUP_ACK_PHRASES[idx]
 
 
 def backchannel_turn_hint(message: str, casual: bool) -> str:
@@ -180,7 +207,14 @@ def rhythm_stream_meta(
         math_turn=math_turn,
         memory_recall=memory_recall,
     )
-    ack = maybe_fast_ack(message, casual=casual)
+    ack = maybe_lookup_ack(
+        message,
+        factual=factual,
+        math_turn=math_turn,
+        memory_recall=memory_recall,
+    )
+    if not ack:
+        ack = maybe_fast_ack(message, casual=casual)
     meta: dict = {
         "casual": casual,
         "stream_tts": True,

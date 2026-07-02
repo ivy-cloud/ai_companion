@@ -3,6 +3,7 @@ import {
   commitPlayedChunk,
   commitQueuedChunks,
   createIncrementalTtsState,
+  heardReplyOnInterrupt,
   pullSpeakableChunks,
   resetIncrementalTtsState,
   streamTtsAlreadyComplete,
@@ -204,5 +205,16 @@ test('second turn enqueue after prior turn fully spoken', () => {
   }
   if (streamTtsAlreadyComplete(turn2, state)) {
     throw new Error('turn 2 must not be complete before any playback');
+  }
+});
+
+test('heard reply on interrupt trims unplayed tail', () => {
+  const state = createIncrementalTtsState();
+  state.spokenPrefix = 'One. Two.';
+  state.queuedPrefix = state.spokenPrefix;
+  const full = 'One. Two. Three. Four.';
+  const heard = heardReplyOnInterrupt(full, state);
+  if (!heard.includes('One') || heard.includes('Three')) {
+    throw new Error(`expected only heard prefix, got ${heard}`);
   }
 });

@@ -121,6 +121,7 @@ import {
   commitPlayedChunk,
   commitQueuedChunks,
   createIncrementalTtsState,
+  heardReplyOnInterrupt,
   pullSpeakableChunks,
   resetIncrementalTtsState,
   streamTtsAlreadyComplete,
@@ -3432,6 +3433,7 @@ export default function ChatScreen() {
     streamTtsQueueRef.current = [];
     streamTtsDoneRef.current = false;
     streamTtsEnqueuedKeysRef.current = new Set();
+    const heardPrefixOnInterrupt = streamTtsStateRef.current.spokenPrefix;
     resetStreamTts();
     clearStreamUiFlush();
     voiceSendLockRef.current = false;
@@ -3442,7 +3444,7 @@ export default function ChatScreen() {
     ensureUiUnlocked();
     const assistantId = activeAssistantIdRef.current;
     if (assistantId) {
-      finalizeInterruptedTurn(assistantId);
+      finalizeInterruptedTurn(assistantId, heardPrefixOnInterrupt);
     }
 
     void stopPlayback().catch(() => {});
@@ -3469,17 +3471,24 @@ export default function ChatScreen() {
     logVoiceState('interrupt_end', { resume: resumeConversation });
   };
 
-  const finalizeInterruptedTurn = (assistantId: string) => {
+  const finalizeInterruptedTurn = (assistantId: string, heardPrefix = '') => {
     setMessages((prev) =>
-      prev.map((message) =>
-        message.id === assistantId && message.streaming
-          ? {
-              ...message,
-              streaming: false,
-              text: message.text.trim() || '…',
-            }
-          : message,
-      ),
+      prev.map((message) => {
+        if (message.id !== assistantId || !message.streaming) return message;
+        const full = message.text.trim();
+        let text = full || '…';
+        if (heardPrefix.trim() && full) {
+          text = heardReplyOnInterrupt(full, {
+            spokenPrefix: heardPrefix,
+            queuedPrefix: heardPrefix,
+          });
+        }
+        return {
+          ...message,
+          streaming: false,
+          text: text.trim() || '…',
+        };
+      }),
     );
     setIsStreaming(false);
     setLoading(false);

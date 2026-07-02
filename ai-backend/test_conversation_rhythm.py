@@ -49,6 +49,13 @@ class ConversationRhythmTests(unittest.TestCase):
         self.assertFalse(meta.get("casual"))
         self.assertTrue(meta.get("stream_tts"))
 
+    def test_factual_lookup_ack(self):
+        meta = rhythm.rhythm_stream_meta(
+            "what is the weather tonight in Seattle",
+            factual=True,
+        )
+        self.assertIn(meta.get("fast_ack"), rhythm.LOOKUP_ACK_PHRASES)
+
     def test_long_monologue_sets_companion_interrupt_meta(self):
         long_msg = " ".join(["word"] * 50)
         meta = rhythm.rhythm_stream_meta(long_msg, factual=False)

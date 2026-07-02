@@ -12,6 +12,8 @@ Research-backed UX and latency patterns from ChatGPT Advanced Voice / Realtime A
 | **voice_to_voice_ms** | `turn_summary` field: `user_speech_end` → `first_audio_play` (`voiceLatency.ts`). |
 | **Softer half-duplex / barge-in** | Barge-in monitor at `BARGE_IN_SPEECH_LEVEL_DB` during **thinking**, **streaming**, and **speaking** — full listen stays blocked during TTS; monitor path stays hot for interrupt. |
 | **Streaming partial STT** | Rolling ~900ms recording snapshots → `POST /stt?partial=1` → live italic caption under **Listening…** (`streamingStt.ts`, `VoiceHero.tsx`). Final turn still commits on end-of-silence / Done speaking (no double-send). |
+| **Interrupt truncate (Realtime)** | On barge-in, chat bubble trims to `spokenPrefix` only — user never sees unplayed tail (`heardReplyOnInterrupt`, `finalizeInterruptedTurn`). |
+| **Lookup filler (no dead air)** | Factual/web turns play `Hang on—` / `Let me check.` via `fast_ack` (`maybe_lookup_ack` in `conversation_rhythm.py`). |
 
 ## Partially adopted
 

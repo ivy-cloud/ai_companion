@@ -9,6 +9,9 @@ Consolidated comparison for phone conversation mode (Jun 2026). Detail per vendo
 - [replika-companion-learnings.md](./replika-companion-learnings.md) — companion-first memory + voice/text parity
 - [siri-voice-learnings.md](./siri-voice-learnings.md) — Siri AI 2026 conversational UX
 - [her-voice-learnings.md](./her-voice-learnings.md) — Samantha / Sesame friend voice patterns
+- [elevenlabs-voice-learnings.md](./elevenlabs-voice-learnings.md) — TTS realism + ElevenAgents
+- [voice-platform-learnings.md](./voice-platform-learnings.md) — Vapi, Retell, PolyAI builder patterns
+- [nomi-companion-voice-learnings.md](./nomi-companion-voice-learnings.md) — Nomi / Kindroid / Candy voice calls
 
 ## Stack comparison
 
@@ -72,6 +75,11 @@ Full market pass — consumer voice assistants + companion apps + dev stacks.
 
 - `good_news_turn_hint` — celebrate wins (Replika/Pi)
 - Session goodbye copy — removed "glad we talked" assistant phrasing
+
+### Code applied (Jul 2026 sweep)
+
+- `heardReplyOnInterrupt` — ChatGPT Realtime truncate on barge-in
+- `maybe_lookup_ack` — spoken filler on factual/web turns (Vapi/Realtime tool pattern)
 
 ## Companion tone — Pi vs realtime voice vendors
 
