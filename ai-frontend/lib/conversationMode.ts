@@ -167,6 +167,12 @@ export const LISTENING_STUCK_MS = 6500;
  */
 export const OPENING_MIC_STUCK_MS = 5500;
 
+/** Shorter cooldown for opening-mic watchdog — general watchdog is 8s. */
+export const OPENING_MIC_WATCHDOG_COOLDOWN_MS = 2500;
+
+/** Force mic reopen when idle in conversation this long without a recorder. */
+export const CONVERSATION_IDLE_MIC_FORCE_MS = 4000;
+
 /** Max time for ensureListenChain mic-open work (release + iOS mode + recorder). */
 export const MIC_OPEN_CHAIN_TIMEOUT_MS = 12_000;
 

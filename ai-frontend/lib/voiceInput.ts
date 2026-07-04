@@ -71,6 +71,11 @@ export async function withRecordingMutex<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** Wait for the in-flight recording mutex chain to settle (mic-open recovery). */
+export async function awaitRecordingMutexIdle(): Promise<void> {
+  await recordingMutex;
+}
+
 export async function safeUnloadRecording(
   recording: Audio.Recording | null | undefined,
 ): Promise<void> {

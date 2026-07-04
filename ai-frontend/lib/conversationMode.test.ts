@@ -14,6 +14,9 @@ import {
   MAX_LISTEN_SCHEDULE_RETRIES,
   MIC_OPEN_CHAIN_TIMEOUT_MS,
   OPENING_MIC_STUCK_MS,
+  OPENING_MIC_WATCHDOG_COOLDOWN_MS,
+  CONVERSATION_IDLE_MIC_FORCE_MS,
+  WATCHDOG_RECOVERY_COOLDOWN_MS,
   MIN_SPEECH_MS,
   MIN_SPEECH_BEFORE_INTERRUPT_MS,
   INTERRUPT_USER_SPEECH_MS,
@@ -186,6 +189,8 @@ test('opening mic stuck: uses schedule timestamp not phase clock', () => {
 test('opening mic stuck constants bounded', () => {
   assert.equal(OPENING_MIC_STUCK_MS, 5500);
   assert.ok(MIC_OPEN_CHAIN_TIMEOUT_MS >= OPENING_MIC_STUCK_MS);
+  assert.ok(OPENING_MIC_WATCHDOG_COOLDOWN_MS < WATCHDOG_RECOVERY_COOLDOWN_MS);
+  assert.ok(CONVERSATION_IDLE_MIC_FORCE_MS <= OPENING_MIC_STUCK_MS);
 });
 
 test('listen open chain timestamp preserved across backoff retries', () => {

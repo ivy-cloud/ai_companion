@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   configurePlaybackAudioMode,
   configureRecordingAudioMode,
+  awaitRecordingMutexIdle,
   discardPrewarm,
   safeUnloadRecording,
   setRecordingPrewarmBlocked,
@@ -54,7 +55,6 @@ import {
   LISTENING_STUCK_MS,
   LISTEN_METER_BLOCKED_MS,
   MAX_LISTEN_SCHEDULE_RETRIES,
-  MIC_OPEN_CHAIN_TIMEOUT_MS,
   MIN_SCHEDULE_LISTEN_MS,
   PHASE_OSCILLATION_COOLDOWN_MS,
   PHASE_OSCILLATION_MAX_FLIPS,
@@ -73,6 +73,8 @@ import {
   shouldRecoverListenPausedStuck,
   shouldRecoverOpeningMicStuck,
   nextListenOpenChainStartedAt,
+  OPENING_MIC_WATCHDOG_COOLDOWN_MS,
+  CONVERSATION_IDLE_MIC_FORCE_MS,
   WATCHDOG_RECOVERY_COOLDOWN_MS,
   createBargeInMeterState,
   createConversationMeterState,
@@ -327,6 +329,12 @@ export default function ChatScreen() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [conversationSession, setConversationSession] = useState(false);
+  const [micReopenPending, setMicReopenPending] = useState(false);
+  const micReopenPendingRef = useRef(false);
+  const setMicReopenPendingBoth = (pending: boolean) => {
+    micReopenPendingRef.current = pending;
+    setMicReopenPending(pending);
+  };
   const [companionName, setCompanionName] = useState('…');
   const [voiceName, setVoiceName] = useState('Loading voice…');
   const [voicePlaybackError, setVoicePlaybackError] = useState<string | null>(null);
@@ -397,6 +405,7 @@ export default function ChatScreen() {
   const phaseChangedAtRef = useRef(Date.now());
   const phaseFlipTimesRef = useRef<number[]>([]);
   const lastWatchdogRecoveryAtRef = useRef(0);
+  const lastOpeningMicRecoveryAtRef = useRef(0);
   const conversationListenRetryCountRef = useRef(0);
   const consecutiveOnlyOneFailuresRef = useRef(0);
   const lastOnlyOneFailureAtRef = useRef(0);
@@ -945,6 +954,7 @@ export default function ChatScreen() {
     if (!bumpConversationListenRetry()) {
       conversationMicOpenInFlightRef.current = false;
       lastListenScheduleAtRef.current = null;
+      setMicReopenPendingBoth(false);
       setRecordingPrewarmBlocked(false);
       syncRecordingPrewarmBlock(voicePhaseRef.current);
       setVoiceInputError(
@@ -1206,6 +1216,12 @@ export default function ChatScreen() {
     ) {
       return;
     }
+    if (
+      conversationMicOpenInFlightRef.current ||
+      micReopenPendingRef.current
+    ) {
+      return;
+    }
     if (conversationBargeRecordingRef.current) {
       if (options?.forTts) refreshConversationBargeInGrace(true);
       return;
@@ -1319,6 +1335,7 @@ export default function ChatScreen() {
     resetConversationListenRetries();
     lastListenScheduleAtRef.current = null;
     conversationMicOpenInFlightRef.current = false;
+    setMicReopenPendingBoth(false);
     conversationListenGenRef.current += 1;
     conversationSessionRef.current = false;
     sessionOpenerPlayedRef.current = false;
@@ -1924,6 +1941,7 @@ export default function ChatScreen() {
     ensureUiUnlocked();
     await clearStaleTtsListenBlockers();
     await releaseAllActiveRecorders();
+    await awaitRecordingMutexIdle();
     if (onlyOneStorm) {
       await new Promise((resolve) => setTimeout(resolve, storm.backoffMs));
     }
@@ -1970,6 +1988,7 @@ export default function ChatScreen() {
       ensureUiUnlocked();
     }
     if (voiceSendLockRef.current) {
+      setMicReopenPendingBoth(true);
       retryConversationListen();
       return;
     }
@@ -2029,6 +2048,7 @@ export default function ChatScreen() {
         conversationMicOpenInFlightRef.current = true;
         setRecordingPrewarmBlocked(true);
         stopConversationBargeIn();
+        await awaitRecordingMutexIdle();
         await releaseAllActiveRecorders();
         await discardPrewarm();
         await stopPlayback();
@@ -2048,34 +2068,7 @@ export default function ChatScreen() {
         }
         logVoiceState('ensure_listen', { phase: voicePhaseRef.current, reason });
         try {
-          const openWork = startConversationListening({ resumeAfterInterrupt: true });
-          let chainTimer: ReturnType<typeof setTimeout> | undefined;
-          await Promise.race([
-            openWork,
-            new Promise<never>((_, reject) => {
-              chainTimer = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      `Mic open chain timed out after ${MIC_OPEN_CHAIN_TIMEOUT_MS}ms`,
-                    ),
-                  ),
-                MIC_OPEN_CHAIN_TIMEOUT_MS,
-              );
-            }),
-          ]).finally(() => {
-            if (chainTimer !== undefined) clearTimeout(chainTimer);
-          });
-        } catch (err) {
-          conversationMicOpenInFlightRef.current = false;
-          const msg = err instanceof Error ? err.message : 'Mic open failed';
-          voiceLog('listen_open_timeout', {
-            reason,
-            error: msg.slice(0, 160),
-          });
-          ensureListenChainRef.current = Promise.resolve();
-          retryConversationListen(400);
-          return;
+          await startConversationListening({ resumeAfterInterrupt: true });
         } finally {
           if (voicePhaseRef.current === 'listening' && recordingRef.current) {
             conversationMicOpenInFlightRef.current = false;
@@ -2117,6 +2110,7 @@ export default function ChatScreen() {
       lastListenScheduleAtRef.current,
       Date.now(),
     );
+    setMicReopenPendingBoth(true);
 
     const hadPendingTimer = Boolean(conversationListenResumeTimerRef.current);
     clearConversationListenResumeTimer();
@@ -2300,6 +2294,7 @@ export default function ChatScreen() {
           });
         }
         lastListenScheduleAtRef.current = null;
+        setMicReopenPendingBoth(false);
 
         if (!setVoicePhaseTransition('listening')) {
           recordingRef.current = null;
@@ -2327,64 +2322,14 @@ export default function ChatScreen() {
         if (onlyOne) {
           consecutiveOnlyOneFailuresRef.current += 1;
           lastOnlyOneFailureAtRef.current = Date.now();
-          const retryGen = ++conversationListenGenRef.current;
+          conversationListenGenRef.current += 1;
           ensureListenChainRef.current = Promise.resolve();
           conversationMicOpenInFlightRef.current = false;
-          const stormBackoff = recordingStormBackoffDelayMs(
-            consecutiveOnlyOneFailuresRef.current,
-            0,
-          );
-          try {
-            await stopPlayback();
-            await releaseAllActiveRecorders();
-            recordingRef.current = null;
-            recordingStartedAtRef.current = 0;
-            await discardPrewarm();
-            await new Promise((resolve) => setTimeout(resolve, stormBackoff));
-            const recording = await startConversationRecording({
-              slotSettleMs: Math.max(250, stormBackoff / 2),
-            });
-            if (
-              retryGen === conversationListenGenRef.current &&
-              conversationSessionRef.current
-            ) {
-              recordingRef.current = recording;
-              recordingStartedAtRef.current = Date.now();
-              micOpenAtRef.current = Date.now();
-              listenRecorderDeadSinceRef.current = null;
-              markVoiceTiming(voiceTurnTimingRef.current, 'mic_open');
-              if (lastListenScheduleAtRef.current !== null) {
-                voiceLog('mic_open', {
-                  dtSinceScheduleMs: Date.now() - lastListenScheduleAtRef.current,
-                });
-              }
-              lastListenScheduleAtRef.current = null;
-              if (!setVoicePhaseTransition('listening')) {
-                recordingRef.current = null;
-                await safeUnloadRecording(recording);
-                retryConversationListen(300);
-                return;
-              }
-              conversationMicOpenInFlightRef.current = false;
-              resetUtteranceBufferOnListenOpen();
-              clearLiveTranscript();
-              resetConversationListenRetries();
-              consecutiveOnlyOneFailuresRef.current = 0;
-              conversationMeterStateRef.current = createConversationMeterState();
-              beginConversationListenMeter(retryGen);
-              scheduleProactiveTurn();
-              if (micOpenAtRef.current !== null) {
-                voiceLog('listen_ready', {
-                  dtSinceMicOpenMs: Date.now() - micOpenAtRef.current,
-                });
-                markListenReadyTiming();
-              }
-              return;
-            }
-            await safeUnloadRecording(recording);
-          } catch {
-            // fall through
-          }
+          await stopPlayback();
+          await releaseAllActiveRecorders();
+          recordingRef.current = null;
+          recordingStartedAtRef.current = 0;
+          await discardPrewarm();
         }
         setVoiceInputError(formatVoiceInputError(raw, onlyOne));
         voiceLog('listen_open_failed', {
@@ -2396,7 +2341,7 @@ export default function ChatScreen() {
           onlyOne
             ? recordingStormBackoffDelayMs(
                 consecutiveOnlyOneFailuresRef.current,
-                Date.now() - lastOnlyOneFailureAtRef.current,
+                0,
               )
             : 500,
         );
@@ -4683,49 +4628,60 @@ export default function ChatScreen() {
         conversationSessionRef.current &&
         voiceInputModeRef.current === 'conversation' &&
         !recordingRef.current &&
-        shouldRecoverListenPausedStuck(
-          stuckMs,
-          Boolean(conversationListenResumeTimerRef.current),
-        )
+        stuckMs >= CONVERSATION_IDLE_MIC_FORCE_MS
       ) {
-        const storm = getRecordingStormState();
-        if (storm.blockWatchdog) {
+        const reopenActive =
+          micReopenPendingRef.current ||
+          conversationMicOpenInFlightRef.current ||
+          lastListenScheduleAtRef.current != null ||
+          Boolean(conversationListenResumeTimerRef.current);
+        const needsForce =
+          reopenActive ||
+          shouldRecoverOpeningMicStuck(lastListenScheduleAtRef.current, Date.now()) ||
+          shouldRecoverListenPausedStuck(
+            stuckMs,
+            Boolean(conversationListenResumeTimerRef.current),
+          );
+        if (needsForce) {
+          const now = Date.now();
+          if (now - lastOpeningMicRecoveryAtRef.current < OPENING_MIC_WATCHDOG_COOLDOWN_MS) {
+            return;
+          }
+          lastOpeningMicRecoveryAtRef.current = now;
+          lastWatchdogRecoveryAtRef.current = now;
+          voiceLog('conversation_idle_mic_force', {
+            stuckMs,
+            reopenActive,
+            micOpenInFlight: conversationMicOpenInFlightRef.current,
+            voiceSendLock: voiceSendLockRef.current,
+            ttsBlocked: isTtsBlockingConversationListen(),
+          });
+          setMicReopenPendingBoth(false);
+          void recoverListenPausedIfStuck('watchdog_idle_mic_force', stuckMs, {
+            force: true,
+          });
           return;
         }
-        const now = Date.now();
-        if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
-          return;
-        }
-        lastWatchdogRecoveryAtRef.current = now;
-        void recoverListenPausedIfStuck('watchdog_idle_reopen', stuckMs);
-        return;
       }
 
       if (
-        phase === 'idle' &&
-        conversationSessionRef.current &&
-        voiceInputModeRef.current === 'conversation' &&
-        !recordingRef.current &&
-        shouldRecoverOpeningMicStuck(lastListenScheduleAtRef.current, Date.now())
+        phase === 'thinking' &&
+        singingPreparingRef.current &&
+        stuckMs >= 90_000
       ) {
-        const storm = getRecordingStormState();
-        if (storm.blockWatchdog) {
-          return;
-        }
         const now = Date.now();
         if (now - lastWatchdogRecoveryAtRef.current < WATCHDOG_RECOVERY_COOLDOWN_MS) {
           return;
         }
         lastWatchdogRecoveryAtRef.current = now;
-        voiceLog('opening_mic_stuck', {
-          msSinceSchedule: now - (lastListenScheduleAtRef.current ?? now),
-          micOpenInFlight: conversationMicOpenInFlightRef.current,
-          voiceSendLock: voiceSendLockRef.current,
-          ttsBlocked: isTtsBlockingConversationListen(),
-        });
-        void recoverListenPausedIfStuck('watchdog_opening_mic', stuckMs, {
-          force: true,
-        });
+        voiceLog('singing_prepare_stuck', { stuckMs });
+        singingPreparingRef.current = false;
+        singingAudioUrlRef.current = null;
+        chatAbortRef.current?.abort();
+        chatAbortRef.current = null;
+        chatInFlightRef.current = false;
+        voiceSendLockRef.current = false;
+        recoverThinkingStuck('watchdog_singing_prepare', stuckMs);
         return;
       }
 
@@ -5925,7 +5881,10 @@ export default function ChatScreen() {
     conversationSession &&
     voiceInputMode === 'conversation' &&
     voicePhase === 'idle' &&
-    !micListenGiveUp;
+    !micListenGiveUp &&
+    (micReopenPending ||
+      conversationMicOpenInFlightRef.current ||
+      Boolean(conversationListenResumeTimerRef.current));
   const phaseLabel =
     companionJumpingIn && conversationSession
       ? voicePhaseLabel(voicePhase, isStreaming, conversationSession, {
