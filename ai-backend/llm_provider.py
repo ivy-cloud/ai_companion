@@ -20,7 +20,28 @@ OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL}/api/chat"
 GROQ_API_BASE = os.environ.get("GROQ_API_BASE", "https://api.groq.com/openai/v1").rstrip("/")
 GROQ_CHAT_URL = f"{GROQ_API_BASE}/chat/completions"
 # Fast + good short replies for voice. Alternative: llama-3.3-70b-versatile
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+_DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+_GROQ_FALLBACKS = (
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+)
+
+
+def groq_model() -> str:
+    return os.environ.get("GROQ_MODEL", _DEFAULT_GROQ_MODEL).strip() or _DEFAULT_GROQ_MODEL
+
+
+def groq_model_candidates() -> List[str]:
+    preferred = groq_model()
+    ordered = [preferred]
+    for name in _GROQ_FALLBACKS:
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
+
+
+# Back-compat for tests / health that still read the module constant.
+GROQ_MODEL = groq_model()
 
 
 def llm_provider() -> str:
@@ -32,7 +53,7 @@ def active_model() -> str:
 
     if dev_mode.mock_llm_enabled():
         return "dev-mock-llm"
-    return GROQ_MODEL if llm_provider() == "groq" else OLLAMA_MODEL
+    return groq_model() if llm_provider() == "groq" else OLLAMA_MODEL
 
 
 def groq_configured() -> bool:
@@ -83,7 +104,7 @@ def model_missing_message(installed: List[str]) -> str:
                 "Groq is selected but GROQ_API_KEY is missing. "
                 "Get a key at https://console.groq.com/keys and set it in ai-backend/.env"
             )
-        return f"Groq model '{GROQ_MODEL}' — check https://console.groq.com/docs/models"
+        return f"Groq model '{groq_model()}' — check https://console.groq.com/docs/models"
     installed_text = ", ".join(installed) if installed else "(none — run ollama pull)"
     return (
         f"Ollama model '{OLLAMA_MODEL}' is not installed. "
@@ -164,48 +185,57 @@ def _stream_groq(messages: List[dict], *, factual: bool) -> Iterator[str]:
         raise HTTPException(status_code=503, detail=model_missing_message([]))
 
     opts = _chat_options(factual=factual)
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": messages,
-        "stream": True,
-        "temperature": opts["temperature"],
-        "max_tokens": opts["max_tokens"],
-        "top_p": opts["top_p"],
-    }
     headers = {
         "Authorization": f"Bearer {os.environ['GROQ_API_KEY'].strip()}",
         "Content-Type": "application/json",
     }
-    try:
-        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-            with client.stream("POST", GROQ_CHAT_URL, json=payload, headers=headers) as response:
-                if response.status_code >= 400:
-                    body = response.read().decode("utf-8", errors="replace")
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Groq error ({response.status_code}): {body[:500]}",
-                    )
-                for line in response.iter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    chunk = line[6:].strip()
-                    if chunk == "[DONE]":
-                        return
-                    try:
-                        data = json.loads(chunk)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = data.get("choices", [{}])[0].get("delta", {})
-                    piece = delta.get("content", "")
-                    if piece:
-                        yield piece
-    except httpx.ConnectError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Cannot reach Groq API. Check network or LLM_PROVIDER=ollama.",
-        ) from exc
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="Groq request timed out.") from exc
+    last_error: Optional[str] = None
+    global GROQ_MODEL
+    for model_name in groq_model_candidates():
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+            "temperature": opts["temperature"],
+            "max_tokens": opts["max_tokens"],
+            "top_p": opts["top_p"],
+        }
+        try:
+            with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+                with client.stream("POST", GROQ_CHAT_URL, json=payload, headers=headers) as response:
+                    if response.status_code >= 400:
+                        body = response.read().decode("utf-8", errors="replace")
+                        last_error = f"Groq error ({response.status_code}): {body[:500]}"
+                        if response.status_code in (400, 404) and "model" in body.lower():
+                            continue
+                        raise HTTPException(status_code=502, detail=last_error)
+                    os.environ["GROQ_MODEL"] = model_name
+                    GROQ_MODEL = model_name
+                    for line in response.iter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        chunk = line[6:].strip()
+                        if chunk == "[DONE]":
+                            return
+                        try:
+                            data = json.loads(chunk)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        piece = delta.get("content", "")
+                        if piece:
+                            yield piece
+                    return
+        except HTTPException:
+            raise
+        except httpx.ConnectError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Cannot reach Groq API. Check network or LLM_PROVIDER=ollama.",
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Groq request timed out.") from exc
+    raise HTTPException(status_code=502, detail=last_error or "Groq model unavailable")
 
 
 def stream_chat_text(messages: List[dict], *, factual: bool = False) -> Iterator[str]:
@@ -229,27 +259,34 @@ def complete_chat(messages: List[dict], *, temperature: float = 0.1, max_tokens:
     if llm_provider() == "groq":
         if not groq_configured():
             return None
-        payload = {
-            "model": GROQ_MODEL,
-            "messages": messages,
-            "stream": False,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": 0.85,
-        }
-        headers = {
-            "Authorization": f"Bearer {os.environ['GROQ_API_KEY'].strip()}",
-            "Content-Type": "application/json",
-        }
-        try:
-            with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-                response = client.post(GROQ_CHAT_URL, json=payload, headers=headers)
-                if response.status_code >= 400:
-                    return None
-                data = response.json()
-                return str(data.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-        except Exception:
-            return None
+        last_error = None
+        for model_name in groq_model_candidates():
+            payload = {
+                "model": model_name,
+                "messages": messages,
+                "stream": False,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "top_p": 0.85,
+            }
+            headers = {
+                "Authorization": f"Bearer {os.environ['GROQ_API_KEY'].strip()}",
+                "Content-Type": "application/json",
+            }
+            try:
+                with httpx.Client(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
+                    response = client.post(GROQ_CHAT_URL, json=payload, headers=headers)
+                    if response.status_code >= 400:
+                        body = response.text[:300].lower()
+                        if response.status_code in (400, 404) and "model" in body:
+                            last_error = response.status_code
+                            continue
+                        return None
+                    data = response.json()
+                    return str(data.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+            except Exception:
+                return None
+        return None
 
     payload = {
         "model": OLLAMA_MODEL,

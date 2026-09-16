@@ -1,6 +1,6 @@
 # AI Companion Frontend
 
-Expo SDK 54 chat app that talks to the FastAPI backend: **hold Mic to talk** (Azure STT) and hear replies with Azure Neural TTS (`expo-av`).
+Expo SDK 57 chat app that talks to the FastAPI backend: **hold Mic to talk** (Azure STT) and hear replies with Azure Neural TTS (`expo-audio`).
 
 ## Setup
 

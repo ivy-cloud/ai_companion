@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { Recording, Sound } from '../lib/audioSession';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Link } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -357,7 +357,7 @@ export default function ChatScreen() {
   const conversationListenGenRef = useRef(0);
   const conversationBargeGenRef = useRef(0);
   const conversationBargeMeterRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const conversationBargeRecordingRef = useRef<Audio.Recording | null>(null);
+  const conversationBargeRecordingRef = useRef<Recording | null>(null);
   const conversationBargeStateRef = useRef<BargeInMeterState | null>(null);
   const conversationBargeGraceUntilRef = useRef(0);
   const conversationBargeCooldownUntilRef = useRef(0);
@@ -372,7 +372,7 @@ export default function ChatScreen() {
   const lastListenScheduleAtRef = useRef<number | null>(null);
   /** When the mic actually starts recording (for listen_ready latency). */
   const micOpenAtRef = useRef<number | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingRef = useRef<Recording | null>(null);
   const recordingStartedAtRef = useRef(0);
   const micPressRef = useRef(false);
   const voiceUtteranceRef = useRef(0);
@@ -385,8 +385,8 @@ export default function ChatScreen() {
   const lastVoiceSendTextRef = useRef('');
   const ttsExpressStyleRef = useRef<string | null>(null);
   const ttsEmotionHintRef = useRef<string | null>(null);
-  const primeSoundRef = useRef<Audio.Sound | null>(null);
-  const activeSoundRef = useRef<Audio.Sound | null>(null);
+  const primeSoundRef = useRef<Sound | null>(null);
+  const activeSoundRef = useRef<Sound | null>(null);
   /** Brief window after activeSound is set — avoid clearing before playAsync starts. */
   const activeSoundProtectedUntilRef = useRef(0);
   const voiceSessionRef = useRef(createVoiceSession());
@@ -603,7 +603,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     let mounted = true;
-    let loadedSound: Audio.Sound | null = null;
+    let loadedSound: Sound | null = null;
 
     const prepareAudio = async () => {
       try {
@@ -618,7 +618,7 @@ export default function ChatScreen() {
         setSkillHints(companionHealth.skillHints);
         setVoiceName(label);
 
-        const { sound } = await Audio.Sound.createAsync(SILENT_SOUND, {
+        const { sound } = await Sound.createAsync(SILENT_SOUND, {
           shouldPlay: false,
           volume: clampPlaybackVolume(playbackVolumeRef.current),
         });
@@ -819,7 +819,7 @@ export default function ChatScreen() {
   };
 
   /** Free Expo's single prepared Recording slot (prewarm + conversation + barge-in). */
-  const releaseAllActiveRecorders = async (keep?: Audio.Recording | null) => {
+  const releaseAllActiveRecorders = async (keep?: Recording | null) => {
     await discardPrewarm();
     stopConversationMetering();
     conversationBargeGenRef.current += 1;
@@ -1108,7 +1108,7 @@ export default function ChatScreen() {
           if (voicePhaseRef.current !== 'recording') return;
           const recording = recordingRef.current;
           if (!recording) return;
-          let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+          let status: Awaited<ReturnType<Recording['getStatusAsync']>>;
           try {
             status = await recording.getStatusAsync();
           } catch {
@@ -1124,7 +1124,7 @@ export default function ChatScreen() {
   };
 
   /** Stop barge-in metering and return the live recorder (caller may hand off to listen). */
-  const detachConversationBargeRecording = (): Audio.Recording | null => {
+  const detachConversationBargeRecording = (): Recording | null => {
     conversationBargeGenRef.current += 1;
     if (conversationBargeMeterRef.current) {
       clearInterval(conversationBargeMeterRef.current);
@@ -1231,7 +1231,7 @@ export default function ChatScreen() {
             return;
           }
 
-          let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+          let status: Awaited<ReturnType<Recording['getStatusAsync']>>;
           try {
             status = await active.getStatusAsync();
           } catch {
@@ -1586,7 +1586,7 @@ export default function ChatScreen() {
         }
         listenMeterBlockedSinceRef.current = null;
 
-        let status: Awaited<ReturnType<Audio.Recording['getStatusAsync']>>;
+        let status: Awaited<ReturnType<Recording['getStatusAsync']>>;
         try {
           status = await recording.getStatusAsync();
         } catch {
@@ -1682,7 +1682,7 @@ export default function ChatScreen() {
 
   /** Keep barge-in audio, stop TTS, and finish the user's interrupt utterance. */
   const resumeConversationListenAfterBargeIn = async (
-    recording: Audio.Recording,
+    recording: Recording,
     speechStartedAt: number,
   ) => {
     return withRecordingMutex(async () => {
@@ -1748,7 +1748,7 @@ export default function ChatScreen() {
   };
 
   const finalizeConversationListenChunk = async (
-    recording: Audio.Recording,
+    recording: Recording,
     listenGen: number,
     meterMeta?: QuietListenMeterMeta & { companionInterrupt?: boolean },
   ) => {
@@ -3706,7 +3706,7 @@ export default function ChatScreen() {
     generation: number,
     options?: { betweenClips?: boolean },
   ): Promise<void> => {
-    let sound: Audio.Sound | null = null;
+    let sound: Sound | null = null;
     const vol = effectiveTtsVolume();
 
     await ensureIosSpeakerPrimed();
@@ -3721,7 +3721,7 @@ export default function ChatScreen() {
 
     try {
 
-      const created = await Audio.Sound.createAsync(
+      const created = await Sound.createAsync(
         { uri: path },
         {
           shouldPlay: false,

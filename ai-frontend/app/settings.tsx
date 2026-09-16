@@ -158,7 +158,7 @@ export default function SettingsScreen() {
         </SettingRow>
         <SettingRow
           label="Playback volume"
-          hint="Max in-app gain is 100% (expo-av cap). Raise iPhone side volume; disable Bluetooth/AirPods routing."
+          hint="Max in-app gain is 100% (player cap). Raise iPhone side volume; disable Bluetooth/AirPods routing."
           disabled={!settings.voiceEnabled}
         >
           <View style={styles.chipRow}>

@@ -1,5 +1,21 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { isEmptySttError } from './voiceTranscript';
+import {
+  configurePlaybackAudioMode,
+  configureRecordingAudioMode,
+  configureTtsPlaybackAudioMode,
+  ensureMicrophonePermission,
+  RECORDING_OPTIONS,
+  RECORDING_OPTIONS_METERED,
+  Recording,
+  Sound,
+} from './audioSession';
+
+export type { Recording, Sound };
+export {
+  configurePlaybackAudioMode,
+  configureRecordingAudioMode,
+  ensureMicrophonePermission,
+};
 
 export {
   isEmptySttError,
@@ -8,53 +24,7 @@ export {
   turnNoResponseTimeoutMs,
 } from './voiceTranscript';
 
-/** Loud TTS: Playback category on iOS (speaker), not PlayAndRecord/earpiece. */
-const PLAYBACK_AUDIO_MODE = {
-  allowsRecordingIOS: false,
-  playsInSilentModeIOS: true,
-  interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-  staysActiveInBackground: false,
-  interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-  shouldDuckAndroid: false,
-  playThroughEarpieceAndroid: false,
-} as const;
-
-/** Keep session on speaker while a clip plays; no ducking. */
-const TTS_PLAYBACK_AUDIO_MODE = {
-  ...PLAYBACK_AUDIO_MODE,
-  staysActiveInBackground: true,
-  shouldDuckAndroid: false,
-} as const;
-
-/** 16 kHz mono WAV — works well with Azure Speech REST. */
-export const RECORDING_OPTIONS: Audio.RecordingOptions = {
-  isMeteringEnabled: false,
-  android: {
-    extension: '.wav',
-    outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-    audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-    sampleRate: 16000,
-    numberOfChannels: 1,
-    bitRate: 128000,
-  },
-  ios: {
-    extension: '.wav',
-    outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-    audioQuality: Audio.IOSAudioQuality.HIGH,
-    sampleRate: 16000,
-    numberOfChannels: 1,
-    bitRate: 256000,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
-  },
-  web: {
-    mimeType: 'audio/webm',
-    bitsPerSecond: 128000,
-  },
-};
-
-let prewarmRecording: Audio.Recording | null = null;
+let prewarmRecording: Recording | null = null;
 let prewarmPromise: Promise<void> | null = null;
 /** Bumped on discard so in-flight prewarm cannot claim the single Recording slot. */
 let prewarmGeneration = 0;
@@ -71,7 +41,7 @@ export async function withRecordingMutex<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function safeUnloadRecording(
-  recording: Audio.Recording | null | undefined,
+  recording: Recording | null | undefined,
 ): Promise<void> {
   if (!recording) return;
   try {
@@ -81,44 +51,20 @@ export async function safeUnloadRecording(
   }
 }
 
-export async function configurePlaybackAudioMode() {
-  await Audio.setAudioModeAsync(PLAYBACK_AUDIO_MODE);
-}
-
-/** Speaker-oriented mode for active TTS — keeps session alive, no mic/earpiece routing. */
-export async function configureTtsPlaybackAudioMode() {
-  await Audio.setAudioModeAsync(TTS_PLAYBACK_AUDIO_MODE);
-}
-
 /**
  * Release mic/recorder session and switch to speaker-oriented playback before TTS.
  * Prewarm and PlayAndRecord (barge-in) otherwise route iOS audio to the earpiece.
- * expo-av has no defaultToSpeaker — only allowsRecordingIOS:false (Playback category).
+ * expo-audio routes to speaker when allowsRecording is false.
  */
 export async function prepareForTtsPlayback(): Promise<void> {
   await discardPrewarm();
   await configureTtsPlaybackAudioMode();
 }
 
-/** expo-av caps player gain at 1.0; device volume buttons set system level. */
-export async function applyTtsSoundGain(
-  sound: Audio.Sound,
-  volume: number,
-): Promise<void> {
+/** Player gain caps at 1.0; device volume buttons set system level. */
+export async function applyTtsSoundGain(sound: Sound, volume: number): Promise<void> {
   await sound.setIsMutedAsync(false);
   await sound.setVolumeAsync(volume);
-}
-
-export async function configureRecordingAudioMode() {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-    staysActiveInBackground: false,
-    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-    shouldDuckAndroid: false,
-    playThroughEarpieceAndroid: false,
-  });
 }
 
 /** After TTS playback, iOS needs a beat before PlayAndRecord accepts a new recorder. */
@@ -135,13 +81,6 @@ export async function prepareForConversationListen(): Promise<void> {
  */
 export async function configureConversationBargeInAudioMode() {
   await configureRecordingAudioMode();
-}
-
-export async function ensureMicrophonePermission(): Promise<boolean> {
-  const current = await Audio.getPermissionsAsync();
-  if (current.granted) return true;
-  const requested = await Audio.requestPermissionsAsync();
-  return requested.granted;
 }
 
 /** When true, skip prewarm (caller is playing TTS — recording mode quiets iOS speaker). */
@@ -162,7 +101,7 @@ export function prewarmRecordingPipeline(): void {
       await configureRecordingAudioMode();
       if (recordingPrewarmBlocked || generation !== prewarmGeneration) return;
       if (prewarmRecording) return;
-      const recording = new Audio.Recording();
+      const recording = new Recording();
       await recording.prepareToRecordAsync(RECORDING_OPTIONS);
       if (recordingPrewarmBlocked || generation !== prewarmGeneration) {
         await safeUnloadRecording(recording);
@@ -192,28 +131,22 @@ export async function ensureRecordingSlotFree(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
-/** Start recording using prewarmed instance when available. */
-const RECORDING_OPTIONS_METERED: Audio.RecordingOptions = {
-  ...RECORDING_OPTIONS,
-  isMeteringEnabled: true,
-};
-
 /** Conversation mode: metering enabled for silence / speech detection.
  * Caller must hold the recording mutex (see startConversationListening). */
-export async function startConversationRecording(): Promise<Audio.Recording> {
+export async function startConversationRecording(): Promise<Recording> {
   await ensureRecordingSlotFree();
   await prepareForConversationListen();
-  const recording = new Audio.Recording();
+  const recording = new Recording();
   await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
   await recording.startAsync();
   return recording;
 }
 
-export async function startPushToTalkRecording(): Promise<Audio.Recording> {
+export async function startPushToTalkRecording(): Promise<Recording> {
   return withRecordingMutex(async () => {
     await configureRecordingAudioMode();
     await discardPrewarm();
-    const recording = new Audio.Recording();
+    const recording = new Recording();
     await recording.prepareToRecordAsync(RECORDING_OPTIONS_METERED);
     await recording.startAsync();
     prewarmRecordingPipeline();
@@ -221,7 +154,7 @@ export async function startPushToTalkRecording(): Promise<Audio.Recording> {
   });
 }
 
-export async function stopRecordingToUri(recording: Audio.Recording): Promise<string> {
+export async function stopRecordingToUri(recording: Recording): Promise<string> {
   await recording.stopAndUnloadAsync();
   const uri = recording.getURI();
   if (!uri) throw new Error('Recording failed');
@@ -235,8 +168,8 @@ async function transcribeRecordingOnce(uri: string, apiBase: string): Promise<st
   const form = new FormData();
   form.append('file', {
     uri,
-    name: 'recording.wav',
-    type: 'audio/wav',
+    name: 'recording.m4a',
+    type: 'audio/mp4',
   } as unknown as Blob);
 
   const response = await fetch(`${apiBase}/stt`, {
@@ -280,8 +213,8 @@ export async function transcribePartialRecording(
   const form = new FormData();
   form.append('file', {
     uri,
-    name: 'partial.wav',
-    type: 'audio/wav',
+    name: 'partial.m4a',
+    type: 'audio/mp4',
   } as unknown as Blob);
 
   try {

@@ -8,7 +8,7 @@ Use this guide to start the app on your Mac and test it from an iPhone with **Ex
 |------|--------|
 | Project root | `/Users/ivyzan/ai-companion` |
 | Backend | FastAPI on port **8000** (`0.0.0.0` — reachable on LAN) |
-| Frontend | Expo SDK 54, **Expo Go** on iPhone |
+| Frontend | Expo SDK 57, **Expo Go** on iPhone |
 | Phone → backend URL | `EXPO_PUBLIC_API_BASE` in `ai-frontend/.env` — **auto-set** by `./start.sh` from `ipconfig getifaddr en0` |
 | Gemini key | Env var `GEMINI_API_KEY` (never commit `.env`) |
 | Models (backend) | `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-2.5-pro` |
@@ -256,7 +256,7 @@ Free-tier Gemini limits are per Google Cloud **project**. See [AI Studio rate li
 
 Even at **100%** in Settings → Playback volume, loudness is limited by three layers:
 
-1. **iPhone system volume** (side buttons) — this is the main control; in-app gain cannot exceed **1.0** (expo-av has no 110% boost).
+1. **iPhone system volume** (side buttons) — this is the main control; in-app gain cannot exceed **1.0** (expo-audio has no 110% boost).
 2. **Audio route** — Bluetooth / AirPods / CarPlay cap perceived volume; use **iPhone Speaker** in Control Center and disconnect unused Bluetooth devices.
 3. **Azure SSML** — backend defaults to `AZURE_SPEECH_VOLUME=+25%`; set `loud` or `x-loud` in `ai-backend/.env` for more.
 

@@ -1,5 +1,5 @@
 /**
- * Azure TTS (expo-av): one smooth clip when possible.
+ * Azure TTS (expo-audio): one smooth clip when possible.
  * Split ONLY on . ! ? — never commas. No artificial pauses between chunks.
  */
 

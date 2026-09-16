@@ -3,7 +3,7 @@ import { dbfsToBarPercent, formatDbfsLabel } from '../lib/voiceMeterLevel';
 import { SPEECH_LEVEL_DB } from '../lib/conversationMode';
 
 type VoiceDecibelBarProps = {
-  /** Raw dBFS from expo-av recording metering. */
+  /** Raw dBFS from expo-audio recording metering. */
   dbfs: number | null;
   visible: boolean;
   /** dBFS above which the bar turns green (speech threshold). */
